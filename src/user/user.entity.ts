@@ -23,6 +23,11 @@ export class User {
   @Column({ default: false })
   isBusiness: boolean;
 
+  // Subscription tier: 'free' | 'plus' | 'gold'. Drives premium badge, ad-free
+  // experience and support priority (see SubscriptionService).
+  @Column({ default: 'free' })
+  tier: string;
+
   @Column({ type: 'decimal', precision: 10, scale: 4, default: 0 })
   walletBalance: number;
 
@@ -42,6 +47,11 @@ export class User {
 
   @Column({ default: false })
   dataShareEnabled: boolean;
+
+  // When true, viewing another user's profile does not write a data-access-log
+  // row (Premium "incognito" — browse without being seen).
+  @Column({ default: false })
+  incognitoEnabled: boolean;
 
   // Which data categories the user consents to share
   @Column('simple-array', { default: '' })

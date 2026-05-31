@@ -34,6 +34,7 @@ import { DataMigrationService } from './migration/data-migration.service';
 
 import { LookupModule } from './lookup/lookup.module';
 import { ScamShieldModule } from './scam-shield/scam-shield.module';
+import { SubscriptionModule } from './subscription/subscription.module';
 import { ReportModule } from './report/report.module';
 import { PhoneReport } from './report/phone-report.entity';
 import { PhoneReportVote } from './report/phone-report-vote.entity';
@@ -151,6 +152,7 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
     DataMigrationModule,
     LookupModule,
     ScamShieldModule,
+    SubscriptionModule,
     ReportModule,
     DataBrokerModule,
     ProfileModule,

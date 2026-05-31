@@ -29,7 +29,14 @@ export interface LookupResult {
     industry: string;
     purposeLabel?: string;
   } | null;
+  // Public premium badge derived from the user's subscription tier.
+  badge: 'plus' | 'gold' | null;
   checkedAt: string;
+}
+
+// free → no badge; plus/gold show their badge publicly (status signal).
+function tierToBadge(tier?: string): 'plus' | 'gold' | null {
+  return tier === 'plus' || tier === 'gold' ? tier : null;
 }
 
 @Injectable()
@@ -107,6 +114,7 @@ export class LookupService {
           blocked: userReports >= COMMUNITY_BLOCK_THRESHOLD,
         },
         business: null,
+        badge: null,
         checkedAt,
       };
     }
@@ -140,6 +148,7 @@ export class LookupService {
         blocked: user.isSpam || userReports >= COMMUNITY_BLOCK_THRESHOLD,
       },
       business,
+      badge: tierToBadge((user as any).tier),
       checkedAt,
     };
   }
