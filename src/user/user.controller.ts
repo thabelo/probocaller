@@ -1,61 +1,194 @@
-import { Controller, Post, Get, Put, Body, Param, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Controller, Post, Get, Put, Delete, Body, Param, UseGuards, Request, ForbiddenException } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import { UserService } from './user.service';
 import { LoginDto } from './dto/login.dto';
 import { SignupDto } from './dto/signup.dto';
+import { AddCreditDto } from './dto/add-credit.dto';
+import { AddContactsDto } from './dto/add-contacts.dto';
 import { AuthGuard } from '@nestjs/passport';
+import { BusinessService } from '../business/business.service';
+import { TransactionService } from '../transaction/transaction.service';
 
 @ApiTags('users')
 @Controller('user')
 export class UserController {
-  constructor(private readonly userService: UserService) {}
+  constructor(
+    private readonly userService: UserService,
+    private readonly businessService: BusinessService,
+    private readonly transactionService: TransactionService,
+  ) {}
 
+  // ── Admin-only: returns the full user list with PII. ──────────────────
+  // Was previously open to any authenticated user, which leaked phone numbers
+  // and names of every account on the platform.
   @Get()
-  @ApiOperation({ summary: 'Get all users' })
-  @ApiResponse({ status: 200, description: 'Returns all users' })
-  async getAllUsers() {
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get all users (admin-only)' })
+  async getAllUsers(@Request() req) {
+    if (req.user?.role !== 'admin') {
+      throw new ForbiddenException('Admin access required');
+    }
     return this.userService.findAllUsers();
   }
 
+  // Rate-limit auth endpoints: 5 attempts per minute per IP.
+  // Prevents brute-force and account-enumeration via login behaviour.
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('login')
   @ApiOperation({ summary: 'Login user' })
-  @ApiResponse({ status: 201, description: 'User logged in successfully' })
   async login(@Body() loginDto: LoginDto) {
     return this.userService.login(loginDto);
   }
 
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
   @Post('signup')
   @ApiOperation({ summary: 'Sign up user' })
-  @ApiResponse({ status: 201, description: 'User signed up successfully' })
   async signup(@Body() signupDto: SignupDto) {
     return this.userService.signup(signupDto);
   }
 
+  @Delete('me')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Deactivate (soft-delete) the current user account' })
+  async deactivateMe(@Request() req) {
+    const user = await this.userService.deactivate(req.user.userId);
+    return { id: user.id, deactivatedAt: user.deactivatedAt };
+  }
+
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @Post('refresh')
+  @ApiOperation({ summary: 'Refresh access token using refresh token' })
+  async refresh(@Body() body: { refreshToken: string }) {
+    return this.userService.refreshAccessToken(body.refreshToken);
+  }
+
   @Post('add-multiple')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
   @ApiOperation({ summary: 'Add multiple contacts' })
-  @ApiResponse({ status: 201, description: 'Contacts added successfully' })
-  async addMultipleContacts(@Body() body: { users: any[] }) {
+  async addMultipleContacts(@Body() body: AddContactsDto) {
     return this.userService.addMultipleContacts(body.users);
   }
 
+  @Post('spam/add')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Add phone to spam list' })
+  async addToSpamList(@Request() req, @Body() body: { phoneNumber: string }) {
+    return this.userService.addToSpamList(req.user.userId, body.phoneNumber);
+  }
+
+  @Post('spam/remove')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Remove phone from spam list' })
+  async removeFromSpamList(@Request() req, @Body() body: { phoneNumber: string }) {
+    return this.userService.removeFromSpamList(req.user.userId, body.phoneNumber);
+  }
+
+  @Get('spam/list')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get spam list' })
+  async getSpamList(@Request() req) {
+    return { spamList: await this.userService.getSpamList(req.user.userId) };
+  }
+
+  @Post('credit')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Add credits to business wallet (positive amount only)' })
+  async addCredit(@Request() req, @Body() body: AddCreditDto) {
+    return this.userService.addCredit(req.user.userId, body.amount);
+  }
+
+  @Get('referral-code')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get own referral code and referred user count' })
+  async getReferralCode(@Request() req) {
+    return this.userService.getReferralCode(req.user.userId);
+  }
+
+  @Get('wallet')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get wallet balance' })
+  async getWalletBalance(@Request() req) {
+    return this.userService.getWalletBalance(req.user.userId);
+  }
+
+  @Get('notifications')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get notifications' })
+  async getNotifications(@Request() req) {
+    return this.userService.getNotifications(req.user.userId);
+  }
+
+  @Put('notifications/read/:id')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Mark notification as read' })
+  async markNotificationRead(@Request() req, @Param('id') notificationId: number) {
+    return this.userService.markNotificationRead(req.user.userId, Number(notificationId));
+  }
+
+  @Get('transactions')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get transaction history' })
+  async getTransactions(@Request() req) {
+    return this.transactionService.findByUser(req.user.userId);
+  }
+
   @Put('report/:phoneNumber')
-  @ApiOperation({ summary: 'Report spam' })
-  @ApiResponse({ status: 200, description: 'User reported as spam' })
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Report number as spam' })
   async reportSpam(@Param('phoneNumber') phoneNumber: string) {
     return this.userService.reportSpam(phoneNumber);
   }
 
   @Get(':phoneNumber')
-  @ApiOperation({ summary: 'Find user by phone number' })
-  @ApiResponse({ status: 200, description: 'User found' })
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Find user by phone (caller-ID lookup, auth required)' })
   async findUser(@Param('phoneNumber') phoneNumber: string) {
-    const user = await this.userService.findUserByPhone(phoneNumber);
+    const RATE_PER_SECOND = 0.002;
+    const user = await this.userService.findOrCreatePlaceholder(phoneNumber);
+    const callerIdentity = await this.businessService.resolveCallerIdentity(phoneNumber);
+
+    // Fall back to the user's own business profile when calling from an unregistered number
+    const fallbackProfile = (!callerIdentity && user.isBusiness)
+      ? await this.businessService.getProfileByUserId(user.id)
+      : null;
+
+    const effectivelyBusiness = user.isBusiness || !!callerIdentity;
+    const resolvedProfile = callerIdentity?.businessProfile ?? fallbackProfile;
+
+    // A user is "registered" only after going through signup, which overwrites the
+    // synthetic placeholder email/name. Numbers in a business directory also count.
+    const isPlaceholderEmail = user.email === `${user.phoneNumber}@probo.local`;
+    const isRegistered = (!isPlaceholderEmail && user.name !== 'Unknown') || !!callerIdentity;
+
     return {
-      _id: user._id,
+      id: user.id,
       phoneNumber: user.phoneNumber,
-      email: user.email,
-      name: user.name,
+      name: resolvedProfile?.companyName || user.name,
       isSpam: user.isSpam,
+      isBusiness: effectivelyBusiness,
+      isRegistered,
+      hasSufficientFunds: !effectivelyBusiness || Number(user.walletBalance) >= RATE_PER_SECOND,
+      ...(resolvedProfile && {
+        businessProfile: resolvedProfile,
+        numberPurpose: callerIdentity?.numberPurpose,
+        numberPurposeLabel: callerIdentity?.numberPurposeLabel,
+        numberLabel: callerIdentity?.numberLabel,
+      }),
     };
   }
 }

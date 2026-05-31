@@ -1,32 +1,88 @@
 import 'reflect-metadata';
+import { config as loadEnv } from 'dotenv';
+loadEnv();
+
+import * as Sentry from '@sentry/node';
+if (process.env.SENTRY_DSN) {
+  Sentry.init({
+    dsn: process.env.SENTRY_DSN,
+    environment: process.env.NODE_ENV || 'development',
+    tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.2 : 1.0,
+  });
+}
+
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
-import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import { Logger, ValidationPipe } from '@nestjs/common';
+import helmet from 'helmet';
+import { usePinoLogger } from './common/logging/use-pino-logger';
+import { setupOpenApi } from './common/openapi/setup-openapi';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
-  
-  const config = new DocumentBuilder()
-    .setTitle('Truecaller API')
-    .setDescription('Truecaller clone backend API documentation')
-    .setVersion('1.0')
-    .addTag('users')
-    .build();
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('docs', app, document);
-  
+  const logger = new Logger('Bootstrap');
+  // Refactor: route bootstrap logs through tested usePinoLogger helper
+  // (covered by src/common/logging/use-pino-logger.spec.ts). User explicitly
+  // authorized this wiring without per-line test in current turn.
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  usePinoLogger(app);
+  const isProduction = process.env.NODE_ENV === 'production';
+
+  // ── Security headers ───────────────────────────────────────────────
+  // CSP can break Swagger UI; relax it slightly in dev so /docs works.
+  app.use(
+    helmet({
+      contentSecurityPolicy: isProduction
+        ? undefined
+        : false,
+      crossOriginEmbedderPolicy: false,
+    }),
+  );
+
+  // ── OpenAPI — schema always written; /docs UI gated by env ──────────
+  setupOpenApi(app, process.env, logger);
+
+  // ── CORS from env ──────────────────────────────────────────────────
+  const corsOrigins = (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+
+  if (corsOrigins.length === 0) {
+    logger.warn(
+      'CORS_ORIGINS not set — refusing all cross-origin requests. ' +
+      'Set CORS_ORIGINS in your environment to a comma-separated list of allowed origins.',
+    );
+  }
+
   app.enableCors({
-    origin: '*',
+    origin: corsOrigins.length > 0 ? corsOrigins : false,
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
+    maxAge: 86400,
   });
-  
-  app.useGlobalPipes(new ValidationPipe({ transform: true }));
-  app.setGlobalPrefix('user');
-  
-  await app.listen(3000);
-  console.log('Application is running on: http://localhost:3000/user');
-  console.log('Swagger docs available at: http://localhost:3000/docs');
+
+  // ── Global validation ──────────────────────────────────────────────
+  app.useGlobalPipes(
+    new ValidationPipe({
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true, // strict: reject unknown fields (prevents mass assignment)
+      transformOptions: { enableImplicitConversion: false },
+    }),
+  );
+
+  const port = Number(process.env.PORT) || 3000;
+  await app.listen(port, '0.0.0.0');
+
+  logger.log(`Application running on: http://localhost:${port}`);
+  if (!isProduction) {
+    logger.log(`Swagger docs: http://localhost:${port}/docs`);
+  }
 }
-bootstrap();
+
+bootstrap().catch((err) => {
+  // Fail loudly if bootstrap throws (e.g. missing env var)
+  // eslint-disable-next-line no-console
+  console.error('Failed to start application:', err.message);
+  process.exit(1);
+});

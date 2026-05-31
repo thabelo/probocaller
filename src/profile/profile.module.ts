@@ -1,0 +1,21 @@
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { ProfileField } from './profile-field.entity';
+import { UserProfile } from './user-profile.entity';
+import { DataAccessLog } from './data-access-log.entity';
+import { BusinessAudience } from './business-audience.entity';
+import { User } from '../user/user.entity';
+import { Business } from '../business/business.entity';
+import { Transaction } from '../transaction/transaction.entity';
+import { ProfileService } from './profile.service';
+import { ProfileController } from './profile.controller';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([ProfileField, UserProfile, DataAccessLog, BusinessAudience, User, Business, Transaction]),
+  ],
+  providers: [ProfileService],
+  controllers: [ProfileController],
+  exports: [ProfileService],
+})
+export class ProfileModule {}

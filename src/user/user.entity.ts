@@ -1,17 +1,17 @@
 import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
 
-@Entity()
+@Entity('users')
 export class User {
   @PrimaryGeneratedColumn()
-  _id: number;
+  id: number;
 
   @Column({ unique: true })
   phoneNumber: string;
 
-  @Column()
+  @Column({ nullable: true })
   email: string;
 
-  @Column()
+  @Column({ nullable: true })
   name: string;
 
   @Column({ default: false })
@@ -20,9 +20,49 @@ export class User {
   @Column({ default: 'user' })
   role: string;
 
+  @Column({ default: false })
+  isBusiness: boolean;
+
+  @Column({ type: 'decimal', precision: 10, scale: 4, default: 0 })
+  walletBalance: number;
+
+  @Column('simple-array', { default: '' })
+  spamList: string[];
+
+  @Column({ type: 'simple-json', default: '[]' })
+  notifications: { id: number; message: string; timestamp: Date; read: boolean }[];
+
+  // Data broker: 'all' lets anyone call | 'approved_only' requires prior permission | 'none' blocks all business calls
+  @Column({ default: 'all' })
+  callPermissionMode: string;
+
+  // JSON array of { dayOfWeek: 0–6, startTime: "HH:mm", endTime: "HH:mm" }; empty = no restriction
+  @Column({ type: 'simple-json', default: '[]' })
+  allowedCallWindows: { dayOfWeek: number; startTime: string; endTime: string }[];
+
+  @Column({ default: false })
+  dataShareEnabled: boolean;
+
+  // Which data categories the user consents to share
+  @Column('simple-array', { default: '' })
+  dataCategories: string[];
+
+  // Stable share code derived from the user's own ID: PROBO-{id}
+  @Column({ nullable: true, unique: true })
+  referralCode: string;
+
+  // ID of the user who referred this account (null = organic signup)
+  @Column({ nullable: true })
+  referredBy: number;
+
   @CreateDateColumn()
   createdAt: Date;
 
   @UpdateDateColumn()
   updatedAt: Date;
+
+  // Soft-delete marker. Set when the user deactivates their account.
+  // JwtStrategy.validate rejects tokens whose user has this populated.
+  @Column({ type: 'timestamp', nullable: true, default: null })
+  deactivatedAt: Date | null;
 }

@@ -1,10 +1,12 @@
-import { IsString, IsNotEmpty, IsEmail } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
+import { IsString, IsNotEmpty, IsEmail, IsOptional } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsPhoneE164 } from '../../common/validation/is-phone-e164';
 
 export class SignupDto {
-  @ApiProperty({ example: '1234567890', description: 'Phone number' })
+  @ApiProperty({ example: '+27821234567', description: 'Phone number in E.164 format' })
   @IsString()
   @IsNotEmpty()
+  @IsPhoneE164()
   phoneNumber: string;
 
   @ApiProperty({ example: 'user@example.com', description: 'Email address' })
@@ -15,4 +17,9 @@ export class SignupDto {
   @IsString()
   @IsNotEmpty()
   name: string;
+
+  @ApiPropertyOptional({ example: 'PROBO-42', description: 'Referral code from an existing user' })
+  @IsOptional()
+  @IsString()
+  referralCode?: string;
 }

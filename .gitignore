@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+
+# Secrets & env (keep .env.example tracked)
+.env
+.env.local
+.env.*.local
+
+# Local DB / generated artifacts
+*.sqlite
+openapi.json
+uploads/
+
+# Test / coverage
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
