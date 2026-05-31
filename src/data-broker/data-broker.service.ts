@@ -28,6 +28,7 @@ export class DataBrokerService {
       allowedCallWindows: user.allowedCallWindows || [],
       dataShareEnabled: user.dataShareEnabled,
       dataCategories: user.dataCategories || [],
+      incognitoEnabled: user.incognitoEnabled,
     };
   }
 
@@ -38,6 +39,7 @@ export class DataBrokerService {
     if (dto.allowedCallWindows !== undefined) user.allowedCallWindows = dto.allowedCallWindows;
     if (dto.dataShareEnabled !== undefined) user.dataShareEnabled = dto.dataShareEnabled;
     if (dto.dataCategories !== undefined) user.dataCategories = dto.dataCategories;
+    if (dto.incognitoEnabled !== undefined) user.incognitoEnabled = dto.incognitoEnabled;
     await this.userRepo.save(user);
     return this.getPreferences(userId);
   }

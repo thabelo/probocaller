@@ -219,15 +219,20 @@ export class ProfileService {
         user.walletBalance = parseFloat((Number(user.walletBalance) + userEarning).toFixed(6));
         await manager.save(User, user);
 
-        await manager.save(DataAccessLog, manager.create(DataAccessLog, {
-          userId: profile.userId,
-          businessId: business.id,
-          fieldsAccessed: sharableKeys,
-          purpose: dto.purpose || null,
-          creditsCost: costForUser,
-          userEarnings: userEarning,
-          consentExpiresAt,
-        }));
+        // Incognito (premium): skip attributing this access in the user's
+        // "who viewed my data" log. The payment/earning still happens below,
+        // so the user is still compensated — only the viewer identity is hidden.
+        if (!(lockedCaller as any).incognitoEnabled) {
+          await manager.save(DataAccessLog, manager.create(DataAccessLog, {
+            userId: profile.userId,
+            businessId: business.id,
+            fieldsAccessed: sharableKeys,
+            purpose: dto.purpose || null,
+            creditsCost: costForUser,
+            userEarnings: userEarning,
+            consentExpiresAt,
+          }));
+        }
 
         await manager.save(Transaction, manager.create(Transaction, {
           userId: businessUserId, type: 'DATA_PURCHASE', amount: -costForUser,

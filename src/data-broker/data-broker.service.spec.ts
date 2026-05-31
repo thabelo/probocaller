@@ -74,6 +74,15 @@ describe('DataBrokerService', () => {
       expect(userRepo.save.mock.calls[0][0].dataShareEnabled).toBe(true);
     });
 
+    it('persists incognitoEnabled (premium incognito toggle)', async () => {
+      const user = mockUser();
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
+      const result = await service.updatePreferences(1, { incognitoEnabled: true } as any);
+      expect(userRepo.save.mock.calls[0][0].incognitoEnabled).toBe(true);
+      expect(result.incognitoEnabled).toBe(true);
+    });
+
     it('saves valid callPermissionMode', async () => {
       // DTO validation rejects invalid values at the controller layer.
       // The service itself saves whatever arrives — test that it persists.

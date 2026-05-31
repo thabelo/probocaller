@@ -172,6 +172,33 @@ describe('ProfileService', () => {
       expect(result.purchased).toBe(3);
     });
 
+    it('incognito caller: writes no DataAccessLog, but the user still earns', async () => {
+      wireMatches(100, 5, 1);
+      // Caller (id 7) is incognito.
+      managerSpy.findOne.mockImplementation(async (_e: any, opts: any) =>
+        opts.where.id === 7
+          ? { id: 7, walletBalance: 1_000_000, incognitoEnabled: true }
+          : { id: opts.where.id, walletBalance: 0, dataShareEnabled: true, dataCategories: ['income_range'] });
+
+      const result = await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100 });
+      expect(result.purchased).toBe(1);
+
+      const savedEntityClasses = managerSpy.save.mock.calls.map((c: any[]) => c[0]);
+      expect(savedEntityClasses).not.toContain(DataAccessLog); // viewer not attributed
+
+      const earnTx = managerSpy.save.mock.calls
+        .filter((c: any[]) => c[0] === Transaction)
+        .map((c: any[]) => c[1]);
+      expect(earnTx.some((t: any) => t.type === 'DATA_EARN')).toBe(true); // user still paid
+    });
+
+    it('non-incognito caller: writes a DataAccessLog (default transparency)', async () => {
+      wireMatches(100, 5, 1);
+      await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100 });
+      const savedEntityClasses = managerSpy.save.mock.calls.map((c: any[]) => c[0]);
+      expect(savedEntityClasses).toContain(DataAccessLog);
+    });
+
     it('Backend H6 — locks the caller wallet row with pessimistic_write inside the txn (prevents concurrent over-spend)', async () => {
       wireMatches(100, 1, 3);
       await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100 });

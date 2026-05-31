@@ -39,4 +39,8 @@ export class UpdatePrivacyPreferencesDto {
   @IsArray()
   @IsString({ each: true })
   dataCategories?: string[];
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  incognitoEnabled?: boolean;
 }
