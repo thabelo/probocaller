@@ -35,6 +35,8 @@ import { DataMigrationService } from './migration/data-migration.service';
 import { LookupModule } from './lookup/lookup.module';
 import { ScamShieldModule } from './scam-shield/scam-shield.module';
 import { SubscriptionModule } from './subscription/subscription.module';
+import { ScreeningModule } from './screening/screening.module';
+import { CallScreening } from './screening/call-screening.entity';
 import { ReportModule } from './report/report.module';
 import { PhoneReport } from './report/phone-report.entity';
 import { PhoneReportVote } from './report/phone-report-vote.entity';
@@ -98,7 +100,7 @@ if (JWT_SECRET.length < 32) {
   );
 }
 
-const ENTITIES = [User, CallLog, CallRating, Setting, Business, BusinessNumber, Transaction, PhoneReport, PhoneReportVote, CallPermissionRequest, ProfileField, UserProfile, DataAccessLog, BusinessAudience, KybSubmission, KybDocument, BlockedKeyword, SmsDeletionLog, SpamReport, ReportedSms, BankAccount, FicaSubmission, FicaDocument, Withdrawal, Conversation, Message];
+const ENTITIES = [User, CallLog, CallRating, Setting, Business, BusinessNumber, Transaction, PhoneReport, PhoneReportVote, CallPermissionRequest, ProfileField, UserProfile, DataAccessLog, BusinessAudience, KybSubmission, KybDocument, BlockedKeyword, SmsDeletionLog, SpamReport, ReportedSms, BankAccount, FicaSubmission, FicaDocument, Withdrawal, Conversation, Message, CallScreening];
 
 const isProduction = process.env.NODE_ENV === 'production';
 const runMigrationsOnBoot = shouldRunMigrations(process.env);
@@ -153,6 +155,7 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
     LookupModule,
     ScamShieldModule,
     SubscriptionModule,
+    ScreeningModule,
     ReportModule,
     DataBrokerModule,
     ProfileModule,
