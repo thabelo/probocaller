@@ -5,6 +5,7 @@ import { CallScreening } from './call-screening.entity';
 import { ScreeningService } from './screening.service';
 import { ScreeningController } from './screening.controller';
 import { TranscriptionProvider, StubTranscriptionProvider } from './transcription.provider';
+import { OpenAiTranscriptionProvider } from './openai-transcription.provider';
 
 @Module({
   imports: [
@@ -14,7 +15,16 @@ import { TranscriptionProvider, StubTranscriptionProvider } from './transcriptio
   controllers: [ScreeningController],
   providers: [
     ScreeningService,
-    { provide: TranscriptionProvider, useClass: StubTranscriptionProvider },
+    {
+      // Use real OpenAI Whisper when a key is configured; otherwise the stub.
+      // A placeholder key still selects OpenAI — calls fail and ScreeningService
+      // falls back gracefully (see recordScreening try/catch).
+      provide: TranscriptionProvider,
+      useFactory: () =>
+        process.env.OPENAI_API_KEY
+          ? new OpenAiTranscriptionProvider()
+          : new StubTranscriptionProvider(),
+    },
   ],
   exports: [ScreeningService],
 })

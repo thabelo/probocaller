@@ -89,6 +89,15 @@ describe('ScreeningService.recordScreening', () => {
     expect(row.transcript).toBeNull();
   });
 
+  it('falls back gracefully when transcription fails (e.g. placeholder key)', async () => {
+    transcriber.transcribe.mockRejectedValue(new Error('401 unauthorized'));
+    const row = await service.recordScreening(7, '+27820000001', { scamLevel: 'low' }, 'audio-x');
+    expect(row.action).toBe('screen');        // still screened
+    expect(row.transcript).toBeNull();         // no transcript
+    expect(typeof row.summary).toBe('string'); // a fallback summary, not a crash
+    expect(row.summary).toMatch(/unavailable/i);
+  });
+
   it('getHistory returns the user rows newest-first', async () => {
     await service.getHistory(7);
     expect(repo.find).toHaveBeenCalledWith({

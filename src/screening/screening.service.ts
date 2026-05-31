@@ -45,9 +45,15 @@ export class ScreeningService {
     let summary: string | null = null;
 
     if (action === 'screen' && audioRef) {
-      const result = await this.transcriber.transcribe(audioRef);
-      transcript = result.transcript;
-      summary = result.summary;
+      try {
+        const result = await this.transcriber.transcribe(audioRef);
+        transcript = result.transcript;
+        summary = result.summary;
+      } catch {
+        // Provider unavailable (e.g. placeholder key / network) — still record
+        // the screening so the call isn't lost; surface a graceful summary.
+        summary = 'Screening transcription unavailable.';
+      }
     }
 
     const row = this.repo.create({ userId, callerNumber, action, transcript, summary });
