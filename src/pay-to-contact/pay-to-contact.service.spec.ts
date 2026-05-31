@@ -210,6 +210,91 @@ describe('PayToContactService.settle', () => {
 });
 
 /**
+ * Pay-to-Contact — fee config & platform ledger (follow-up).
+ *
+ * The platform fee rate is configurable via PAY_TO_CONTACT_FEE_RATE (default
+ * 0.3). When PAY_TO_CONTACT_PLATFORM_USER_ID is set, the skimmed fee is credited
+ * to that platform wallet and recorded as a PLATFORM_FEE ledger row inside the
+ * same transaction — so bid == user earnings + platform fee always balances.
+ */
+describe('PayToContactService.settle — fee config & platform ledger', () => {
+  let service: PayToContactService;
+  let manager: any;
+  let tx: { log: jest.Mock };
+  const savedFeeRate = process.env.PAY_TO_CONTACT_FEE_RATE;
+  const savedPlatformId = process.env.PAY_TO_CONTACT_PLATFORM_USER_ID;
+
+  beforeEach(async () => {
+    manager = {
+      findOne: jest.fn(),
+      save: jest.fn().mockImplementation(async (a: any, b?: any) => b ?? a),
+    };
+    tx = { log: jest.fn().mockResolvedValue(undefined) };
+    const dataSource = {
+      transaction: jest.fn().mockImplementation(async (cb: any) => cb(manager)),
+    };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        PayToContactService,
+        { provide: getRepositoryToken(CallPermissionRequest), useValue: {} },
+        { provide: getRepositoryToken(User), useValue: {} },
+        { provide: TransactionService, useValue: tx },
+        { provide: DataSource, useValue: dataSource },
+      ],
+    }).compile();
+    service = module.get(PayToContactService);
+  });
+
+  afterEach(() => {
+    if (savedFeeRate === undefined) delete process.env.PAY_TO_CONTACT_FEE_RATE;
+    else process.env.PAY_TO_CONTACT_FEE_RATE = savedFeeRate;
+    if (savedPlatformId === undefined) delete process.env.PAY_TO_CONTACT_PLATFORM_USER_ID;
+    else process.env.PAY_TO_CONTACT_PLATFORM_USER_ID = savedPlatformId;
+  });
+
+  it('uses the fee rate from PAY_TO_CONTACT_FEE_RATE when no rate is passed', async () => {
+    process.env.PAY_TO_CONTACT_FEE_RATE = '0.5';
+    delete process.env.PAY_TO_CONTACT_PLATFORM_USER_ID;
+
+    manager.findOne
+      .mockImplementationOnce(async () => ({ id: 7, userId: 9, escrowAmount: 40, escrowStatus: 'held' }))
+      .mockImplementationOnce(async () => ({ id: 9, walletBalance: 0 }));
+
+    await service.settle(7);
+
+    // 50% fee → user earns 20 of the 40 bid.
+    expect(tx.log).toHaveBeenCalledWith(
+      9, 'CALL_EARN', 20, expect.any(String), undefined, manager,
+    );
+  });
+
+  it('credits the platform wallet and logs PLATFORM_FEE when a platform account is configured', async () => {
+    delete process.env.PAY_TO_CONTACT_FEE_RATE; // default 0.3
+    process.env.PAY_TO_CONTACT_PLATFORM_USER_ID = '99';
+
+    manager.findOne
+      .mockImplementationOnce(async () => ({ id: 7, userId: 9, escrowAmount: 40, escrowStatus: 'held' }))
+      .mockImplementationOnce(async () => ({ id: 9, walletBalance: 0 }))
+      .mockImplementationOnce(async (_e: any, opts: any) => {
+        expect(opts.lock).toEqual({ mode: 'pessimistic_write' });
+        expect(opts.where).toMatchObject({ id: 99 });
+        return { id: 99, walletBalance: 100 };
+      });
+
+    await service.settle(7);
+
+    const savedPlatform = manager.save.mock.calls
+      .map((c: any[]) => c[0])
+      .find((arg: any) => arg && arg.id === 99);
+    expect(savedPlatform.walletBalance).toBe(112); // 100 + 12 fee
+
+    expect(tx.log).toHaveBeenCalledWith(
+      99, 'PLATFORM_FEE', 12, expect.any(String), undefined, manager,
+    );
+  });
+});
+
+/**
  * Pay-to-Contact — refund on reject/expire (Cycle 4).
  *
  * If the user rejects (or the request expires) the held escrow is returned in

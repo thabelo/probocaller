@@ -18,6 +18,21 @@ export interface EscrowSplit {
 
 const round4 = (n: number) => parseFloat(n.toFixed(4));
 
+const DEFAULT_FEE_RATE = 0.3;
+
+/** Platform fee rate, from PAY_TO_CONTACT_FEE_RATE; clamped to [0, 1). */
+const resolveFeeRate = (): number => {
+  const raw = Number(process.env.PAY_TO_CONTACT_FEE_RATE);
+  if (!Number.isFinite(raw) || raw < 0 || raw >= 1) return DEFAULT_FEE_RATE;
+  return raw;
+};
+
+/** Platform wallet that collects fees, from PAY_TO_CONTACT_PLATFORM_USER_ID. */
+const resolvePlatformUserId = (): number | null => {
+  const raw = Number(process.env.PAY_TO_CONTACT_PLATFORM_USER_ID);
+  return Number.isInteger(raw) && raw > 0 ? raw : null;
+};
+
 @Injectable()
 export class PayToContactService {
   constructor(
@@ -108,7 +123,8 @@ export class PayToContactService {
    * (bid minus platform fee), mark the request settled. Atomic, write-locking
    * the request and the user wallet; CALL_EARN joins the same transaction.
    */
-  async settle(requestId: number, feeRate = 0.3): Promise<CallPermissionRequest> {
+  async settle(requestId: number, feeRate?: number): Promise<CallPermissionRequest> {
+    const rate = feeRate ?? resolveFeeRate();
     return this.ds.transaction(async (m) => {
       const request = await m.findOne(CallPermissionRequest, {
         where: { id: requestId },
@@ -119,7 +135,10 @@ export class PayToContactService {
         throw new ConflictException('No held escrow to settle for this request.');
       }
 
-      const { userEarnings } = this.splitEscrow(Number(request.escrowAmount), feeRate);
+      const { userEarnings, platformFee } = this.splitEscrow(
+        Number(request.escrowAmount),
+        rate,
+      );
 
       const user = await m.findOne(User, {
         where: { id: request.userId },
@@ -143,6 +162,28 @@ export class PayToContactService {
         undefined,
         m,
       );
+
+      // Route the skimmed fee to the platform wallet (when configured) so the
+      // ledger balances: bid == user earnings + platform fee.
+      const platformUserId = resolvePlatformUserId();
+      if (platformUserId && platformFee > 0) {
+        const platform = await m.findOne(User, {
+          where: { id: platformUserId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (platform) {
+          platform.walletBalance = round4(Number(platform.walletBalance) + platformFee);
+          await m.save(platform);
+          await this.tx.log(
+            platformUserId,
+            'PLATFORM_FEE',
+            platformFee,
+            `Pay-to-Contact platform fee for request #${requestId}`,
+            undefined,
+            m,
+          );
+        }
+      }
       return saved;
     });
   }
