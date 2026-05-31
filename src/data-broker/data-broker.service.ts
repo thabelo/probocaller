@@ -1,0 +1,157 @@
+import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { User } from '../user/user.entity';
+import { Business } from '../business/business.entity';
+import { CallPermissionRequest } from './call-permission-request.entity';
+import { UpdatePrivacyPreferencesDto } from './dto/update-privacy-preferences.dto';
+import { RequestCallPermissionDto } from './dto/request-call-permission.dto';
+import { PayToContactService } from '../pay-to-contact/pay-to-contact.service';
+
+@Injectable()
+export class DataBrokerService {
+  constructor(
+    @InjectRepository(User)
+    private userRepo: Repository<User>,
+    @InjectRepository(Business)
+    private businessRepo: Repository<Business>,
+    @InjectRepository(CallPermissionRequest)
+    private permissionRepo: Repository<CallPermissionRequest>,
+    private payToContact: PayToContactService,
+  ) {}
+
+  async getPreferences(userId: number) {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    return {
+      callPermissionMode: user.callPermissionMode,
+      allowedCallWindows: user.allowedCallWindows || [],
+      dataShareEnabled: user.dataShareEnabled,
+      dataCategories: user.dataCategories || [],
+    };
+  }
+
+  async updatePreferences(userId: number, dto: UpdatePrivacyPreferencesDto) {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    if (dto.callPermissionMode !== undefined) user.callPermissionMode = dto.callPermissionMode;
+    if (dto.allowedCallWindows !== undefined) user.allowedCallWindows = dto.allowedCallWindows;
+    if (dto.dataShareEnabled !== undefined) user.dataShareEnabled = dto.dataShareEnabled;
+    if (dto.dataCategories !== undefined) user.dataCategories = dto.dataCategories;
+    await this.userRepo.save(user);
+    return this.getPreferences(userId);
+  }
+
+  async requestCallPermission(businessUserId: number, dto: RequestCallPermissionDto) {
+    const business = await this.businessRepo.findOne({ where: { userId: businessUserId } });
+    if (!business) throw new ForbiddenException('Only registered businesses can request call permissions');
+
+    const targetUser = await this.userRepo.findOne({ where: { id: dto.targetUserId } });
+    if (!targetUser) throw new NotFoundException('Target user not found');
+
+    const existing = await this.permissionRepo.findOne({
+      where: { businessId: business.id, userId: dto.targetUserId, status: 'pending' },
+    });
+    if (existing) throw new ConflictException('A pending request already exists for this user');
+
+    const request = this.permissionRepo.create({
+      businessId: business.id,
+      userId: dto.targetUserId,
+      pitch: dto.pitch || null,
+      callCategory: dto.callCategory || null,
+      status: 'pending',
+    });
+    const saved = await this.permissionRepo.save(request);
+
+    // Pay-to-Contact: if the business attached a bid, stake it now (debits the
+    // business wallet and holds the escrow against this request).
+    if (dto.bidAmount && dto.bidAmount > 0) {
+      await this.payToContact.stake(businessUserId, saved.id, dto.bidAmount);
+    }
+
+    // Notify the target user
+    const notifications = targetUser.notifications || [];
+    notifications.push({
+      id: Date.now(),
+      message: `${business.companyName} wants permission to call you${dto.pitch ? `: "${dto.pitch}"` : ''}. Open Privacy settings to respond.`,
+      timestamp: new Date(),
+      read: false,
+    });
+    targetUser.notifications = notifications;
+    await this.userRepo.save(targetUser);
+
+    return saved;
+  }
+
+  async respondToRequest(userId: number, requestId: number, approved: boolean) {
+    const request = await this.permissionRepo.findOne({ where: { id: requestId } });
+    if (!request) throw new NotFoundException('Request not found');
+    if (request.userId !== userId) throw new ForbiddenException('This request is not for you');
+    if (request.status !== 'pending') throw new ConflictException('Request already responded to');
+
+    request.status = approved ? 'approved' : 'rejected';
+    if (approved) request.approvedAt = new Date();
+    const saved = await this.permissionRepo.save(request);
+
+    // Pay-to-Contact: release the staked escrow to the user on approval, or
+    // refund it to the business on rejection. Only acts when a stake is held.
+    if (request.escrowStatus === 'held') {
+      if (approved) {
+        await this.payToContact.settle(requestId);
+      } else {
+        await this.payToContact.refund(requestId);
+      }
+    }
+
+    return saved;
+  }
+
+  async getMyRequests(userId: number) {
+    return this.permissionRepo.find({
+      where: { userId },
+      order: { createdAt: 'DESC' },
+      relations: ['business'],
+    });
+  }
+
+  async getApprovedCallers(userId: number) {
+    return this.permissionRepo.find({
+      where: { userId, status: 'approved' },
+      order: { approvedAt: 'DESC' },
+      relations: ['business'],
+    });
+  }
+
+  async getBusinessRequests(businessUserId: number) {
+    const business = await this.businessRepo.findOne({ where: { userId: businessUserId } });
+    if (!business) throw new ForbiddenException('No business profile found');
+    return this.permissionRepo.find({
+      where: { businessId: business.id },
+      order: { createdAt: 'DESC' },
+      relations: ['user'],
+    });
+  }
+
+  async revokePermission(userId: number, requestId: number) {
+    const request = await this.permissionRepo.findOne({ where: { id: requestId } });
+    if (!request) throw new NotFoundException('Request not found');
+    if (request.userId !== userId) throw new ForbiddenException('This request is not for you');
+    request.status = 'rejected';
+    return this.permissionRepo.save(request);
+  }
+
+  // Used by CallService to check if a business has approval to call a user
+  async hasApproval(businessId: number, userId: number): Promise<boolean> {
+    const r = await this.permissionRepo.findOne({
+      where: { businessId, userId, status: 'approved' },
+    });
+    return !!r;
+  }
+
+  async adminGetAllRequests() {
+    return this.permissionRepo.find({
+      order: { createdAt: 'DESC' },
+      relations: ['business', 'user'],
+    });
+  }
+}
