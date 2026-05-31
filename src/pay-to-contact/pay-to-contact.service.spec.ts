@@ -97,8 +97,9 @@ describe('PayToContactService.stake', () => {
 
     manager.findOne
       .mockImplementationOnce(async (_e: any, opts: any) => {
-        // First read: the request row, write-locked.
+        // First read: the request row, write-locked, eager join disabled.
         expect(opts.lock).toEqual({ mode: 'pessimistic_write' });
+        expect(opts.loadEagerRelations).toBe(false);
         expect(opts.where).toMatchObject({ id: 7 });
         return { ...request };
       })
@@ -177,6 +178,7 @@ describe('PayToContactService.settle', () => {
     manager.findOne
       .mockImplementationOnce(async (_e: any, opts: any) => {
         expect(opts.lock).toEqual({ mode: 'pessimistic_write' });
+        expect(opts.loadEagerRelations).toBe(false);
         expect(opts.where).toMatchObject({ id: 7 });
         return { ...request };
       })
@@ -330,16 +332,22 @@ describe('PayToContactService.refund', () => {
 
   it('returns the full escrow to the business wallet and logs CALL_REFUND', async () => {
     const request: any = {
-      id: 7, userId: 9, escrowAmount: 40, escrowStatus: 'held',
-      business: { id: 3, userId: 2 },
+      id: 7, userId: 9, businessId: 3, escrowAmount: 40, escrowStatus: 'held',
     };
     const business: any = { id: 2, walletBalance: 60 };
 
     manager.findOne
       .mockImplementationOnce(async (_e: any, opts: any) => {
+        // Request row: write-locked, eager join disabled (FOR-UPDATE-join fix).
         expect(opts.lock).toEqual({ mode: 'pessimistic_write' });
+        expect(opts.loadEagerRelations).toBe(false);
         expect(opts.where).toMatchObject({ id: 7 });
         return { ...request };
+      })
+      .mockImplementationOnce(async (_e: any, opts: any) => {
+        // Business row, fetched by businessId to resolve the owning user.
+        expect(opts.where).toMatchObject({ id: 3 });
+        return { id: 3, userId: 2 };
       })
       .mockImplementationOnce(async (_e: any, opts: any) => {
         expect(opts.lock).toEqual({ mode: 'pessimistic_write' });

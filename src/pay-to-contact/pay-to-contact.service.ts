@@ -7,6 +7,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { CallPermissionRequest } from '../data-broker/call-permission-request.entity';
+import { Business } from '../business/business.entity';
 import { User } from '../user/user.entity';
 import { TransactionService } from '../transaction/transaction.service';
 
@@ -79,6 +80,10 @@ export class PayToContactService {
       const request = await m.findOne(CallPermissionRequest, {
         where: { id: requestId },
         lock: { mode: 'pessimistic_write' },
+        // The eager `business` relation would add a LEFT JOIN, and Postgres
+        // rejects FOR UPDATE on the nullable side of an outer join. Lock the
+        // single row only; fetch related rows separately when needed.
+        loadEagerRelations: false,
       });
       if (!request) throw new NotFoundException('Call permission request not found.');
       if (request.escrowStatus === 'held') {
@@ -129,6 +134,10 @@ export class PayToContactService {
       const request = await m.findOne(CallPermissionRequest, {
         where: { id: requestId },
         lock: { mode: 'pessimistic_write' },
+        // The eager `business` relation would add a LEFT JOIN, and Postgres
+        // rejects FOR UPDATE on the nullable side of an outer join. Lock the
+        // single row only; fetch related rows separately when needed.
+        loadEagerRelations: false,
       });
       if (!request) throw new NotFoundException('Call permission request not found.');
       if (request.escrowStatus !== 'held') {
@@ -199,13 +208,19 @@ export class PayToContactService {
       const request = await m.findOne(CallPermissionRequest, {
         where: { id: requestId },
         lock: { mode: 'pessimistic_write' },
+        // The eager `business` relation would add a LEFT JOIN, and Postgres
+        // rejects FOR UPDATE on the nullable side of an outer join. Lock the
+        // single row only; fetch related rows separately when needed.
+        loadEagerRelations: false,
       });
       if (!request) throw new NotFoundException('Call permission request not found.');
       if (request.escrowStatus !== 'held') {
         throw new ConflictException('No held escrow to refund for this request.');
       }
 
-      const businessUserId = request.business?.userId;
+      // `business` is no longer eager-loaded (see lock note above); fetch it.
+      const businessRow = await m.findOne(Business, { where: { id: request.businessId } });
+      const businessUserId = businessRow?.userId;
       if (!businessUserId) throw new NotFoundException('Business account not found.');
 
       const amount = round4(Number(request.escrowAmount));
