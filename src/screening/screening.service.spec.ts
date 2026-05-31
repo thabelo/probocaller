@@ -1,3 +1,5 @@
+jest.mock('fs');
+import * as fs from 'fs';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { ScreeningService } from './screening.service';
@@ -104,6 +106,28 @@ describe('ScreeningService.recordScreening', () => {
       where: { userId: 7 },
       order: { createdAt: 'DESC' },
       take: 100,
+    });
+  });
+
+  describe('storeAudio', () => {
+    it('writes the uploaded audio and returns a per-user screening ref', () => {
+      const mkdir = fs.mkdirSync as jest.Mock;
+      const write = fs.writeFileSync as jest.Mock;
+      mkdir.mockClear();
+      write.mockClear();
+
+      const ref = service.storeAudio(7, { originalname: 'call.m4a', buffer: Buffer.from('xyz') } as any);
+
+      expect(mkdir).toHaveBeenCalled();
+      expect(write).toHaveBeenCalled();
+      expect(write.mock.calls[0][1]).toEqual(Buffer.from('xyz')); // the buffer is persisted
+      expect(ref).toContain('screening');
+      expect(ref).toContain('7');     // scoped to the user
+      expect(ref).toMatch(/\.m4a$/);  // keeps the extension
+    });
+
+    it('rejects when no file is provided', () => {
+      expect(() => service.storeAudio(7, undefined as any)).toThrow();
     });
   });
 });

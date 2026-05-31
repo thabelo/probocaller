@@ -1,5 +1,9 @@
-import { Body, Controller, Get, Post, Request, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import {
+  Body, Controller, Get, Post, Request, UploadedFile, UseGuards, UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiConsumes } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { ScreeningService, ScreeningSignals } from './screening.service';
 
@@ -22,6 +26,14 @@ export class ScreeningController {
       body?.signals || {},
       body?.audioRef,
     );
+  }
+
+  @Post('audio')
+  @ApiConsumes('multipart/form-data')
+  @ApiOperation({ summary: 'Upload a screened-call recording; returns an audioRef for POST /screening' })
+  @UseInterceptors(FileInterceptor('file', { storage: memoryStorage() }))
+  uploadAudio(@Request() req, @UploadedFile() file: Express.Multer.File) {
+    return { audioRef: this.screeningService.storeAudio(req.user.userId, file) };
   }
 
   @Get('history')

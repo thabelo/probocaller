@@ -33,4 +33,12 @@ describe('ScreeningController', () => {
     expect(service.getHistory).toHaveBeenCalledWith(7);
     expect(res).toBe(rows);
   });
+
+  it('POST /audio stores the upload and returns the audioRef', () => {
+    (service as any).storeAudio = jest.fn().mockReturnValue('screening/7/123.m4a');
+    const file = { originalname: 'call.m4a', buffer: Buffer.from('x') } as any;
+    const res = controller.uploadAudio({ user: { userId: 7 } } as any, file);
+    expect((service as any).storeAudio).toHaveBeenCalledWith(7, file);
+    expect(res).toEqual({ audioRef: 'screening/7/123.m4a' });
+  });
 });

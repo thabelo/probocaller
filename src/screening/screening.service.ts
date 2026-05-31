@@ -1,6 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import * as fs from 'fs';
+import * as path from 'path';
 import { CallScreening, ScreeningAction } from './call-screening.entity';
 import { TranscriptionProvider } from './transcription.provider';
 
@@ -58,6 +60,26 @@ export class ScreeningService {
 
     const row = this.repo.create({ userId, callerNumber, action, transcript, summary });
     return this.repo.save(row);
+  }
+
+  /**
+   * Persist an uploaded call-audio recording and return a reference the
+   * screening flow passes as `audioRef`. Stored under uploads/screening/<user>.
+   * (Production: serve uploads statically or push to object storage so the
+   * transcription provider can fetch the URL.)
+   */
+  storeAudio(userId: number, file: Express.Multer.File): string {
+    if (!file?.buffer) throw new BadRequestException('Audio file is required.');
+    const uploadsRoot = process.env.UPLOAD_DIR
+      ? path.resolve(process.env.UPLOAD_DIR)
+      : path.resolve(process.cwd(), 'uploads');
+    const ext = path.extname(file.originalname || '') || '.m4a';
+    const relDir = path.join('screening', String(userId));
+    const absDir = path.join(uploadsRoot, relDir);
+    fs.mkdirSync(absDir, { recursive: true });
+    const fileName = `${Date.now()}${ext}`;
+    fs.writeFileSync(path.join(absDir, fileName), file.buffer);
+    return path.join(relDir, fileName);
   }
 
   /** Recent screening outcomes for a user, newest first. */
