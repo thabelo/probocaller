@@ -1,9 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { LookupService } from '../lookup/lookup.service';
+import { ReportedSmsService } from '../reported-sms/reported-sms.service';
 
 export interface ScamSignals {
   globalSpam?: boolean;
   communityReports?: number;
+  reportedSmsCount?: number;
   verifiedBusiness?: boolean;
   registered?: boolean;
 }
@@ -23,6 +25,8 @@ export interface ScamAssessment extends ScamRisk {
 
 // Each community spam report adds this much risk.
 const PER_REPORT_WEIGHT = 18;
+// Each reported scam SMS from the number adds this much risk.
+const PER_SMS_WEIGHT = 12;
 // An unknown (unregistered) caller carries mild baseline risk.
 const UNREGISTERED_WEIGHT = 15;
 const HIGH_THRESHOLD = 70;
@@ -30,17 +34,22 @@ const MEDIUM_THRESHOLD = 35;
 
 @Injectable()
 export class ScamShieldService {
-  constructor(private readonly lookupService: LookupService) {}
+  constructor(
+    private readonly lookupService: LookupService,
+    private readonly reportedSmsService: ReportedSmsService,
+  ) {}
 
   /**
-   * Assess a phone number in real time: pull its live crowd signals from the
-   * lookup service and score them. Used to warn the user before they answer.
+   * Assess a phone number in real time: pull its live crowd signals (lookup +
+   * reported scam SMS) and score them. Used to warn the user before they answer.
    */
   async assess(rawPhone: string): Promise<ScamAssessment> {
     const result = await this.lookupService.lookup(rawPhone);
+    const reportedSmsCount = await this.reportedSmsService.countBySender(result.phoneNumber);
     const risk = this.scoreScamRisk({
       globalSpam: result.flags.globalSpam,
       communityReports: result.flags.userReports,
+      reportedSmsCount,
       verifiedBusiness: result.business?.verified === true,
       registered: result.found,
     });
@@ -69,6 +78,11 @@ export class ScamShieldService {
       if (reports > 0) {
         score += reports * PER_REPORT_WEIGHT;
         reasons.push(`${reports} community spam report(s)`);
+      }
+      const smsReports = signals.reportedSmsCount ?? 0;
+      if (smsReports > 0) {
+        score += smsReports * PER_SMS_WEIGHT;
+        reasons.push(`${smsReports} reported scam SMS`);
       }
       if (signals.registered === false) {
         score += UNREGISTERED_WEIGHT;

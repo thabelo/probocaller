@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { ScamShieldService } from './scam-shield.service';
 import { LookupService } from '../lookup/lookup.service';
+import { ReportedSmsService } from '../reported-sms/reported-sms.service';
 
 /**
  * Scam Shield — risk scoring core (Cycle 1).
@@ -11,8 +12,8 @@ import { LookupService } from '../lookup/lookup.service';
  * user before they pick up.
  */
 describe('ScamShieldService.scoreScamRisk', () => {
-  // scoreScamRisk is pure; the LookupService dep is irrelevant here.
-  const service = new ScamShieldService({} as any);
+  // scoreScamRisk is pure; the injected deps are irrelevant here.
+  const service = new ScamShieldService({} as any, {} as any);
 
   it('treats a verified business as no risk', () => {
     expect(service.scoreScamRisk({ verifiedBusiness: true, registered: true })).toEqual({
@@ -42,6 +43,13 @@ describe('ScamShieldService.scoreScamRisk', () => {
     expect(r.level).toBe('high');
   });
 
+  it('adds risk for reported scam SMS from the number', () => {
+    const r = service.scoreScamRisk({ reportedSmsCount: 4, registered: true });
+    expect(r.score).toBe(48);
+    expect(r.level).toBe('medium');
+    expect(r.reasons).toContain('4 reported scam SMS');
+  });
+
   it('adds mild risk for an unregistered (unknown) caller', () => {
     const r = service.scoreScamRisk({ registered: false });
     expect(r.score).toBe(15);
@@ -67,13 +75,16 @@ describe('ScamShieldService.scoreScamRisk', () => {
 describe('ScamShieldService.assess', () => {
   let service: ScamShieldService;
   let lookup: { lookup: jest.Mock };
+  let reportedSms: { countBySender: jest.Mock };
 
   beforeEach(async () => {
     lookup = { lookup: jest.fn() };
+    reportedSms = { countBySender: jest.fn().mockResolvedValue(0) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ScamShieldService,
         { provide: LookupService, useValue: lookup },
+        { provide: ReportedSmsService, useValue: reportedSms },
       ],
     }).compile();
     service = module.get(ScamShieldService);
@@ -112,6 +123,26 @@ describe('ScamShieldService.assess', () => {
     const r = await service.assess('+27110000000');
     expect(r.score).toBe(0);
     expect(r.level).toBe('low');
+  });
+
+  it('folds reported scam SMS into the score', async () => {
+    lookup.lookup.mockResolvedValue({
+      phoneNumber: '+27821234567',
+      found: true,
+      status: 'flagged',
+      flags: { globalSpam: false, userReports: 1, blocked: false },
+      business: null,
+      checkedAt: 'now',
+    });
+    reportedSms.countBySender.mockResolvedValue(2);
+
+    const r = await service.assess('+27821234567');
+
+    expect(reportedSms.countBySender).toHaveBeenCalledWith('+27821234567');
+    // 1 community report (18) + 2 reported SMS (24) = 42.
+    expect(r.score).toBe(42);
+    expect(r.level).toBe('medium');
+    expect(r.reasons).toContain('2 reported scam SMS');
   });
 
   it('flags an unregistered number as low baseline risk', async () => {
