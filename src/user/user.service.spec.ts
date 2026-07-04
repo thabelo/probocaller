@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { JwtService } from '@nestjs/jwt';
+import { DataSource } from 'typeorm';
 import { UnauthorizedException } from '@nestjs/common';
 import { UserService } from './user.service';
 import { User } from './user.entity';
@@ -15,6 +16,7 @@ const mockRepo = () => ({
   create: jest.fn(),
   save: jest.fn(),
   find: jest.fn(),
+  count: jest.fn().mockResolvedValue(0),
 });
 
 const mockJwt = () => ({
@@ -26,15 +28,32 @@ describe('UserService', () => {
   let service: UserService;
   let repo: ReturnType<typeof mockRepo>;
   let jwt: ReturnType<typeof mockJwt>;
+  let tx: { log: jest.Mock; sumByUserAndType: jest.Mock };
+  let fakeManager: { findOne: jest.Mock; save: jest.Mock; count: jest.Mock };
+  let dataSource: { transaction: jest.Mock };
 
   beforeEach(async () => {
+    tx = {
+      log: jest.fn().mockResolvedValue(undefined),
+      sumByUserAndType: jest.fn().mockResolvedValue(0),
+    };
+    fakeManager = {
+      findOne: jest.fn(),
+      save: jest.fn().mockImplementation(async (a: any, b?: any) => b ?? a),
+      count: jest.fn().mockResolvedValue(0),
+    };
+    dataSource = {
+      transaction: jest.fn().mockImplementation(async (cb: any) => cb(fakeManager)),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UserService,
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: JwtService, useFactory: mockJwt },
-        { provide: TransactionService, useValue: { recordCredit: jest.fn() } },
+        { provide: TransactionService, useValue: tx },
         { provide: ReportService, useValue: { getReportSummary: jest.fn().mockResolvedValue(null) } },
+        { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
 
@@ -158,6 +177,226 @@ describe('UserService', () => {
       repo.save.mockImplementation(async (u: any) => u);
       const result = await service.deactivate(user.id);
       expect(result.deactivatedAt).toEqual(original);
+    });
+  });
+
+  describe('getReferralCode', () => {
+    // GET /user/referral-code now also surfaces the referrer's lifetime earned
+    // referral commission — the SUM of their REFERRAL_COMMISSION transactions
+    // (real wallet money from the ongoing 3% on invitees' earnings). Code and
+    // count behaviour must stay exactly as before.
+
+    it('returns referralEarnings summed from the user’s REFERRAL_COMMISSION rows', async () => {
+      const user = mockUser({ id: 7, referralCode: 'PROBO-ABCDEFGH' });
+      repo.findOne.mockResolvedValue(user);
+      repo.count.mockResolvedValue(3);
+      tx.sumByUserAndType.mockResolvedValue(12.3456);
+
+      const result = await service.getReferralCode(7);
+
+      expect(result.referralEarnings).toBe(12.3456);
+      expect(tx.sumByUserAndType).toHaveBeenCalledWith(7, 'REFERRAL_COMMISSION');
+      // Unchanged code + count behaviour.
+      expect(result.referralCode).toBe('PROBO-ABCDEFGH');
+      expect(result.referredCount).toBe(3);
+    });
+
+    it('returns referralEarnings 0 when the user has no REFERRAL_COMMISSION rows', async () => {
+      const user = mockUser({ id: 7, referralCode: 'PROBO-ABCDEFGH' });
+      repo.findOne.mockResolvedValue(user);
+      repo.count.mockResolvedValue(0);
+      tx.sumByUserAndType.mockResolvedValue(0);
+
+      const result = await service.getReferralCode(7);
+
+      expect(result.referralEarnings).toBe(0);
+      expect(result.referralCode).toBe('PROBO-ABCDEFGH');
+      expect(result.referredCount).toBe(0);
+    });
+
+    it('throws NotFoundException when the user does not exist', async () => {
+      repo.findOne.mockResolvedValue(null);
+      const { NotFoundException } = require('@nestjs/common');
+      await expect(service.getReferralCode(999)).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('referral linkage & opaque codes', () => {
+    const REFERRER_ID = 7;
+
+    // Helper: wire the create-branch path of signup/login for a brand-new
+    // referred user. The referee row gets id 3; the referrer is id 7.
+    const wireCreate = (refereeId = 3) => {
+      // phone lookup misses -> create branch; create returns a fresh row.
+      repo.findOne.mockImplementation(async (opts: any) => {
+        // resolveReferrer looks up by referralCode; phone lookup is by phoneNumber.
+        if (opts?.where?.referralCode) return { id: REFERRER_ID } as User;
+        return null; // phoneNumber miss -> create
+      });
+      repo.create.mockImplementation((data: any) => ({ ...data }));
+      repo.save.mockImplementation(async (u: any) => {
+        if (u.id === undefined) u.id = refereeId; // first save assigns the id
+        return u;
+      });
+      repo.count.mockResolvedValue(0); // referralCode uniqueness check
+    };
+
+    it('links referredBy on a referred signup but credits NO signup bonus', async () => {
+      wireCreate(3);
+
+      await service.signup({ phoneNumber: '+27820000003', email: 'a@b.c', name: 'New', referralCode: 'PROBO-XXXXXXXX' });
+
+      // The created row carries referredBy = the referrer's id.
+      const created = repo.create.mock.calls[0][0];
+      expect(created.referredBy).toBe(REFERRER_ID);
+      // No flat referral bonus is written any more.
+      const bonusLogs = tx.log.mock.calls.filter((c: any[]) => c[1] === 'REFERRAL_BONUS');
+      expect(bonusLogs).toHaveLength(0);
+    });
+
+    it('links referredBy on a referred login create-branch but credits NO signup bonus', async () => {
+      wireCreate(3);
+
+      await service.login({ phoneNumber: '+27820000003', referralCode: 'PROBO-XXXXXXXX' });
+
+      const created = repo.create.mock.calls[0][0];
+      expect(created.referredBy).toBe(REFERRER_ID);
+      const bonusLogs = tx.log.mock.calls.filter((c: any[]) => c[1] === 'REFERRAL_BONUS');
+      expect(bonusLogs).toHaveLength(0);
+    });
+
+    it('self-referral linkage: code resolving to the new user own id -> not linked, no throw', async () => {
+      // resolveReferrer returns the same id that the new row will get (3).
+      repo.findOne.mockImplementation(async (opts: any) => {
+        if (opts?.where?.referralCode) return { id: 3 } as User;
+        return null;
+      });
+      repo.create.mockImplementation((data: any) => ({ ...data }));
+      repo.save.mockImplementation(async (u: any) => { if (u.id === undefined) u.id = 3; return u; });
+      repo.count.mockResolvedValue(0);
+
+      await expect(
+        service.signup({ phoneNumber: '+27820000003', email: 'a@b.c', name: 'New', referralCode: 'PROBO-SELFSELF' }),
+      ).resolves.toHaveProperty('accessToken');
+
+      // referredBy is the referrer code's owner id (3); the self-referral guard
+      // lives in ReferralService.payCommission, which no-ops when referrer === earner.
+      const bonusLogs = tx.log.mock.calls.filter((c: any[]) => c[1] === 'REFERRAL_BONUS');
+      expect(bonusLogs).toHaveLength(0);
+    });
+
+    it('unknown/invalid code: user created organically with tokens, not linked, no throw', async () => {
+      repo.findOne.mockImplementation(async (opts: any) => {
+        if (opts?.where?.referralCode) return null; // unknown code
+        return null; // phone miss -> create
+      });
+      repo.create.mockImplementation((data: any) => ({ ...data }));
+      repo.save.mockImplementation(async (u: any) => { if (u.id === undefined) u.id = 3; return u; });
+      repo.count.mockResolvedValue(0);
+
+      const result = await service.signup({ phoneNumber: '+27820000003', email: 'a@b.c', name: 'New', referralCode: 'NOPE' });
+      expect(result).toHaveProperty('accessToken');
+      const created = repo.create.mock.calls[0][0];
+      expect(created.referredBy).toBeUndefined();
+    });
+
+    it('opaque code: every char is drawn from the EXACT alphabet (no ambiguous I/O/L/U/0/1)', async () => {
+      // The generator alphabet is Crockford-ish: ABCDEFGHJKMNPQRSTVWXYZ23456789.
+      // Tightened from the looser /[A-Z2-9]/ which would wrongly admit I/O/L/U.
+      const ALPHABET = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
+      const codes: string[] = [];
+      repo.findOne.mockResolvedValue(null);
+      repo.create.mockImplementation((data: any) => ({ ...data }));
+      repo.save.mockImplementation(async (u: any) => {
+        if (u.id === undefined) u.id = 42;
+        if (u.referralCode) codes.push(u.referralCode);
+        return u;
+      });
+      repo.count.mockResolvedValue(0);
+
+      // Many draws to make the alphabet-membership check meaningful.
+      for (let i = 0; i < 50; i++) {
+        await service.signup({ phoneNumber: `+2782000${(1000 + i)}`, email: 'a@b.c', name: 'New' });
+      }
+
+      expect(codes.length).toBeGreaterThan(0);
+      const exactRe = new RegExp(`^PROBO-[${ALPHABET}]{8}$`);
+      for (const code of codes) {
+        expect(code).toMatch(exactRe);
+        const body = code.slice('PROBO-'.length);
+        for (const ch of body) expect(ALPHABET).toContain(ch);
+      }
+    });
+
+    it('opaque code: index selection is unbiased — uses crypto.randomInt, not byte%len modulo', async () => {
+      // 256 is not a multiple of the 30-char alphabet, so `byte % 30` over-weights
+      // the first 16 symbols. crypto.randomInt does rejection sampling internally,
+      // eliminating the bias. Assert the generator routes through randomInt.
+      const crypto = require('crypto');
+      const spy = jest.spyOn(crypto, 'randomInt');
+      repo.findOne.mockResolvedValue(null);
+      repo.create.mockImplementation((data: any) => ({ ...data }));
+      repo.save.mockImplementation(async (u: any) => { if (u.id === undefined) u.id = 42; return u; });
+      repo.count.mockResolvedValue(0);
+
+      try {
+        await service.signup({ phoneNumber: '+27820000777', email: 'a@b.c', name: 'New' });
+        // 8 chars -> 8 unbiased index draws, each bounded by the alphabet length.
+        expect(spy).toHaveBeenCalled();
+        const calls = spy.mock.calls;
+        expect(calls.length).toBeGreaterThanOrEqual(8);
+        for (const args of calls) {
+          // Called as randomInt(max) -> upper bound is the alphabet length (30).
+          expect(args[args.length - 1]).toBe(30);
+        }
+      } finally {
+        spy.mockRestore();
+      }
+    });
+
+    it('opaque code: generated referralCode matches the EXACT alphabet /^PROBO-[ABCDEFGHJKMNPQRSTVWXYZ23456789]{8}$/ and is not PROBO-${id}', async () => {
+      repo.findOne.mockResolvedValue(null);
+      repo.create.mockImplementation((data: any) => ({ ...data }));
+      let assigned: string | undefined;
+      repo.save.mockImplementation(async (u: any) => {
+        if (u.id === undefined) u.id = 42;
+        if (u.referralCode) assigned = u.referralCode;
+        return u;
+      });
+      repo.count.mockResolvedValue(0);
+
+      await service.signup({ phoneNumber: '+27820000099', email: 'a@b.c', name: 'New' });
+
+      // Exact Crockford-ish alphabet: no I/O/L/U/0/1 — tighter than [A-Z2-9].
+      expect(assigned).toMatch(/^PROBO-[ABCDEFGHJKMNPQRSTVWXYZ23456789]{8}$/);
+      expect(assigned).not.toBe('PROBO-42');
+    });
+
+    it('opaque code: retries on a collision then succeeds', async () => {
+      repo.findOne.mockResolvedValue(null);
+      repo.create.mockImplementation((data: any) => ({ ...data }));
+      repo.save.mockImplementation(async (u: any) => { if (u.id === undefined) u.id = 42; return u; });
+      // First candidate clashes (count 1), second is free (count 0).
+      repo.count.mockResolvedValueOnce(1).mockResolvedValueOnce(0);
+
+      const result = await service.signup({ phoneNumber: '+27820000099', email: 'a@b.c', name: 'New' });
+      expect(result.user).toHaveProperty('id', 42);
+      expect(repo.count).toHaveBeenCalledTimes(2);
+    });
+
+    it('retry exhaustion: assignReferralCode hits 5 consecutive unique-collisions -> throws during creation', async () => {
+      // Every candidate clashes (count always > 0). The 5-retry loop is
+      // exhausted, so account CREATION throws (the code is allocated at create
+      // time).
+      repo.findOne.mockResolvedValue(null); // phone miss -> create branch
+      repo.create.mockImplementation((data: any) => ({ ...data }));
+      repo.save.mockImplementation(async (u: any) => { if (u.id === undefined) u.id = 42; return u; });
+      repo.count.mockResolvedValue(1); // every referralCode candidate collides
+
+      await expect(
+        service.signup({ phoneNumber: '+27820000099', email: 'a@b.c', name: 'New' }),
+      ).rejects.toThrow('Could not allocate a unique referral code');
+      expect(repo.count).toHaveBeenCalledTimes(5);
     });
   });
 

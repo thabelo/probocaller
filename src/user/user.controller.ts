@@ -108,7 +108,7 @@ export class UserController {
   @Get('referral-code')
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get own referral code and referred user count' })
+  @ApiOperation({ summary: 'Get own referral code, referred user count, and total referral earnings' })
   async getReferralCode(@Request() req) {
     return this.userService.getReferralCode(req.user.userId);
   }

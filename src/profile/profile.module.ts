@@ -9,10 +9,12 @@ import { Business } from '../business/business.entity';
 import { Transaction } from '../transaction/transaction.entity';
 import { ProfileService } from './profile.service';
 import { ProfileController } from './profile.controller';
+import { ReferralModule } from '../referral/referral.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([ProfileField, UserProfile, DataAccessLog, BusinessAudience, User, Business, Transaction]),
+    ReferralModule,
   ],
   providers: [ProfileService],
   controllers: [ProfileController],

@@ -3,21 +3,13 @@ import { config as loadEnv } from 'dotenv';
 loadEnv();
 
 import { DataSource } from 'typeorm';
-import { User } from './src/user/user.entity';
-import { CallLog } from './src/call/call.entity';
-import { CallRating } from './src/call/call-rating.entity';
-import { Setting } from './src/config/setting.entity';
-import { Business } from './src/business/business.entity';
-import { BusinessNumber } from './src/business/business-number.entity';
-import { Transaction } from './src/transaction/transaction.entity';
-import { PhoneReport } from './src/report/phone-report.entity';
-import { PhoneReportVote } from './src/report/phone-report-vote.entity';
-import { CallPermissionRequest } from './src/data-broker/call-permission-request.entity';
-import { ProfileField } from './src/profile/profile-field.entity';
-import { UserProfile } from './src/profile/user-profile.entity';
-import { DataAccessLog } from './src/profile/data-access-log.entity';
-import { BusinessAudience } from './src/profile/business-audience.entity';
+import { ENTITIES } from './src/common/db/entities';
 
+// ENTITIES is the single canonical list, shared with the runtime config in
+// src/app.module.ts. Registering it here means the migration CLI (generate/run)
+// sees exactly the same schema the app does — no more silent table drift, which
+// is what left 13 tables (Withdrawal, BankAccount, messaging, KYB, FICA, …) out
+// of the migration schema and made a fresh-DB deploy impossible.
 export const AppDataSource = new DataSource({
   type: 'postgres',
   host: process.env.DB_HOST || 'localhost',
@@ -25,11 +17,7 @@ export const AppDataSource = new DataSource({
   username: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME,
-  entities: [
-    User, CallLog, CallRating, Setting, Business, BusinessNumber,
-    Transaction, PhoneReport, PhoneReportVote, CallPermissionRequest,
-    ProfileField, UserProfile, DataAccessLog, BusinessAudience,
-  ],
+  entities: ENTITIES,
   migrations: ['src/migrations/*.ts'],
   synchronize: false,
   logging: false,

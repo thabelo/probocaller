@@ -8,7 +8,7 @@ export class Transaction {
   @Column()
   userId: number;
 
-  // CREDIT_ADDED | CALL_CHARGE | CALL_EARN | ADMIN_CREDIT | ADMIN_DEBIT | DATA_PURCHASE | DATA_EARN
+  // CREDIT_ADDED | CALL_CHARGE | CALL_EARN | ADMIN_CREDIT | ADMIN_DEBIT | DATA_PURCHASE | DATA_EARN | REFERRAL_COMMISSION
   @Column()
   type: string;
 

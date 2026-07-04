@@ -11,6 +11,7 @@ import { Transaction } from '../transaction/transaction.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpsertProfileFieldDto } from './dto/upsert-profile-field.dto';
 import { QueryAudienceDto, SaveAudienceDto } from './dto/query-audience.dto';
+import { ReferralService } from '../referral/referral.service';
 
 const TIER_THRESHOLDS = { basic: 0, silver: 25, gold: 50, platinum: 75 };
 
@@ -38,6 +39,7 @@ export class ProfileService {
     private businessRepo: Repository<Business>,
     @InjectRepository(Transaction)
     private txRepo: Repository<Transaction>,
+    private readonly referralService: ReferralService,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -242,6 +244,10 @@ export class ProfileService {
           userId: profile.userId, type: 'DATA_EARN', amount: userEarning,
           description: `Profile data accessed by ${business.companyName}`,
         }));
+
+        // Lifetime referral commission: if this data-owner was referred, pay
+        // their referrer an EXTRA 3% on this earning inside the SAME manager/tx.
+        await this.referralService.payCommission(profile.userId, userEarning, manager);
 
         const leadData: Record<string, any> = {};
         for (const k of sharableKeys) leadData[k] = profile.data[k];

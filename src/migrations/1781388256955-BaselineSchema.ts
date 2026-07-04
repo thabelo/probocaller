@@ -1,0 +1,128 @@
+import { MigrationInterface, QueryRunner } from "typeorm";
+
+export class BaselineSchema1781388256955 implements MigrationInterface {
+    name = 'BaselineSchema1781388256955'
+
+    public async up(queryRunner: QueryRunner): Promise<void> {
+        await queryRunner.query(`CREATE TABLE "users" ("id" SERIAL NOT NULL, "phoneNumber" character varying NOT NULL, "email" character varying, "name" character varying, "isSpam" boolean NOT NULL DEFAULT false, "role" character varying NOT NULL DEFAULT 'user', "isBusiness" boolean NOT NULL DEFAULT false, "tier" character varying NOT NULL DEFAULT 'free', "walletBalance" numeric(10,4) NOT NULL DEFAULT '0', "spamList" text NOT NULL DEFAULT '', "notifications" text NOT NULL DEFAULT '[]', "callPermissionMode" character varying NOT NULL DEFAULT 'all', "allowedCallWindows" text NOT NULL DEFAULT '[]', "dataShareEnabled" boolean NOT NULL DEFAULT false, "incognitoEnabled" boolean NOT NULL DEFAULT false, "dataCategories" text NOT NULL DEFAULT '', "referralCode" character varying, "referredBy" integer, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), "updatedAt" TIMESTAMP NOT NULL DEFAULT now(), "deactivatedAt" TIMESTAMP, CONSTRAINT "UQ_1e3d0240b49c40521aaeb953293" UNIQUE ("phoneNumber"), CONSTRAINT "UQ_b7f8278f4e89249bb75c9a15899" UNIQUE ("referralCode"), CONSTRAINT "PK_a3ffb1c0c8416b9fc6f907b7433" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "call_logs" ("id" SERIAL NOT NULL, "fromUserId" integer NOT NULL, "toUserId" integer NOT NULL, "duration" integer NOT NULL DEFAULT '0', "cost" numeric(10,4) NOT NULL DEFAULT '0', "platformCut" numeric(10,4) NOT NULL DEFAULT '0', "userEarnings" numeric(10,4) NOT NULL DEFAULT '0', "ratePerSecond" numeric(10,6) NOT NULL DEFAULT '0.002', "status" character varying NOT NULL DEFAULT 'initiated', "blockedReason" character varying(255), "startedAt" TIMESTAMP NOT NULL DEFAULT now(), "completedAt" TIMESTAMP, CONSTRAINT "PK_aa08476bcc13bfdf394261761e9" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "business_numbers" ("id" SERIAL NOT NULL, "businessId" integer NOT NULL, "phoneNumber" character varying NOT NULL, "purpose" character varying NOT NULL, "label" character varying, "active" boolean NOT NULL DEFAULT true, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_8c2ccd533497f42449ab499bc51" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "businesses" ("id" SERIAL NOT NULL, "userId" integer NOT NULL, "companyName" character varying NOT NULL, "registrationNumber" character varying, "industry" character varying NOT NULL, "website" character varying, "description" text, "logoUrl" character varying, "contactEmail" character varying, "contactPhone" character varying, "address" character varying, "verified" boolean NOT NULL DEFAULT false, "active" boolean NOT NULL DEFAULT true, "tier" character varying NOT NULL DEFAULT 'unverified', "averageRating" numeric(3,2) NOT NULL DEFAULT '0', "totalRatings" integer NOT NULL DEFAULT '0', "createdAt" TIMESTAMP NOT NULL DEFAULT now(), "updatedAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_bc1bf63498dd2368ce3dc8686e8" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "call_ratings" ("id" SERIAL NOT NULL, "callId" integer NOT NULL, "raterId" integer NOT NULL, "businessId" integer NOT NULL, "rating" integer NOT NULL, "comment" text, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "UQ_b237e648d7776202bb78c6af7a2" UNIQUE ("callId"), CONSTRAINT "PK_82614b8636796b7e02189ba8dfc" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "settings" ("id" SERIAL NOT NULL, "key" character varying NOT NULL, "value" character varying NOT NULL, "description" character varying, "updatedAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "UQ_c8639b7626fa94ba8265628f214" UNIQUE ("key"), CONSTRAINT "PK_0669fe20e252eb692bf4d344975" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "transactions" ("id" SERIAL NOT NULL, "userId" integer NOT NULL, "type" character varying NOT NULL, "amount" numeric(10,4) NOT NULL, "description" character varying NOT NULL DEFAULT '', "callId" integer, "reference" character varying, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_a219afd8dd77ed80f5a862f1db9" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "phone_reports" ("id" SERIAL NOT NULL, "phone" character varying NOT NULL, "country" character varying, "code" character varying, "phoneLocal" character varying, "spamReports" integer NOT NULL DEFAULT '0', "suspectedBusinessReports" integer NOT NULL DEFAULT '0', "trustedBusiness" boolean NOT NULL DEFAULT false, "lastComplaint" date, "lastReason" character varying, "riskScore" integer NOT NULL DEFAULT '0', "createdAt" TIMESTAMP NOT NULL DEFAULT now(), "updatedAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "UQ_1814ea6bbf2f660776e64717326" UNIQUE ("phone"), CONSTRAINT "PK_7692abac1047b7fe3564c726f19" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "phone_report_votes" ("id" SERIAL NOT NULL, "reporterPhone" character varying NOT NULL, "reportedPhone" character varying NOT NULL, "reason" character varying, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "UQ_a80941a4f295d1fc8a5ffd36bd6" UNIQUE ("reporterPhone", "reportedPhone"), CONSTRAINT "PK_e4e62926de79f0e66369028ba96" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "call_permission_requests" ("id" SERIAL NOT NULL, "businessId" integer NOT NULL, "userId" integer NOT NULL, "status" character varying NOT NULL DEFAULT 'pending', "pitch" character varying(160), "callCategory" character varying, "bidAmount" numeric(10,4) NOT NULL DEFAULT '0', "escrowAmount" numeric(10,4), "escrowStatus" character varying NOT NULL DEFAULT 'none', "settledAt" TIMESTAMP, "approvedAt" TIMESTAMP, "expiresAt" TIMESTAMP, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), "updatedAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_8e8e0af87df22c967131430c1f2" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "profile_fields" ("id" SERIAL NOT NULL, "key" character varying NOT NULL, "label" character varying NOT NULL, "type" character varying NOT NULL DEFAULT 'select', "options" text NOT NULL DEFAULT '[]', "weight" numeric(5,2) NOT NULL DEFAULT '10', "creditCost" numeric(10,4) NOT NULL DEFAULT '0.01', "enabled" boolean NOT NULL DEFAULT true, "sortOrder" integer NOT NULL DEFAULT '0', "createdAt" TIMESTAMP NOT NULL DEFAULT now(), "updatedAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "UQ_b3e3f8e74a3cf507789df397798" UNIQUE ("key"), CONSTRAINT "PK_8774d5a1b2012fab8e5dbedbbb0" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "user_profiles" ("id" SERIAL NOT NULL, "userId" integer NOT NULL, "data" text NOT NULL DEFAULT '{}', "verifiedFields" text NOT NULL DEFAULT '{}', "completionScore" numeric(5,2) NOT NULL DEFAULT '0', "tier" character varying NOT NULL DEFAULT 'basic', "floorPrices" text NOT NULL DEFAULT '{}', "lastUpdated" TIMESTAMP NOT NULL DEFAULT now(), "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "UQ_8481388d6325e752cd4d7e26c6d" UNIQUE ("userId"), CONSTRAINT "REL_8481388d6325e752cd4d7e26c6" UNIQUE ("userId"), CONSTRAINT "PK_1ec6662219f4605723f1e41b6cb" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "data_access_logs" ("id" SERIAL NOT NULL, "userId" integer NOT NULL, "businessId" integer NOT NULL, "fieldsAccessed" text NOT NULL, "purpose" character varying, "creditsCost" numeric(10,4) NOT NULL DEFAULT '0', "userEarnings" numeric(10,4) NOT NULL DEFAULT '0', "consentExpiresAt" TIMESTAMP WITH TIME ZONE, "accessedAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_887a3d112356cce5f7e918d9a09" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "business_audiences" ("id" SERIAL NOT NULL, "businessId" integer NOT NULL, "name" character varying NOT NULL, "filters" text NOT NULL DEFAULT '{}', "estimatedReach" integer NOT NULL DEFAULT '0', "active" boolean NOT NULL DEFAULT true, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), "updatedAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_470b0eb7d53cba5efe799af2359" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "kyb_documents" ("id" SERIAL NOT NULL, "submissionId" integer NOT NULL, "documentType" character varying NOT NULL, "originalName" character varying NOT NULL, "filePath" character varying NOT NULL, "mimeType" character varying NOT NULL, "fileSizeBytes" integer NOT NULL, "uploadedAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_f0a7bf221c622cf80273e5dcaef" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE INDEX "IDX_6e2593b6ecc3c93452a3d33eda" ON "kyb_documents" ("submissionId") `);
+        await queryRunner.query(`CREATE TABLE "kyb_submissions" ("id" SERIAL NOT NULL, "businessId" integer NOT NULL, "countryCode" character varying(2) NOT NULL, "status" character varying NOT NULL DEFAULT 'draft', "businessInfo" jsonb NOT NULL, "reviewedBy" integer, "rejectionReason" text, "reviewerNotes" text, "reviewedAt" TIMESTAMP, "submittedAt" TIMESTAMP NOT NULL DEFAULT now(), "updatedAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_59d9cb5cc582ec9d1cf481c2f8c" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE INDEX "IDX_0af8d9c6bd70f2cc52477f5c2f" ON "kyb_submissions" ("businessId") `);
+        await queryRunner.query(`CREATE TABLE "blocked_keywords" ("id" SERIAL NOT NULL, "userId" integer NOT NULL, "keyword" character varying NOT NULL, "scope" character varying NOT NULL DEFAULT 'both', "active" boolean NOT NULL DEFAULT true, "note" character varying, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "UQ_4a4a317ac91e6c986201b7114a9" UNIQUE ("userId", "keyword"), CONSTRAINT "PK_9437e7b1a74879543db2e663532" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "sms_deletion_logs" ("id" SERIAL NOT NULL, "userId" integer NOT NULL, "sender" character varying NOT NULL, "matchedPattern" character varying NOT NULL, "matchedText" character varying, "bodyEncrypted" text, "iv" character varying, "note" character varying, "deletedAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_3a9a3bc595041a7de3fc6b2d13f" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE INDEX "IDX_462f04eb04d8e3bc3cca7f2cdc" ON "sms_deletion_logs" ("userId", "deletedAt") `);
+        await queryRunner.query(`CREATE TABLE "spam_reports" ("id" SERIAL NOT NULL, "userId" integer NOT NULL, "senderHash" character varying(64) NOT NULL, "bodyHash" character varying(64) NOT NULL, "matchedPattern" character varying NOT NULL, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_a3fd47f79b0c40d9b1d8bc1077c" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE INDEX "IDX_dae953d7a98e7b791737813719" ON "spam_reports" ("bodyHash") `);
+        await queryRunner.query(`CREATE INDEX "IDX_af0619503baa214b60967b7947" ON "spam_reports" ("senderHash", "createdAt") `);
+        await queryRunner.query(`CREATE TABLE "reported_sms" ("id" SERIAL NOT NULL, "reporterUserId" integer NOT NULL, "sender" character varying NOT NULL, "body" text NOT NULL, "reason" character varying NOT NULL, "userNote" text, "status" character varying NOT NULL DEFAULT 'pending', "reviewedBy" integer, "reviewedAt" TIMESTAMP, "adminNotes" text, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_0cb18cf2f07bc7b586d8dc0ebe8" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE INDEX "IDX_4fa9bf5693b6191faf00a19148" ON "reported_sms" ("reporterUserId", "createdAt") `);
+        await queryRunner.query(`CREATE INDEX "IDX_101988acf6a69fe3d527a788f3" ON "reported_sms" ("status", "createdAt") `);
+        await queryRunner.query(`CREATE TABLE "bank_accounts" ("id" SERIAL NOT NULL, "userId" integer NOT NULL, "country" character varying(2), "bankName" character varying NOT NULL, "accountHolder" character varying NOT NULL, "accountNumber" character varying NOT NULL, "accountType" character varying NOT NULL DEFAULT 'cheque', "branchCode" character varying, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), "updatedAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_c872de764f2038224a013ff25ed" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE UNIQUE INDEX "IDX_45ef3ca170943e2c70e8073a7c" ON "bank_accounts" ("userId") `);
+        await queryRunner.query(`CREATE TABLE "fica_documents" ("id" SERIAL NOT NULL, "submissionId" integer NOT NULL, "documentType" character varying NOT NULL, "originalName" character varying NOT NULL, "filePath" character varying NOT NULL, "mimeType" character varying NOT NULL, "fileSizeBytes" integer NOT NULL, "uploadedAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_f0d3da1c3bf7cb3f7480b1670e9" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE INDEX "IDX_c9856f97a065fd7a094a1ca0f4" ON "fica_documents" ("submissionId") `);
+        await queryRunner.query(`CREATE TABLE "fica_submissions" ("id" SERIAL NOT NULL, "userId" integer NOT NULL, "status" character varying NOT NULL DEFAULT 'draft', "fullName" character varying NOT NULL, "idNumber" character varying NOT NULL, "idType" character varying NOT NULL DEFAULT 'sa_id', "residentialAddress" text NOT NULL, "reviewedBy" integer, "rejectionReason" text, "reviewedAt" TIMESTAMP, "submittedAt" TIMESTAMP, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), "updatedAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_1539abaf9302c5d255461d9881b" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE INDEX "IDX_41dc54723e134edbb6c492564a" ON "fica_submissions" ("userId") `);
+        await queryRunner.query(`CREATE TABLE "withdrawals" ("id" SERIAL NOT NULL, "userId" integer NOT NULL, "amount" numeric(10,4) NOT NULL, "status" character varying NOT NULL DEFAULT 'pending', "bankAccountSnapshot" jsonb NOT NULL, "reviewedBy" integer, "adminNotes" text, "reviewedAt" TIMESTAMP, "cancelledAt" TIMESTAMP, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), "updatedAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_9871ec481baa7755f8bd8b7c7e9" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE INDEX "IDX_79a3949e02a4652fb2b2a0ccd4" ON "withdrawals" ("userId") `);
+        await queryRunner.query(`CREATE TABLE "conversations" ("id" SERIAL NOT NULL, "participantA" integer NOT NULL, "participantB" integer NOT NULL, "initiatorId" integer NOT NULL, "accepted" boolean NOT NULL DEFAULT false, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_ee34f4f7ced4ec8681f26bf04ef" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE TABLE "messages" ("id" SERIAL NOT NULL, "conversationId" integer NOT NULL, "senderId" integer NOT NULL, "body" text NOT NULL, "readAt" TIMESTAMP, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_18325f38ae6de43878487eff986" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`CREATE INDEX "IDX_e5663ce0c730b2de83445e2fd1" ON "messages" ("conversationId") `);
+        await queryRunner.query(`CREATE TABLE "call_screenings" ("id" SERIAL NOT NULL, "userId" integer NOT NULL, "callerNumber" character varying NOT NULL, "action" character varying NOT NULL, "transcript" text, "summary" text, "createdAt" TIMESTAMP NOT NULL DEFAULT now(), CONSTRAINT "PK_3317654eb6c6ed1dd49979d9dd8" PRIMARY KEY ("id"))`);
+        await queryRunner.query(`ALTER TABLE "call_logs" ADD CONSTRAINT "FK_abd7028a4e2ce110b240746c786" FOREIGN KEY ("fromUserId") REFERENCES "users"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "call_logs" ADD CONSTRAINT "FK_204185030a56fc284cace6428aa" FOREIGN KEY ("toUserId") REFERENCES "users"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "business_numbers" ADD CONSTRAINT "FK_8d0d2b5f87d46153c56ced13e4f" FOREIGN KEY ("businessId") REFERENCES "businesses"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "businesses" ADD CONSTRAINT "FK_5ba6375fdc72387a2d2d0bb7720" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "call_ratings" ADD CONSTRAINT "FK_b237e648d7776202bb78c6af7a2" FOREIGN KEY ("callId") REFERENCES "call_logs"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "call_ratings" ADD CONSTRAINT "FK_ed90c09e9a20cc010278f2bdb1b" FOREIGN KEY ("raterId") REFERENCES "users"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "call_ratings" ADD CONSTRAINT "FK_be7ca7ff18ba156b0fe496fd382" FOREIGN KEY ("businessId") REFERENCES "businesses"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "call_permission_requests" ADD CONSTRAINT "FK_aaa736501d4640970f8e03a8d9e" FOREIGN KEY ("businessId") REFERENCES "businesses"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "call_permission_requests" ADD CONSTRAINT "FK_e8d11497e3313bca9de6c7f210f" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "user_profiles" ADD CONSTRAINT "FK_8481388d6325e752cd4d7e26c6d" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "data_access_logs" ADD CONSTRAINT "FK_3737cd8f30f2494509c6a7f3794" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "data_access_logs" ADD CONSTRAINT "FK_5794edb97cf7d480b8e50f44798" FOREIGN KEY ("businessId") REFERENCES "businesses"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "business_audiences" ADD CONSTRAINT "FK_e15e773adfcc3eee582be9679c0" FOREIGN KEY ("businessId") REFERENCES "businesses"("id") ON DELETE NO ACTION ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "kyb_documents" ADD CONSTRAINT "FK_6e2593b6ecc3c93452a3d33eda8" FOREIGN KEY ("submissionId") REFERENCES "kyb_submissions"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "kyb_submissions" ADD CONSTRAINT "FK_0af8d9c6bd70f2cc52477f5c2fb" FOREIGN KEY ("businessId") REFERENCES "businesses"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "blocked_keywords" ADD CONSTRAINT "FK_a3f655363e5e302689d251df90d" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "sms_deletion_logs" ADD CONSTRAINT "FK_1c2d3df01c9e1b9592017e680a3" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "reported_sms" ADD CONSTRAINT "FK_db6723fe358d6c0aa902bcd4592" FOREIGN KEY ("reporterUserId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
+        await queryRunner.query(`ALTER TABLE "fica_documents" ADD CONSTRAINT "FK_c9856f97a065fd7a094a1ca0f47" FOREIGN KEY ("submissionId") REFERENCES "fica_submissions"("id") ON DELETE CASCADE ON UPDATE NO ACTION`);
+    }
+
+    public async down(queryRunner: QueryRunner): Promise<void> {
+        await queryRunner.query(`ALTER TABLE "fica_documents" DROP CONSTRAINT "FK_c9856f97a065fd7a094a1ca0f47"`);
+        await queryRunner.query(`ALTER TABLE "reported_sms" DROP CONSTRAINT "FK_db6723fe358d6c0aa902bcd4592"`);
+        await queryRunner.query(`ALTER TABLE "sms_deletion_logs" DROP CONSTRAINT "FK_1c2d3df01c9e1b9592017e680a3"`);
+        await queryRunner.query(`ALTER TABLE "blocked_keywords" DROP CONSTRAINT "FK_a3f655363e5e302689d251df90d"`);
+        await queryRunner.query(`ALTER TABLE "kyb_submissions" DROP CONSTRAINT "FK_0af8d9c6bd70f2cc52477f5c2fb"`);
+        await queryRunner.query(`ALTER TABLE "kyb_documents" DROP CONSTRAINT "FK_6e2593b6ecc3c93452a3d33eda8"`);
+        await queryRunner.query(`ALTER TABLE "business_audiences" DROP CONSTRAINT "FK_e15e773adfcc3eee582be9679c0"`);
+        await queryRunner.query(`ALTER TABLE "data_access_logs" DROP CONSTRAINT "FK_5794edb97cf7d480b8e50f44798"`);
+        await queryRunner.query(`ALTER TABLE "data_access_logs" DROP CONSTRAINT "FK_3737cd8f30f2494509c6a7f3794"`);
+        await queryRunner.query(`ALTER TABLE "user_profiles" DROP CONSTRAINT "FK_8481388d6325e752cd4d7e26c6d"`);
+        await queryRunner.query(`ALTER TABLE "call_permission_requests" DROP CONSTRAINT "FK_e8d11497e3313bca9de6c7f210f"`);
+        await queryRunner.query(`ALTER TABLE "call_permission_requests" DROP CONSTRAINT "FK_aaa736501d4640970f8e03a8d9e"`);
+        await queryRunner.query(`ALTER TABLE "call_ratings" DROP CONSTRAINT "FK_be7ca7ff18ba156b0fe496fd382"`);
+        await queryRunner.query(`ALTER TABLE "call_ratings" DROP CONSTRAINT "FK_ed90c09e9a20cc010278f2bdb1b"`);
+        await queryRunner.query(`ALTER TABLE "call_ratings" DROP CONSTRAINT "FK_b237e648d7776202bb78c6af7a2"`);
+        await queryRunner.query(`ALTER TABLE "businesses" DROP CONSTRAINT "FK_5ba6375fdc72387a2d2d0bb7720"`);
+        await queryRunner.query(`ALTER TABLE "business_numbers" DROP CONSTRAINT "FK_8d0d2b5f87d46153c56ced13e4f"`);
+        await queryRunner.query(`ALTER TABLE "call_logs" DROP CONSTRAINT "FK_204185030a56fc284cace6428aa"`);
+        await queryRunner.query(`ALTER TABLE "call_logs" DROP CONSTRAINT "FK_abd7028a4e2ce110b240746c786"`);
+        await queryRunner.query(`DROP TABLE "call_screenings"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_e5663ce0c730b2de83445e2fd1"`);
+        await queryRunner.query(`DROP TABLE "messages"`);
+        await queryRunner.query(`DROP TABLE "conversations"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_79a3949e02a4652fb2b2a0ccd4"`);
+        await queryRunner.query(`DROP TABLE "withdrawals"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_41dc54723e134edbb6c492564a"`);
+        await queryRunner.query(`DROP TABLE "fica_submissions"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_c9856f97a065fd7a094a1ca0f4"`);
+        await queryRunner.query(`DROP TABLE "fica_documents"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_45ef3ca170943e2c70e8073a7c"`);
+        await queryRunner.query(`DROP TABLE "bank_accounts"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_101988acf6a69fe3d527a788f3"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_4fa9bf5693b6191faf00a19148"`);
+        await queryRunner.query(`DROP TABLE "reported_sms"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_af0619503baa214b60967b7947"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_dae953d7a98e7b791737813719"`);
+        await queryRunner.query(`DROP TABLE "spam_reports"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_462f04eb04d8e3bc3cca7f2cdc"`);
+        await queryRunner.query(`DROP TABLE "sms_deletion_logs"`);
+        await queryRunner.query(`DROP TABLE "blocked_keywords"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_0af8d9c6bd70f2cc52477f5c2f"`);
+        await queryRunner.query(`DROP TABLE "kyb_submissions"`);
+        await queryRunner.query(`DROP INDEX "public"."IDX_6e2593b6ecc3c93452a3d33eda"`);
+        await queryRunner.query(`DROP TABLE "kyb_documents"`);
+        await queryRunner.query(`DROP TABLE "business_audiences"`);
+        await queryRunner.query(`DROP TABLE "data_access_logs"`);
+        await queryRunner.query(`DROP TABLE "user_profiles"`);
+        await queryRunner.query(`DROP TABLE "profile_fields"`);
+        await queryRunner.query(`DROP TABLE "call_permission_requests"`);
+        await queryRunner.query(`DROP TABLE "phone_report_votes"`);
+        await queryRunner.query(`DROP TABLE "phone_reports"`);
+        await queryRunner.query(`DROP TABLE "transactions"`);
+        await queryRunner.query(`DROP TABLE "settings"`);
+        await queryRunner.query(`DROP TABLE "call_ratings"`);
+        await queryRunner.query(`DROP TABLE "businesses"`);
+        await queryRunner.query(`DROP TABLE "business_numbers"`);
+        await queryRunner.query(`DROP TABLE "call_logs"`);
+        await queryRunner.query(`DROP TABLE "users"`);
+    }
+
+}

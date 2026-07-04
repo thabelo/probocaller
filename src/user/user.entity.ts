@@ -1,4 +1,4 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateColumn, Index } from 'typeorm';
 
 @Entity('users')
 export class User {
@@ -57,11 +57,15 @@ export class User {
   @Column('simple-array', { default: '' })
   dataCategories: string[];
 
-  // Stable share code derived from the user's own ID: PROBO-{id}
+  // Opaque, crypto-random share code: PROBO-{8 chars} (unguessable, unique).
+  // Legacy PROBO-{id} codes remain valid; lookups are format-agnostic.
   @Column({ nullable: true, unique: true })
   referralCode: string;
 
-  // ID of the user who referred this account (null = organic signup)
+  // ID of the user who referred this account (null = organic signup).
+  // Indexed: drives getReferralCode's count({ where: { referredBy } }) and
+  // "who did I refer" lookups, which would otherwise seq-scan the users table.
+  @Index('IDX_users_referredBy')
   @Column({ nullable: true })
   referredBy: number;
 

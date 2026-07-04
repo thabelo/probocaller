@@ -57,6 +57,13 @@ describe('ScamShieldService.scoreScamRisk', () => {
     expect(r.reasons).toContain('Caller not registered on Probo');
   });
 
+  it('adds risk when the caller’s messages match blocked scam keywords', () => {
+    const r = service.scoreScamRisk({ blockedKeywordHits: 2, registered: true });
+    expect(r.score).toBe(40);
+    expect(r.level).toBe('medium');
+    expect(r.reasons).toContain('2 message(s) match blocked scam keywords');
+  });
+
   it('treats a clean, registered, reportless number as low risk', () => {
     expect(service.scoreScamRisk({ registered: true })).toEqual({
       score: 0,
@@ -75,11 +82,14 @@ describe('ScamShieldService.scoreScamRisk', () => {
 describe('ScamShieldService.assess', () => {
   let service: ScamShieldService;
   let lookup: { lookup: jest.Mock };
-  let reportedSms: { countBySender: jest.Mock };
+  let reportedSms: { countBySender: jest.Mock; findBodiesBySender: jest.Mock };
 
   beforeEach(async () => {
     lookup = { lookup: jest.fn() };
-    reportedSms = { countBySender: jest.fn().mockResolvedValue(0) };
+    reportedSms = {
+      countBySender: jest.fn().mockResolvedValue(0),
+      findBodiesBySender: jest.fn().mockResolvedValue([]),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ScamShieldService,
@@ -143,6 +153,30 @@ describe('ScamShieldService.assess', () => {
     expect(r.score).toBe(42);
     expect(r.level).toBe('medium');
     expect(r.reasons).toContain('2 reported scam SMS');
+  });
+
+  it('folds blocked scam-keyword hits in the caller’s reported SMS into the score', async () => {
+    lookup.lookup.mockResolvedValue({
+      phoneNumber: '+27821234567',
+      found: true,
+      status: 'flagged',
+      flags: { globalSpam: false, userReports: 0, blocked: false },
+      business: null,
+      checkedAt: 'now',
+    });
+    reportedSms.findBodiesBySender.mockResolvedValue([
+      'You have WON a prize! Click here to claim now',
+      'Your account is suspended — verify immediately',
+      'hey are we still on for lunch tomorrow',
+    ]);
+
+    const r = await service.assess('+27821234567');
+
+    expect(reportedSms.findBodiesBySender).toHaveBeenCalledWith('+27821234567');
+    // 2 of 3 messages contain blocked scam keywords → 2 × 20 = 40.
+    expect(r.score).toBe(40);
+    expect(r.level).toBe('medium');
+    expect(r.reasons).toContain('2 message(s) match blocked scam keywords');
   });
 
   it('flags an unregistered number as low baseline risk', async () => {

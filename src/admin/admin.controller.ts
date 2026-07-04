@@ -1,4 +1,4 @@
-import { Controller, Get, Put, Post, Delete, Body, Param, Query, UseGuards, ParseIntPipe, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Put, Post, Delete, Body, Param, Query, UseGuards, ParseIntPipe, HttpCode, HttpStatus, Header, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AdminGuard } from './admin.guard';
 import { AdminService } from './admin.service';
@@ -45,6 +45,23 @@ export class AdminController {
   @ApiOperation({ summary: 'Get all users' })
   async getAllUsers() {
     return this.adminService.getAllUsers();
+  }
+
+  @Post('users/bulk')
+  @ApiOperation({ summary: 'Bulk-update users (whitelisted, non-monetary fields)' })
+  async bulkUpdateUsers(
+    @Request() req,
+    @Body() body: { ids: number[]; patch: { isSpam?: boolean; role?: string; isBusiness?: boolean } },
+  ) {
+    return this.adminService.bulkUpdateUsers(body.ids, body.patch, req.user?.userId);
+  }
+
+  @Get('users/export')
+  @Header('Content-Type', 'text/csv')
+  @Header('Content-Disposition', 'attachment; filename="users.csv"')
+  @ApiOperation({ summary: 'Export all users as CSV' })
+  async exportUsers() {
+    return this.adminService.exportUsersCsv();
   }
 
   @Put('users/:id')

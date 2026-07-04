@@ -94,3 +94,24 @@ describe('JwtStrategy — deactivated user gate', () => {
     await expect(strategy.validate({})).rejects.toBeInstanceOf(UnauthorizedException);
   });
 });
+
+/**
+ * Cookie auth (admin panel) — the strategy must also accept the JWT from an
+ * HttpOnly `accessToken` cookie, not just the Authorization header, so the admin
+ * panel can stop holding the token in JS-readable localStorage. Bearer auth
+ * (mobile app) keeps working via the second extractor.
+ */
+describe('cookieAccessTokenExtractor', () => {
+  it('reads the accessToken value from the Cookie header', () => {
+    const { cookieAccessTokenExtractor } = require('./jwt.strategy');
+    const req = { headers: { cookie: 'foo=bar; accessToken=abc.def.ghi; other=1' } };
+    expect(cookieAccessTokenExtractor(req)).toBe('abc.def.ghi');
+  });
+
+  it('returns null when no cookie header or no accessToken cookie is present', () => {
+    const { cookieAccessTokenExtractor } = require('./jwt.strategy');
+    expect(cookieAccessTokenExtractor({ headers: {} })).toBeNull();
+    expect(cookieAccessTokenExtractor({ headers: { cookie: 'foo=bar' } })).toBeNull();
+    expect(cookieAccessTokenExtractor({})).toBeNull();
+  });
+});

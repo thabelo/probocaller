@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import * as crypto from 'crypto';
 import { User } from './user.entity';
 import { LoginDto } from './dto/login.dto';
 import { SignupDto } from './dto/signup.dto';
@@ -80,8 +81,39 @@ export class UserService {
     };
   }
 
-  private makeReferralCode(id: number): string {
-    return `PROBO-${id}`;
+  /**
+   * One opaque referral-code candidate: PROBO-{8 chars} from a Crockford-ish
+   * alphabet (no I/O/1/0 ambiguity), ~40 bits of entropy. The old enumerable
+   * PROBO-{id} let anyone pass PROBO-1 to mint money for a stranger now that a
+   * real-money bonus exists; opaque codes cannot be guessed.
+   *
+   * Indices come from crypto.randomInt, which rejection-samples internally.
+   * The old `randomBytes(8)[i] % 30` was modulo-biased — 256 is not a multiple
+   * of the 30-char alphabet, so the first 16 symbols were over-represented.
+   */
+  private generateReferralCodeCandidate(): string {
+    const alphabet = 'ABCDEFGHJKMNPQRSTVWXYZ23456789';
+    let s = '';
+    for (let i = 0; i < 8; i++) s += alphabet[crypto.randomInt(alphabet.length)];
+    return `PROBO-${s}`;
+  }
+
+  /**
+   * Allocate a unique referral code to a user and persist it. The existing
+   * UNIQUE(referralCode) constraint is the hard backstop; the retry loop handles
+   * the astronomically rare collision gracefully instead of 500-ing.
+   */
+  private async assignReferralCode(user: User): Promise<string> {
+    for (let attempt = 0; attempt < 5; attempt++) {
+      const candidate = this.generateReferralCodeCandidate();
+      const clash = await this.userRepository.count({ where: { referralCode: candidate } });
+      if (clash === 0) {
+        user.referralCode = candidate;
+        await this.userRepository.save(user);
+        return candidate;
+      }
+    }
+    throw new Error('Could not allocate a unique referral code');
   }
 
   private async resolveReferrer(referralCode?: string): Promise<number | null> {
@@ -94,6 +126,8 @@ export class UserService {
     const { phoneNumber, referralCode } = loginDto;
     let user = await this.userRepository.findOne({ where: { phoneNumber } });
     if (!user) {
+      // Record who referred this account (drives the lifetime 3% commission paid
+      // via ReferralService whenever this user later EARNS). No signup credit.
       const referredBy = await this.resolveReferrer(referralCode);
       user = this.userRepository.create({
         phoneNumber,
@@ -102,8 +136,7 @@ export class UserService {
         ...(referredBy && { referredBy }),
       });
       await this.userRepository.save(user);
-      user.referralCode = this.makeReferralCode(user.id);
-      await this.userRepository.save(user);
+      await this.assignReferralCode(user);
     }
     const tokens = this.issueTokens(user);
     return { ...tokens, user: this.userResponse(user) };
@@ -115,33 +148,36 @@ export class UserService {
     if (user) {
       user.email = email;
       user.name = name;
-      if (!user.referralCode) {
-        user.referralCode = this.makeReferralCode(user.id);
-      }
       await this.userRepository.save(user);
+      if (!user.referralCode) {
+        await this.assignReferralCode(user);
+      }
     } else {
+      // Record who referred this account (drives the lifetime 3% commission paid
+      // via ReferralService whenever this user later EARNS). No signup credit.
       const referredBy = await this.resolveReferrer(referralCode);
       user = this.userRepository.create({
         phoneNumber, email, name,
         ...(referredBy && { referredBy }),
       });
       await this.userRepository.save(user);
-      user.referralCode = this.makeReferralCode(user.id);
-      await this.userRepository.save(user);
+      await this.assignReferralCode(user);
     }
     const tokens = this.issueTokens(user);
     return { ...tokens, user: this.userResponse(user) };
   }
 
-  async getReferralCode(userId: number): Promise<{ referralCode: string; referredCount: number }> {
+  async getReferralCode(userId: number): Promise<{ referralCode: string; referredCount: number; referralEarnings: number }> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
     if (!user.referralCode) {
-      user.referralCode = this.makeReferralCode(user.id);
-      await this.userRepository.save(user);
+      await this.assignReferralCode(user);
     }
     const referredCount = await this.userRepository.count({ where: { referredBy: userId } });
-    return { referralCode: user.referralCode, referredCount };
+    // Lifetime earned referral commission (real wallet money from the ongoing
+    // 3% on invitees' earnings) — see ReferralService for the credit path.
+    const referralEarnings = await this.transactionService.sumByUserAndType(userId, 'REFERRAL_COMMISSION');
+    return { referralCode: user.referralCode, referredCount, referralEarnings };
   }
 
   async findUserByPhone(phoneNumber: string): Promise<User> {

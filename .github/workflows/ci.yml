@@ -1,0 +1,52 @@
+name: backend-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: probo
+          POSTGRES_PASSWORD: probo
+          POSTGRES_DB: probo_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      JWT_SECRET: ci-only-secret-not-used-in-production-0123456789abcdef
+      JWT_REFRESH_SECRET: ci-only-refresh-secret-0123456789abcdef0123456789
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_USER: probo
+      DB_PASSWORD: probo
+      DB_NAME: probo_ci
+      INTEGRATION_DB_NAME: probo_ci
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Type-check + build
+        run: npm run build
+      - name: Unit tests with coverage gate
+        run: npm run test:cov
+      - name: Apply migrations to CI database
+        run: NODE_ENV=production npm run migration:run
+      - name: Integration tests (real Postgres)
+        run: npm run test:integration

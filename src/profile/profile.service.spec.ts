@@ -9,6 +9,7 @@ import { BusinessAudience } from './business-audience.entity';
 import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
 import { Transaction } from '../transaction/transaction.entity';
+import { ReferralService } from '../referral/referral.service';
 import { DataSource } from 'typeorm';
 
 const mockRepo = () => ({
@@ -41,6 +42,7 @@ describe('ProfileService', () => {
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: getRepositoryToken(Business), useFactory: mockRepo },
         { provide: getRepositoryToken(Transaction), useFactory: mockRepo },
+        { provide: ReferralService, useValue: { payCommission: jest.fn().mockResolvedValue(undefined) } },
         // DataSource is required by purchaseLeads' transaction wrapper. Other
         // tests don't exercise it; a no-op stub keeps DI satisfied.
         { provide: DataSource, useValue: { transaction: jest.fn() } },
@@ -90,6 +92,7 @@ describe('ProfileService', () => {
     const dataSource   = () => (module as any).get(DataSource);
     let module: TestingModule;
     let managerSpy: any;
+    let referral: { payCommission: jest.Mock };
 
     beforeEach(async () => {
       // Mock the DataSource to invoke the txn callback with a spy-able manager.
@@ -101,6 +104,7 @@ describe('ProfileService', () => {
       const dsMock = {
         transaction: jest.fn(async (cb: any) => cb(managerSpy)),
       };
+      referral = { payCommission: jest.fn().mockResolvedValue(undefined) };
 
       module = await Test.createTestingModule({
         providers: [
@@ -112,6 +116,7 @@ describe('ProfileService', () => {
           { provide: getRepositoryToken(User),            useFactory: mockRepo },
           { provide: getRepositoryToken(Business),        useFactory: mockRepo },
           { provide: getRepositoryToken(Transaction),     useFactory: mockRepo },
+          { provide: ReferralService,                     useValue: referral },
           { provide: DataSource,                          useValue: dsMock },
         ],
       }).compile();
@@ -197,6 +202,15 @@ describe('ProfileService', () => {
       await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100 });
       const savedEntityClasses = managerSpy.save.mock.calls.map((c: any[]) => c[0]);
       expect(savedEntityClasses).toContain(DataAccessLog);
+    });
+
+    it('pays a referral commission on each shared owner’s DATA_EARN via the same manager', async () => {
+      // costForUser = 5, platformCut = 5*0.24 = 1.2, userEarning = 3.8.
+      // The single matched profile is owned by userId 100.
+      wireMatches(100, 5, 1);
+      await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100 });
+
+      expect(referral.payCommission).toHaveBeenCalledWith(100, 3.8, managerSpy);
     });
 
     it('Backend H6 — locks the caller wallet row with pessimistic_write inside the txn (prevents concurrent over-spend)', async () => {

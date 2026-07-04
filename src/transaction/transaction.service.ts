@@ -46,4 +46,36 @@ export class TransactionService {
   async findAll(): Promise<Transaction[]> {
     return this.txRepo.find({ order: { createdAt: 'DESC' }, take: 500 });
   }
+
+  /**
+   * Lifetime SUM(amount) of one user's transactions of a single type, as a
+   * clean 4dp money Number. The decimal column makes the DB hand back the SUM
+   * as a string (or null when no rows match), so COALESCE-to-0 then normalise
+   * — callers must never see a string or NaN. Used for the referral-earnings
+   * figure (type 'REFERRAL_COMMISSION') on GET /user/referral-code.
+   */
+  async sumByUserAndType(userId: number, type: string): Promise<number> {
+    const { sum } = await this.txRepo
+      .createQueryBuilder('t')
+      .select('COALESCE(SUM(t.amount), 0)', 'sum')
+      .where('t.userId = :userId', { userId })
+      .andWhere('t.type = :type', { type })
+      .getRawOne();
+    return Number(parseFloat(sum ?? 0).toFixed(4));
+  }
+
+  /**
+   * Platform-wide SUM(amount) of one transaction type across every user, as a
+   * clean 4dp money Number. Same string/null → Number contract as
+   * sumByUserAndType. Powers the admin "earnings from invitees" total
+   * (type 'REFERRAL_COMMISSION').
+   */
+  async sumByType(type: string): Promise<number> {
+    const { sum } = await this.txRepo
+      .createQueryBuilder('t')
+      .select('COALESCE(SUM(t.amount), 0)', 'sum')
+      .where('t.type = :type', { type })
+      .getRawOne();
+    return Number(parseFloat(sum ?? 0).toFixed(4));
+  }
 }

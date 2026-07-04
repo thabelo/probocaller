@@ -1,11 +1,23 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { User } from '../user/user.entity';
 import { CallLog } from '../call/call.entity';
 import { Setting } from '../config/setting.entity';
 import { Business } from '../business/business.entity';
 import { TransactionService } from '../transaction/transaction.service';
+import { AuditService } from '../audit/audit.service';
+
+/**
+ * Escape one CSV cell: guard against spreadsheet formula injection by prefixing
+ * a quote when a value starts with = + - or @, then RFC-4180 quote/escape.
+ */
+function csvCell(value: unknown): string {
+  let s = value == null ? '' : String(value);
+  if (/^[=+\-@]/.test(s)) s = `'${s}`;
+  if (/[",\n\r]/.test(s)) s = `"${s.replace(/"/g, '""')}"`;
+  return s;
+}
 
 @Injectable()
 export class AdminService {
@@ -19,6 +31,7 @@ export class AdminService {
     @InjectRepository(Business)
     private businessRepository: Repository<Business>,
     private readonly transactionService: TransactionService,
+    private readonly auditService: AuditService,
   ) {}
 
   async getStats() {
@@ -32,6 +45,10 @@ export class AdminService {
     const totalBusinessSpend = calls.reduce((sum, c) => sum + Number(c.cost || 0), 0);
     const completedCalls = calls.filter((c) => c.status === 'completed').length;
 
+    // Earnings users made *from people they invited* — the platform-funded 3%
+    // referral commissions, separate from the direct call earnings above.
+    const referralEarnings = await this.transactionService.sumByType('REFERRAL_COMMISSION');
+
     return {
       totalUsers,
       businessUsers,
@@ -39,6 +56,7 @@ export class AdminService {
       completedCalls,
       platformRevenue: parseFloat(platformRevenue.toFixed(6)),
       totalPaidToUsers: parseFloat(totalPaidToUsers.toFixed(6)),
+      referralEarnings,
       totalBusinessSpend: parseFloat(totalBusinessSpend.toFixed(6)),
     };
   }
@@ -158,7 +176,66 @@ export class AdminService {
     return this.serializeUser(user);
   }
 
+  /**
+   * Apply one bounded change to many users at once. Only safe, non-monetary
+   * fields are whitelisted — wallet balances must go through addCredit so they
+   * land in the ledger. Throws if no ids or no allowed fields are given.
+   */
+  async bulkUpdateUsers(
+    ids: number[],
+    patch: { isSpam?: boolean; role?: string; isBusiness?: boolean },
+    actorUserId?: number,
+  ): Promise<{ updated: number }> {
+    if (!Array.isArray(ids) || ids.length === 0) {
+      throw new BadRequestException('At least one user id is required');
+    }
+    const allowed: Record<string, unknown> = {};
+    if (patch?.isSpam !== undefined) allowed.isSpam = patch.isSpam;
+    if (patch?.role !== undefined) allowed.role = patch.role;
+    if (patch?.isBusiness !== undefined) allowed.isBusiness = patch.isBusiness;
+    if (Object.keys(allowed).length === 0) {
+      throw new BadRequestException('No updatable fields provided');
+    }
+    const res = await this.userRepository.update({ id: In(ids) }, allowed);
+    await this.auditService.record({
+      actorUserId: actorUserId ?? null,
+      action: 'admin.users.bulk_update',
+      targetType: 'user',
+      targetId: ids.join(','),
+      metadata: { patch: allowed, count: res.affected ?? 0 },
+    });
+    return { updated: res.affected ?? 0 };
+  }
+
+  /**
+   * Server-side CSV export of all users. Every user-controlled cell is escaped
+   * (formula-injection guard + RFC-4180 quoting) so opening the file in a
+   * spreadsheet can't execute a payload.
+   */
+  async exportUsersCsv(): Promise<string> {
+    const users = await this.userRepository.find({ order: { createdAt: 'DESC' } });
+    const header = ['id', 'name', 'phoneNumber', 'email', 'role', 'isBusiness', 'walletBalance', 'isSpam', 'createdAt'];
+    const rows = users.map((u) => [
+      u.id,
+      u.name,
+      u.phoneNumber,
+      u.email,
+      u.role,
+      u.isBusiness ? 'business' : 'user',
+      Number(u.walletBalance).toFixed(4),
+      u.isSpam ? 'yes' : 'no',
+      u.createdAt instanceof Date ? u.createdAt.toISOString() : u.createdAt,
+    ]);
+    return [header, ...rows].map((r) => r.map(csvCell).join(',')).join('\n') + '\n';
+  }
+
   async addCredit(id: number, amount: number) {
+    // A zero or non-finite adjustment is never a real credit/debit; rejecting it
+    // avoids writing a misleading ADMIN_DEBIT of $0.00 to the ledger.
+    if (!Number.isFinite(amount) || amount === 0) {
+      throw new BadRequestException('Adjustment amount must be a non-zero number');
+    }
+
     const user = await this.userRepository.findOne({ where: { id } });
     if (!user) throw new NotFoundException('User not found');
 

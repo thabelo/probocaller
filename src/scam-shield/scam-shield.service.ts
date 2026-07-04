@@ -6,6 +6,7 @@ export interface ScamSignals {
   globalSpam?: boolean;
   communityReports?: number;
   reportedSmsCount?: number;
+  blockedKeywordHits?: number;
   verifiedBusiness?: boolean;
   registered?: boolean;
 }
@@ -27,10 +28,50 @@ export interface ScamAssessment extends ScamRisk {
 const PER_REPORT_WEIGHT = 18;
 // Each reported scam SMS from the number adds this much risk.
 const PER_SMS_WEIGHT = 12;
+// Each of the caller's messages that matches a blocked scam keyword adds this much risk.
+const PER_KEYWORD_HIT_WEIGHT = 20;
 // An unknown (unregistered) caller carries mild baseline risk.
 const UNREGISTERED_WEIGHT = 15;
 const HIGH_THRESHOLD = 70;
 const MEDIUM_THRESHOLD = 35;
+
+// Common scam phrases used to flag a caller's reported messages. Matched as
+// case-insensitive substrings, mirroring the Android KeywordMatcher. A message
+// counts once toward risk no matter how many of these it contains.
+export const DEFAULT_SCAM_KEYWORDS: string[] = [
+  'prize',
+  'won',
+  'winner',
+  'claim',
+  'lottery',
+  'click here',
+  'verify',
+  'suspended',
+  'gift card',
+  'bitcoin',
+  'crypto',
+  'wire transfer',
+  'otp',
+  'one-time pin',
+  'urgent',
+  'act now',
+  'password',
+];
+
+/**
+ * Count how many of the given message bodies contain at least one blocked scam
+ * keyword (case-insensitive). Pure helper used by the assessment flow.
+ */
+export function countMessagesWithBlockedKeyword(
+  bodies: string[],
+  keywords: string[] = DEFAULT_SCAM_KEYWORDS,
+): number {
+  const needles = keywords.map((k) => k.toLowerCase());
+  return bodies.reduce((count, body) => {
+    const hay = (body ?? '').toLowerCase();
+    return needles.some((n) => hay.includes(n)) ? count + 1 : count;
+  }, 0);
+}
 
 @Injectable()
 export class ScamShieldService {
@@ -46,10 +87,12 @@ export class ScamShieldService {
   async assess(rawPhone: string): Promise<ScamAssessment> {
     const result = await this.lookupService.lookup(rawPhone);
     const reportedSmsCount = await this.reportedSmsService.countBySender(result.phoneNumber);
+    const bodies = await this.reportedSmsService.findBodiesBySender(result.phoneNumber);
     const risk = this.scoreScamRisk({
       globalSpam: result.flags.globalSpam,
       communityReports: result.flags.userReports,
       reportedSmsCount,
+      blockedKeywordHits: countMessagesWithBlockedKeyword(bodies),
       verifiedBusiness: result.business?.verified === true,
       registered: result.found,
     });
@@ -83,6 +126,11 @@ export class ScamShieldService {
       if (smsReports > 0) {
         score += smsReports * PER_SMS_WEIGHT;
         reasons.push(`${smsReports} reported scam SMS`);
+      }
+      const keywordHits = signals.blockedKeywordHits ?? 0;
+      if (keywordHits > 0) {
+        score += keywordHits * PER_KEYWORD_HIT_WEIGHT;
+        reasons.push(`${keywordHits} message(s) match blocked scam keywords`);
       }
       if (signals.registered === false) {
         score += UNREGISTERED_WEIGHT;

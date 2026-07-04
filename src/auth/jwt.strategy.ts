@@ -25,6 +25,23 @@ function readJwtSecret(): string {
   return secret;
 }
 
+/**
+ * Pull the JWT from an HttpOnly `accessToken` cookie. Used by the admin panel,
+ * which holds its token in a cookie rather than JS-readable storage. Parses the
+ * raw Cookie header directly so no cookie-parser middleware is required.
+ */
+export function cookieAccessTokenExtractor(req: any): string | null {
+  const header = req?.headers?.cookie;
+  if (!header || typeof header !== 'string') return null;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    const key = part.slice(0, eq).trim();
+    if (key === 'accessToken') return decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return null;
+}
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
@@ -32,7 +49,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     private readonly userRepo: Repository<User>,
   ) {
     super({
-      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      jwtFromRequest: ExtractJwt.fromExtractors([
+        cookieAccessTokenExtractor,
+        ExtractJwt.fromAuthHeaderAsBearerToken(),
+      ]),
       ignoreExpiration: false,
       secretOrKey: readJwtSecret(),
     });

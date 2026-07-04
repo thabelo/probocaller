@@ -12,7 +12,8 @@
     "migration:show": "ts-node node_modules/typeorm/cli.js migration:show -d data-source.ts",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:cov": "jest --coverage"
+    "test:cov": "jest --coverage",
+    "test:integration": "jest --config jest.integration.config.js"
   },
   "keywords": [],
   "author": "",

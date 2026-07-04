@@ -10,6 +10,7 @@ import { CallPermissionRequest } from '../data-broker/call-permission-request.en
 import { Business } from '../business/business.entity';
 import { User } from '../user/user.entity';
 import { TransactionService } from '../transaction/transaction.service';
+import { ReferralService } from '../referral/referral.service';
 
 export interface EscrowSplit {
   businessCharge: number;
@@ -42,6 +43,7 @@ export class PayToContactService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly tx: TransactionService,
+    private readonly referralService: ReferralService,
     private readonly ds: DataSource,
   ) {}
 
@@ -171,6 +173,10 @@ export class PayToContactService {
         undefined,
         m,
       );
+
+      // Lifetime referral commission: if this earner was referred, pay their
+      // referrer an EXTRA 3% on these earnings inside the SAME transaction.
+      await this.referralService.payCommission(request.userId, userEarnings, m);
 
       // Route the skimmed fee to the platform wallet (when configured) so the
       // ledger balances: bid == user earnings + platform fee.

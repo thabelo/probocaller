@@ -5,6 +5,7 @@ import { PayToContactService } from './pay-to-contact.service';
 import { CallPermissionRequest } from '../data-broker/call-permission-request.entity';
 import { User } from '../user/user.entity';
 import { TransactionService } from '../transaction/transaction.service';
+import { ReferralService } from '../referral/referral.service';
 
 /**
  * Pay-to-Contact — economic core (Cycle 1).
@@ -20,7 +21,7 @@ import { TransactionService } from '../transaction/transaction.service';
 describe('PayToContactService.splitEscrow', () => {
   // splitEscrow is pure; deps are irrelevant here so we pass mocks.
   const service = new PayToContactService(
-    {} as any, {} as any, {} as any, {} as any,
+    {} as any, {} as any, {} as any, {} as any, {} as any,
   );
 
   it('splits a bid into platform fee and user earnings at the default 30% rate', () => {
@@ -67,6 +68,7 @@ describe('PayToContactService.stake', () => {
   let service: PayToContactService;
   let manager: any;
   let tx: { log: jest.Mock };
+  let referral: { payCommission: jest.Mock };
 
   beforeEach(async () => {
     manager = {
@@ -75,6 +77,7 @@ describe('PayToContactService.stake', () => {
       save: jest.fn().mockImplementation(async (a: any, b?: any) => b ?? a),
     };
     tx = { log: jest.fn().mockResolvedValue(undefined) };
+    referral = { payCommission: jest.fn().mockResolvedValue(undefined) };
     const dataSource = {
       transaction: jest.fn().mockImplementation(async (cb: any) => cb(manager)),
     };
@@ -85,6 +88,7 @@ describe('PayToContactService.stake', () => {
         { provide: getRepositoryToken(CallPermissionRequest), useValue: {} },
         { provide: getRepositoryToken(User), useValue: {} },
         { provide: TransactionService, useValue: tx },
+        { provide: ReferralService, useValue: referral },
         { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
@@ -149,6 +153,7 @@ describe('PayToContactService.settle', () => {
   let service: PayToContactService;
   let manager: any;
   let tx: { log: jest.Mock };
+  let referral: { payCommission: jest.Mock };
 
   beforeEach(async () => {
     manager = {
@@ -156,6 +161,7 @@ describe('PayToContactService.settle', () => {
       save: jest.fn().mockImplementation(async (a: any, b?: any) => b ?? a),
     };
     tx = { log: jest.fn().mockResolvedValue(undefined) };
+    referral = { payCommission: jest.fn().mockResolvedValue(undefined) };
     const dataSource = {
       transaction: jest.fn().mockImplementation(async (cb: any) => cb(manager)),
     };
@@ -165,6 +171,7 @@ describe('PayToContactService.settle', () => {
         { provide: getRepositoryToken(CallPermissionRequest), useValue: {} },
         { provide: getRepositoryToken(User), useValue: {} },
         { provide: TransactionService, useValue: tx },
+        { provide: ReferralService, useValue: referral },
         { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
@@ -209,6 +216,20 @@ describe('PayToContactService.settle', () => {
     manager.findOne.mockImplementationOnce(async () => ({ id: 7, escrowStatus: 'none' }));
     await expect(service.settle(7)).rejects.toThrow();
   });
+
+  it('pays the referrer a referral commission on the user earnings via the same manager', async () => {
+    const request: any = { id: 7, userId: 9, escrowAmount: 40, escrowStatus: 'held' };
+    const user: any = { id: 9, walletBalance: 0 };
+
+    manager.findOne
+      .mockImplementationOnce(async () => ({ ...request }))
+      .mockImplementationOnce(async () => ({ ...user }));
+
+    await service.settle(7); // 30% default fee -> user earns 28
+
+    // payCommission(earnerId, earnedAmount, manager) — same tx as the earning.
+    expect(referral.payCommission).toHaveBeenCalledWith(9, 28, manager);
+  });
 });
 
 /**
@@ -223,6 +244,7 @@ describe('PayToContactService.settle — fee config & platform ledger', () => {
   let service: PayToContactService;
   let manager: any;
   let tx: { log: jest.Mock };
+  let referral: { payCommission: jest.Mock };
   const savedFeeRate = process.env.PAY_TO_CONTACT_FEE_RATE;
   const savedPlatformId = process.env.PAY_TO_CONTACT_PLATFORM_USER_ID;
 
@@ -232,6 +254,7 @@ describe('PayToContactService.settle — fee config & platform ledger', () => {
       save: jest.fn().mockImplementation(async (a: any, b?: any) => b ?? a),
     };
     tx = { log: jest.fn().mockResolvedValue(undefined) };
+    referral = { payCommission: jest.fn().mockResolvedValue(undefined) };
     const dataSource = {
       transaction: jest.fn().mockImplementation(async (cb: any) => cb(manager)),
     };
@@ -241,6 +264,7 @@ describe('PayToContactService.settle — fee config & platform ledger', () => {
         { provide: getRepositoryToken(CallPermissionRequest), useValue: {} },
         { provide: getRepositoryToken(User), useValue: {} },
         { provide: TransactionService, useValue: tx },
+        { provide: ReferralService, useValue: referral },
         { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
@@ -308,6 +332,7 @@ describe('PayToContactService.refund', () => {
   let service: PayToContactService;
   let manager: any;
   let tx: { log: jest.Mock };
+  let referral: { payCommission: jest.Mock };
 
   beforeEach(async () => {
     manager = {
@@ -315,6 +340,7 @@ describe('PayToContactService.refund', () => {
       save: jest.fn().mockImplementation(async (a: any, b?: any) => b ?? a),
     };
     tx = { log: jest.fn().mockResolvedValue(undefined) };
+    referral = { payCommission: jest.fn().mockResolvedValue(undefined) };
     const dataSource = {
       transaction: jest.fn().mockImplementation(async (cb: any) => cb(manager)),
     };
@@ -324,6 +350,7 @@ describe('PayToContactService.refund', () => {
         { provide: getRepositoryToken(CallPermissionRequest), useValue: {} },
         { provide: getRepositoryToken(User), useValue: {} },
         { provide: TransactionService, useValue: tx },
+        { provide: ReferralService, useValue: referral },
         { provide: DataSource, useValue: dataSource },
       ],
     }).compile();

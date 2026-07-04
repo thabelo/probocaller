@@ -2,6 +2,11 @@ import 'reflect-metadata';
 import { config as loadEnv } from 'dotenv';
 loadEnv();
 
+// Fail fast on a misconfigured environment (missing required vars, weak/
+// placeholder secrets in production) before anything else boots.
+import { validateEnv } from './common/config/validate-env';
+validateEnv();
+
 import * as Sentry from '@sentry/node';
 if (process.env.SENTRY_DSN) {
   Sentry.init({

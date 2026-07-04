@@ -62,6 +62,22 @@ export class ReportedSmsService {
     return this.repo.count({ where: { sender: trimmed, status: Not('dismissed') } });
   }
 
+  /**
+   * Return the bodies of non-dismissed reported SMS for a sender, most recent
+   * first. Used by Scam Shield to scan the caller's messages for blocked scam
+   * keywords. Admin-dismissed reports are excluded so a cleared number isn't scanned.
+   */
+  async findBodiesBySender(sender: string): Promise<string[]> {
+    const trimmed = (sender ?? '').trim();
+    if (!trimmed) return [];
+    const rows = await this.repo.find({
+      where: { sender: trimmed, status: Not('dismissed') },
+      order: { createdAt: 'DESC' },
+      take: DEFAULT_LIMIT,
+    });
+    return rows.map((r) => r.body);
+  }
+
   listForAdmin(filter: ListFilter = {}): Promise<ReportedSms[]> {
     const take = Math.min(Math.max(1, filter.limit ?? DEFAULT_LIMIT), HARD_LIMIT);
     const opts: any = { order: { createdAt: 'DESC' }, take };

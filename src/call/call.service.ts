@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { CallLog } from './call.entity';
 import { CallRating } from './call-rating.entity';
 import { User } from '../user/user.entity';
@@ -8,6 +8,7 @@ import { Business } from '../business/business.entity';
 import { Setting } from '../config/setting.entity';
 import { TransactionService } from '../transaction/transaction.service';
 import { DataBrokerService } from '../data-broker/data-broker.service';
+import { ReferralService } from '../referral/referral.service';
 
 const DEFAULT_RATE_PER_SECOND = 0.002;
 const DEFAULT_PLATFORM_CUT_RATE = 0.24;
@@ -27,6 +28,8 @@ export class CallService {
     private settingRepository: Repository<Setting>,
     private readonly transactionService: TransactionService,
     private readonly dataBrokerService: DataBrokerService,
+    private readonly referralService: ReferralService,
+    private readonly ds: DataSource,
   ) {}
 
   private async getRatePerSecond(): Promise<number> {
@@ -202,49 +205,117 @@ export class CallService {
       throw new BadRequestException('Invalid call duration');
     }
 
-    call.duration = duration;
-    call.status = 'completed';
-    call.completedAt = new Date();
-
     const callerUser = await this.userRepository.findOne({ where: { id: call.toUserId } });
 
     if (callerUser?.isBusiness) {
       const platformCutRate = await this.getPlatformCutRate();
       const rate = Number(call.ratePerSecond) || DEFAULT_RATE_PER_SECOND;
-      const businessCost = parseFloat((duration * rate).toFixed(6));
-      const platformCut = parseFloat((businessCost * platformCutRate).toFixed(6));
-      const userEarnings = parseFloat((businessCost * (1 - platformCutRate)).toFixed(6));
 
-      call.cost = businessCost;
-      call.platformCut = platformCut;
-      call.userEarnings = userEarnings;
+      // Wrap ALL wallet mutations (business charge + receiver credit + both
+      // ledger logs + the referral commission) AND the completion status flip in
+      // a single transaction so they commit or roll back together. The two wallet
+      // rows are re-read with pessimistic_write locks inside the tx; mirrors
+      // PayToContactService.
+      let earnedForReceiver = 0;
+      let receiverId: number | null = null;
+      await this.ds.transaction(async (m) => {
+        // Re-read + lock the call row and re-check status INSIDE the tx, so the
+        // replay guard is atomic with the money movement. A concurrent request,
+        // or a crash/retry after a prior commit whose status save was lost, sees
+        // 'completed' here and no-ops — no double charge / credit / commission.
+        // Mirrors PayToContactService.settle()'s escrowStatus guard.
+        const locked = await m.findOne(CallLog, {
+          where: { id: callId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!locked || locked.status === 'completed') return;
 
-      callerUser.walletBalance = parseFloat((Number(callerUser.walletBalance) - businessCost).toFixed(6));
-      await this.userRepository.save(callerUser);
-      await this.transactionService.log(
-        callerUser.id,
-        'CALL_CHARGE',
-        -businessCost,
-        `${duration}s call to ${call.fromUser?.phoneNumber || 'user'} — rate $${rate}/s`,
-        callId,
-      );
+        const businessRow = await m.findOne(User, {
+          where: { id: call.toUserId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!businessRow) return;
 
-      const receiverUser = await this.userRepository.findOne({ where: { id: call.fromUserId } });
-      if (receiverUser) {
-        receiverUser.walletBalance = parseFloat((Number(receiverUser.walletBalance) + userEarnings).toFixed(6));
-        await this.userRepository.save(receiverUser);
-        await this.addNotification(receiverUser.id, `You earned $${userEarnings.toFixed(4)} from a ${duration}s business call`);
+        // Cap the charge at the funds the business actually holds. The
+        // initiation guard only ensures ≥ 1 second of balance, so a long call
+        // could otherwise overdraw the wallet into negative and credit the
+        // receiver earnings that were never funded. Charge only what's available
+        // (floor the wallet at 0) so the ledger stays consistent:
+        // cost === platformCut + userEarnings, nothing credited beyond what was
+        // collected. Mirrors the caps in stake() and purchaseLeads().
+        const grossCost = parseFloat((duration * rate).toFixed(6));
+        const available = Math.max(0, Number(businessRow.walletBalance));
+        const businessCost = Math.min(grossCost, available);
+        const platformCut = parseFloat((businessCost * platformCutRate).toFixed(6));
+        const userEarnings = parseFloat((businessCost - platformCut).toFixed(6));
+
+        locked.duration = duration;
+        locked.completedAt = new Date();
+        locked.cost = businessCost;
+        locked.platformCut = platformCut;
+        locked.userEarnings = userEarnings;
+
+        businessRow.walletBalance = parseFloat((available - businessCost).toFixed(6));
+        await m.save(businessRow);
         await this.transactionService.log(
-          receiverUser.id,
-          'CALL_EARN',
-          userEarnings,
-          `Earned from ${duration}s business call from ${call.toUser?.name || call.toUser?.phoneNumber || 'business'}`,
+          businessRow.id,
+          'CALL_CHARGE',
+          -businessCost,
+          `${duration}s call to ${call.fromUser?.phoneNumber || 'user'} — rate $${rate}/s`,
           callId,
+          m,
         );
+
+        const receiverUser = await m.findOne(User, {
+          where: { id: call.fromUserId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (receiverUser) {
+          receiverUser.walletBalance = parseFloat((Number(receiverUser.walletBalance) + userEarnings).toFixed(6));
+          await m.save(receiverUser);
+          await this.transactionService.log(
+            receiverUser.id,
+            'CALL_EARN',
+            userEarnings,
+            `Earned from ${duration}s business call from ${call.toUser?.name || call.toUser?.phoneNumber || 'business'}`,
+            callId,
+            m,
+          );
+
+          // Lifetime referral commission: if the receiver was referred, pay
+          // their referrer an EXTRA 3% on these earnings inside the SAME tx.
+          await this.referralService.payCommission(receiverUser.id, userEarnings, m);
+
+          earnedForReceiver = userEarnings;
+          receiverId = receiverUser.id;
+        }
+
+        // Persist completion (status + financials) INSIDE the tx so it commits
+        // atomically with the money — the locked replay guard above relies on it.
+        locked.status = 'completed';
+        await m.save(locked);
+
+        // Reflect the persisted state onto the in-memory `call` we return.
+        call.status = 'completed';
+        call.duration = duration;
+        call.completedAt = locked.completedAt;
+        call.cost = businessCost;
+        call.platformCut = platformCut;
+        call.userEarnings = userEarnings;
+      });
+
+      // Notification is non-financial; keep it outside the wallet transaction.
+      if (receiverId !== null) {
+        await this.addNotification(receiverId, `You earned $${earnedForReceiver.toFixed(4)} from a ${duration}s business call`);
       }
+    } else {
+      // Non-business call: no money moves; just mark it completed.
+      call.duration = duration;
+      call.status = 'completed';
+      call.completedAt = new Date();
+      await this.callRepository.save(call);
     }
 
-    await this.callRepository.save(call);
     return call;
   }
 

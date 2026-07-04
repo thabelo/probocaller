@@ -9,12 +9,14 @@ import { Business } from '../business/business.entity';
 import { Setting } from '../config/setting.entity';
 import { TransactionModule } from '../transaction/transaction.module';
 import { DataBrokerModule } from '../data-broker/data-broker.module';
+import { ReferralModule } from '../referral/referral.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([CallLog, CallRating, User, Business, Setting]),
     TransactionModule,
     DataBrokerModule,
+    ReferralModule,
   ],
   controllers: [CallController, CallAliasController],
   providers: [CallService],

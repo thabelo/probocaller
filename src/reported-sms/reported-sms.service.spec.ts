@@ -143,4 +143,24 @@ describe('ReportedSmsService', () => {
       expect(repo.count).not.toHaveBeenCalled();
     });
   });
+
+  describe('findBodiesBySender', () => {
+    it('returns non-dismissed message bodies for the (trimmed) sender, most recent first', async () => {
+      repo.find = jest.fn(async () => [{ body: 'first' }, { body: 'second' }]);
+      const bodies = await service.findBodiesBySender('  +27999  ');
+      expect(bodies).toEqual(['first', 'second']);
+      expect(repo.find).toHaveBeenCalledWith({
+        where: { sender: '+27999', status: Not('dismissed') },
+        order: { createdAt: 'DESC' },
+        take: 50,
+      });
+    });
+
+    it('returns [] for a blank sender without hitting the repo', async () => {
+      repo.find = jest.fn(async () => []);
+      const bodies = await service.findBodiesBySender('   ');
+      expect(bodies).toEqual([]);
+      expect(repo.find).not.toHaveBeenCalled();
+    });
+  });
 });
