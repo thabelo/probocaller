@@ -59,6 +59,12 @@ import { SpamReport } from './spam-report/spam-report.entity';
 import { SpamReportModule } from './spam-report/spam-report.module';
 import { ReportedSms } from './reported-sms/reported-sms.entity';
 import { ReportedSmsModule } from './reported-sms/reported-sms.module';
+import { FeedbackModule } from './feedback/feedback.module';
+import { ErrorLogModule } from './error-log/error-log.module';
+import { AuditModule } from './audit/audit.module';
+import { RetentionModule } from './retention/retention.module';
+import { LegalModule } from './legal/legal.module';
+import { ConsentModule } from './consent/consent.module';
 
 import { BankAccountModule } from './bank-account/bank-account.module';
 import { BankAccount } from './bank-account/bank-account.entity';
@@ -69,6 +75,7 @@ import { WithdrawalModule } from './withdrawal/withdrawal.module';
 import { Withdrawal } from './withdrawal/withdrawal.entity';
 import { Conversation } from './messaging/conversation.entity';
 import { Message } from './messaging/message.entity';
+import { ENTITIES } from './common/db/entities';
 import { TransferModule } from './transfer/transfer.module';
 import { BanksModule } from './banks/banks.module';
 import { HealthModule } from './health/health.module';
@@ -100,7 +107,9 @@ if (JWT_SECRET.length < 32) {
   );
 }
 
-const ENTITIES = [User, CallLog, CallRating, Setting, Business, BusinessNumber, Transaction, PhoneReport, PhoneReportVote, CallPermissionRequest, ProfileField, UserProfile, DataAccessLog, BusinessAudience, KybSubmission, KybDocument, BlockedKeyword, SmsDeletionLog, SpamReport, ReportedSms, BankAccount, FicaSubmission, FicaDocument, Withdrawal, Conversation, Message, CallScreening];
+// ENTITIES is the single canonical list, shared with the migration CLI via
+// data-source.ts (see src/common/db/entities.ts). Both must use the same list
+// so the runtime schema and the migration schema can never drift.
 
 const isProduction = process.env.NODE_ENV === 'production';
 const runMigrationsOnBoot = shouldRunMigrations(process.env);
@@ -164,6 +173,12 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
     SmsDeletionLogModule,
     SpamReportModule,
     ReportedSmsModule,
+    FeedbackModule,
+    ErrorLogModule,
+    AuditModule,
+    RetentionModule,
+    LegalModule,
+    ConsentModule,
     BankAccountModule,
     FicaModule,
     WithdrawalModule,
