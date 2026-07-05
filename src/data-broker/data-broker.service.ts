@@ -65,10 +65,16 @@ export class DataBrokerService {
     });
     const saved = await this.permissionRepo.save(request);
 
-    // Pay-to-Contact: if the business attached a bid, stake it now (debits the
-    // business wallet and holds the escrow against this request).
-    if (dto.bidAmount && dto.bidAmount > 0) {
-      await this.payToContact.stake(businessUserId, saved.id, dto.bidAmount);
+    // Pay-to-Contact: stake the bid now (debits the business wallet and holds
+    // the escrow against this request). An explicit per-request bid wins;
+    // otherwise fall back to the business's configured default bid. Postgres
+    // returns numeric columns as strings, so coerce before comparing.
+    const bid =
+      dto.bidAmount && dto.bidAmount > 0
+        ? dto.bidAmount
+        : Number(business.defaultBidAmount) || 0;
+    if (bid > 0) {
+      await this.payToContact.stake(businessUserId, saved.id, bid);
     }
 
     // Notify the target user

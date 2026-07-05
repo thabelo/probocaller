@@ -1,4 +1,4 @@
-import { IsBoolean, IsEmail, IsIn, IsOptional, IsString, IsUrl, MaxLength } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsNumber, IsOptional, IsString, IsUrl, Max, MaxLength, Min } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 // Strict allow-list for admin business profile edits. Any extra field is rejected
@@ -44,6 +44,11 @@ export class AdminUpdateBusinessDto {
   @ApiProperty({ required: false, enum: ['unverified', 'verified', 'trusted', 'premium'] })
   @IsOptional() @IsString() @IsIn(['unverified', 'verified', 'trusted', 'premium'])
   tier?: string;
+
+  // Pay-to-Contact default bid (credits). 0 disables the default.
+  @ApiProperty({ required: false, description: 'Default Pay-to-Contact bid in credits' })
+  @IsOptional() @IsNumber() @Min(0) @Max(1_000_000)
+  defaultBidAmount?: number;
 }
 
 export class AdminUpdateUserDto {

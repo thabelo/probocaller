@@ -41,6 +41,11 @@ export class Business {
   @Column({ nullable: true })
   address: string;
 
+  // Pay-to-Contact: default credits this business stakes to reach a user when a
+  // call-permission request doesn't specify an explicit bid. 0 = no default.
+  @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
+  defaultBidAmount: number;
+
   @Column({ default: false })
   verified: boolean;
 

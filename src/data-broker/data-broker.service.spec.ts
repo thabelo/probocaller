@@ -148,5 +148,29 @@ describe('DataBrokerService', () => {
       await service.requestCallPermission(2, { targetUserId: 9 } as any);
       expect(payToContact.stake).not.toHaveBeenCalled();
     });
+
+    it('falls back to the business default bid when no explicit bid is given', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 3, companyName: 'Acme', userId: 2, defaultBidAmount: 25 });
+      await service.requestCallPermission(2, { targetUserId: 9 } as any);
+      expect(payToContact.stake).toHaveBeenCalledWith(2, 50, 25);
+    });
+
+    it('coerces a decimal-as-string default bid (Postgres numeric) before staking', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 3, companyName: 'Acme', userId: 2, defaultBidAmount: '25' });
+      await service.requestCallPermission(2, { targetUserId: 9 } as any);
+      expect(payToContact.stake).toHaveBeenCalledWith(2, 50, 25);
+    });
+
+    it('an explicit bid overrides the business default', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 3, companyName: 'Acme', userId: 2, defaultBidAmount: 25 });
+      await service.requestCallPermission(2, { targetUserId: 9, bidAmount: 40 } as any);
+      expect(payToContact.stake).toHaveBeenCalledWith(2, 50, 40);
+    });
+
+    it('does not stake when neither an explicit bid nor a positive default exists', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 3, companyName: 'Acme', userId: 2, defaultBidAmount: 0 });
+      await service.requestCallPermission(2, { targetUserId: 9 } as any);
+      expect(payToContact.stake).not.toHaveBeenCalled();
+    });
   });
 });
