@@ -11,6 +11,7 @@ import { Transaction } from '../transaction/transaction.entity';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpsertProfileFieldDto } from './dto/upsert-profile-field.dto';
 import { QueryAudienceDto, SaveAudienceDto } from './dto/query-audience.dto';
+import { AdminUpdateDataBrokerDto } from './dto/admin-data-broker.dto';
 import { ReferralService } from '../referral/referral.service';
 
 const TIER_THRESHOLDS = { basic: 0, silver: 25, gold: 50, platinum: 75 };
@@ -108,6 +109,31 @@ export class ProfileService {
     if (dto.floorPrices !== undefined) profile.floorPrices = { ...profile.floorPrices, ...dto.floorPrices };
     await this.profileRepo.save(profile);
     return this.getMyProfile(userId);
+  }
+
+  // ─── Admin: view & control any user's data profile ──────────────────────────
+
+  async adminGetUserDataProfile(userId: number) {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    const profile = await this.getMyProfile(userId);
+    return {
+      user: { id: user.id, phoneNumber: user.phoneNumber, name: user.name },
+      dataShareEnabled: user.dataShareEnabled,
+      incognitoEnabled: user.incognitoEnabled,
+      dataCategories: user.dataCategories ?? [],
+      profile,
+    };
+  }
+
+  async adminUpdateUserDataBroker(userId: number, dto: AdminUpdateDataBrokerDto) {
+    const user = await this.userRepo.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    if (dto.dataShareEnabled !== undefined) user.dataShareEnabled = dto.dataShareEnabled;
+    if (dto.incognitoEnabled !== undefined) user.incognitoEnabled = dto.incognitoEnabled;
+    if (dto.dataCategories !== undefined) user.dataCategories = dto.dataCategories;
+    await this.userRepo.save(user);
+    return this.adminGetUserDataProfile(userId);
   }
 
   // ─── Audience queries (business) ──────────────────────────────────────────

@@ -76,6 +76,62 @@ describe('ProfileService', () => {
     });
   });
 
+  describe('adminGetUserDataProfile', () => {
+    it("returns the user's identity, data-broker settings and profile", async () => {
+      const userRepo = (service as any).userRepo;
+      userRepo.findOne.mockResolvedValue({
+        id: 5, phoneNumber: '+27824975852', name: 'Thabelo',
+        dataShareEnabled: true, dataCategories: ['income_range'], incognitoEnabled: false,
+      });
+      fieldRepo.find.mockResolvedValue([mockField()]);
+      profileRepo.findOne.mockResolvedValue(mockProfile({ userId: 5, data: { income_range: 'R10k' } }));
+
+      const result = await service.adminGetUserDataProfile(5);
+
+      expect(result.user).toEqual({ id: 5, phoneNumber: '+27824975852', name: 'Thabelo' });
+      expect(result.dataShareEnabled).toBe(true);
+      expect(result.dataCategories).toEqual(['income_range']);
+      expect(result.profile.data.income_range).toBe('R10k');
+      expect(userRepo.findOne).toHaveBeenCalledWith({ where: { id: 5 } });
+    });
+
+    it('throws NotFoundException when the user does not exist', async () => {
+      (service as any).userRepo.findOne.mockResolvedValue(null);
+      await expect(service.adminGetUserDataProfile(999)).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('adminUpdateUserDataBroker', () => {
+    it('toggles the data-sharing controls and persists them', async () => {
+      const userRepo = (service as any).userRepo;
+      const user = {
+        id: 5, phoneNumber: '+27', name: 'T',
+        dataShareEnabled: true, dataCategories: [], incognitoEnabled: false,
+      };
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation(async (u: any) => u);
+      fieldRepo.find.mockResolvedValue([mockField()]);
+      profileRepo.findOne.mockResolvedValue(mockProfile({ userId: 5 }));
+
+      const result = await service.adminUpdateUserDataBroker(5, {
+        dataShareEnabled: false,
+        dataCategories: ['age_range'],
+      });
+
+      expect(user.dataShareEnabled).toBe(false);
+      expect(user.dataCategories).toEqual(['age_range']);
+      expect(userRepo.save).toHaveBeenCalled();
+      expect(result.dataShareEnabled).toBe(false);
+    });
+
+    it('throws NotFoundException when the user does not exist', async () => {
+      (service as any).userRepo.findOne.mockResolvedValue(null);
+      await expect(
+        service.adminUpdateUserDataBroker(999, { dataShareEnabled: false }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
   describe('purchaseLeads — cost math hardening (H7)', () => {
     // The old code computed maxAffordable as
     //   Math.floor(budget / sum || matches.length)

@@ -1,5 +1,5 @@
 import {
-  Controller, Get, Post, Put, Delete, Body, Param, UseGuards, Request, ForbiddenException, Query,
+  Controller, Get, Post, Put, Patch, Delete, Body, Param, UseGuards, Request, ForbiddenException, Query,
 } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
@@ -8,6 +8,7 @@ import { ProfileService } from './profile.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpsertProfileFieldDto } from './dto/upsert-profile-field.dto';
 import { QueryAudienceDto, SaveAudienceDto } from './dto/query-audience.dto';
+import { AdminUpdateDataBrokerDto } from './dto/admin-data-broker.dto';
 
 @ApiTags('profile')
 @ApiBearerAuth()
@@ -118,5 +119,22 @@ export class ProfileController {
   @ApiOperation({ summary: 'Admin: view all data access logs' })
   adminAccessLogs() {
     return this.profileService.adminGetAllAccessLogs();
+  }
+
+  @Get('admin/user/:userId')
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: "Admin: view a user's data profile and data-broker settings" })
+  adminGetUserDataProfile(@Param('userId') userId: string) {
+    return this.profileService.adminGetUserDataProfile(Number(userId));
+  }
+
+  @Patch('admin/user/:userId')
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: "Admin: control a user's data-broker settings" })
+  adminUpdateUserDataBroker(
+    @Param('userId') userId: string,
+    @Body() dto: AdminUpdateDataBrokerDto,
+  ) {
+    return this.profileService.adminUpdateUserDataBroker(Number(userId), dto);
   }
 }
