@@ -1,6 +1,7 @@
 import { Controller, Post, Body, UseGuards, Request } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiSecurity } from '@nestjs/swagger';
 import { ApiKeyGuard } from './api-key.guard';
+import { BusinessService } from './business.service';
 import { ProfileService } from '../profile/profile.service';
 import { QueryAudienceDto } from '../profile/dto/query-audience.dto';
 
@@ -13,7 +14,10 @@ import { QueryAudienceDto } from '../profile/dto/query-audience.dto';
 @ApiTags('leads')
 @Controller('leads')
 export class LeadsController {
-  constructor(private readonly profileService: ProfileService) {}
+  constructor(
+    private readonly profileService: ProfileService,
+    private readonly businessService: BusinessService,
+  ) {}
 
   @Post()
   @UseGuards(ApiKeyGuard)
@@ -28,6 +32,8 @@ export class LeadsController {
       const estimate = await this.profileService.queryAudience(userId, dto, scopes);
       return { dryRun: true, scopes, ...estimate };
     }
-    return this.profileService.purchaseLeads(userId, dto, scopes);
+    const result = await this.profileService.purchaseLeads(userId, dto, scopes);
+    await this.businessService.recordApiKeyUsage(req.apiKey.id, result.totalCost || 0);
+    return result;
   }
 }

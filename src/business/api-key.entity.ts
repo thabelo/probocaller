@@ -33,6 +33,16 @@ export class ApiKey {
   @Column({ default: false })
   revoked: boolean;
 
+  // Usage stats — updated on each billed /leads call.
+  @Column({ type: 'int', default: 0 })
+  callCount: number;
+
+  @Column({ type: 'decimal', precision: 12, scale: 4, default: 0 })
+  totalSpend: number;
+
+  @Column({ type: 'timestamp', nullable: true, default: null })
+  lastUsedAt: Date | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

@@ -242,4 +242,11 @@ export class BusinessService {
     key.revoked = true;
     return this.apiKeyRepo.save(key);
   }
+
+  /** Record a billed /leads call against a key (call count + spend + last used). */
+  async recordApiKeyUsage(apiKeyId: number, spend: number): Promise<void> {
+    await this.apiKeyRepo.increment({ id: apiKeyId }, 'callCount', 1);
+    if (spend > 0) await this.apiKeyRepo.increment({ id: apiKeyId }, 'totalSpend', spend);
+    await this.apiKeyRepo.update(apiKeyId, { lastUsedAt: new Date() });
+  }
 }

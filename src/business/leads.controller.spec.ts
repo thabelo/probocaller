@@ -1,36 +1,40 @@
 import { LeadsController } from './leads.controller';
 
 describe('LeadsController', () => {
-  const makeService = () => ({
+  const makeProfile = () => ({
     purchaseLeads: jest.fn().mockResolvedValue({ purchased: 2, leads: [], totalCost: 0.4 }),
     queryAudience: jest.fn().mockResolvedValue({ estimatedReach: 5, estimatedTotalCost: 0.25 }),
   });
+  const makeBusiness = () => ({ recordApiKeyUsage: jest.fn().mockResolvedValue(undefined) });
   const req = () => ({
     business: { id: 3, userId: 7, companyName: 'Acme' },
-    apiKey: { scopes: ['income_range', 'age_range'] },
+    apiKey: { id: 11, scopes: ['income_range', 'age_range'] },
   });
 
-  it('POST /leads passes the key scopes to purchaseLeads', async () => {
-    const svc = makeService() as any;
-    const controller = new LeadsController(svc);
+  it('passes scopes to purchaseLeads and records usage against the key', async () => {
+    const profile = makeProfile() as any;
+    const business = makeBusiness() as any;
+    const controller = new LeadsController(profile, business);
     const dto = { filters: { income_range: { op: 'gte', value: 'lt_5k' } } } as any;
 
     const result = await controller.getLeads(req(), dto);
 
-    expect(svc.purchaseLeads).toHaveBeenCalledWith(7, dto, ['income_range', 'age_range']);
-    expect(svc.queryAudience).not.toHaveBeenCalled();
+    expect(profile.purchaseLeads).toHaveBeenCalledWith(7, dto, ['income_range', 'age_range']);
+    expect(business.recordApiKeyUsage).toHaveBeenCalledWith(11, 0.4);
     expect(result).toEqual({ purchased: 2, leads: [], totalCost: 0.4 });
   });
 
-  it('dryRun estimates via queryAudience (scoped) and never bills', async () => {
-    const svc = makeService() as any;
-    const controller = new LeadsController(svc);
+  it('dryRun estimates (scoped), never bills, and records no usage', async () => {
+    const profile = makeProfile() as any;
+    const business = makeBusiness() as any;
+    const controller = new LeadsController(profile, business);
     const dto = { dryRun: true, filters: {} } as any;
 
     const result = await controller.getLeads(req(), dto);
 
-    expect(svc.queryAudience).toHaveBeenCalledWith(7, dto, ['income_range', 'age_range']);
-    expect(svc.purchaseLeads).not.toHaveBeenCalled();
+    expect(profile.queryAudience).toHaveBeenCalledWith(7, dto, ['income_range', 'age_range']);
+    expect(profile.purchaseLeads).not.toHaveBeenCalled();
+    expect(business.recordApiKeyUsage).not.toHaveBeenCalled();
     expect(result).toMatchObject({ dryRun: true, scopes: ['income_range', 'age_range'], estimatedReach: 5 });
   });
 });

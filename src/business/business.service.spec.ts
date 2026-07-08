@@ -7,7 +7,10 @@ import { BusinessNumber } from './business-number.entity';
 import { ApiKey } from './api-key.entity';
 import { User } from '../user/user.entity';
 
-const mockRepo = () => ({ find: jest.fn(), findOne: jest.fn(), create: jest.fn(), save: jest.fn() });
+const mockRepo = () => ({
+  find: jest.fn(), findOne: jest.fn(), create: jest.fn(), save: jest.fn(),
+  increment: jest.fn(), update: jest.fn(),
+});
 
 describe('BusinessService — API keys', () => {
   let service: BusinessService;
@@ -90,6 +93,21 @@ describe('BusinessService — API keys', () => {
       apiKeyRepo.find.mockResolvedValue([{ id: 1 }]);
       await service.adminListApiKeys();
       expect(apiKeyRepo.find).toHaveBeenCalledWith({ relations: ['business'], order: { createdAt: 'DESC' } });
+    });
+  });
+
+  describe('recordApiKeyUsage', () => {
+    it('increments the call count + spend and stamps lastUsedAt', async () => {
+      await service.recordApiKeyUsage(5, 0.4);
+      expect(apiKeyRepo.increment).toHaveBeenCalledWith({ id: 5 }, 'callCount', 1);
+      expect(apiKeyRepo.increment).toHaveBeenCalledWith({ id: 5 }, 'totalSpend', 0.4);
+      expect(apiKeyRepo.update).toHaveBeenCalled();
+    });
+
+    it('skips the spend increment when nothing was spent', async () => {
+      await service.recordApiKeyUsage(5, 0);
+      expect(apiKeyRepo.increment).toHaveBeenCalledWith({ id: 5 }, 'callCount', 1);
+      expect(apiKeyRepo.increment).not.toHaveBeenCalledWith({ id: 5 }, 'totalSpend', expect.anything());
     });
   });
 });
