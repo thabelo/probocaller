@@ -1,4 +1,4 @@
-import { IsObject, IsOptional, IsString, IsNumber, Min, IsIn } from 'class-validator';
+import { IsObject, IsOptional, IsString, IsNumber, Min, IsIn, IsBoolean } from 'class-validator';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
 export class QueryAudienceDto {
@@ -35,6 +35,11 @@ export class QueryAudienceDto {
   @IsOptional()
   @IsString()
   toDate?: string;
+
+  @ApiPropertyOptional({ description: 'Estimate reach/cost without billing the wallet.' })
+  @IsOptional()
+  @IsBoolean()
+  dryRun?: boolean;
 }
 
 export class SaveAudienceDto {
