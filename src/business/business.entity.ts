@@ -62,6 +62,10 @@ export class Business {
   @Column({ type: 'int', default: 0 })
   totalRatings: number;
 
+  // API key businesses use to call the /leads API (x-api-key header).
+  @Column({ type: 'varchar', nullable: true, unique: true })
+  apiKey: string | null;
+
   @OneToMany(() => BusinessNumber, (bn) => bn.business, { cascade: true, eager: true })
   numbers: BusinessNumber[];
 

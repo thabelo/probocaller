@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { randomBytes } from 'crypto';
 import { Business } from './business.entity';
 import { BusinessNumber, NUMBER_PURPOSES } from './business-number.entity';
 import { User } from '../user/user.entity';
@@ -199,5 +200,26 @@ export class BusinessService {
     const num = await this.numberRepo.findOne({ where: { id: numberId } });
     if (!num) throw new NotFoundException('Number not found');
     await this.numberRepo.remove(num);
+  }
+
+  // ─── API keys (businesses call the /leads API with these) ───────────────────
+
+  /** Generate (or rotate) the business's API key. Returns the plaintext key. */
+  async generateApiKey(businessId: number): Promise<Business> {
+    const business = await this.businessRepo.findOne({ where: { id: businessId } });
+    if (!business) throw new NotFoundException('Business not found');
+    business.apiKey = 'pk_' + randomBytes(24).toString('hex');
+    return this.businessRepo.save(business);
+  }
+
+  /** Resolve a business from its API key (null for a blank/unknown key). */
+  async findByApiKey(apiKey: string): Promise<Business | null> {
+    if (!apiKey) return null;
+    return this.businessRepo.findOne({ where: { apiKey } });
+  }
+
+  /** Admin: all businesses with their key metadata. */
+  async adminListApiKeys(): Promise<Business[]> {
+    return this.businessRepo.find({ order: { companyName: 'ASC' } });
   }
 }

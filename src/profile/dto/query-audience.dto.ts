@@ -25,6 +25,16 @@ export class QueryAudienceDto {
   @IsNumber()
   @Min(1)
   consentDays?: number;
+
+  @ApiPropertyOptional({ description: 'Only profiles updated on/after this ISO date.' })
+  @IsOptional()
+  @IsString()
+  fromDate?: string;
+
+  @ApiPropertyOptional({ description: 'Only profiles updated on/before this ISO date.' })
+  @IsOptional()
+  @IsString()
+  toDate?: string;
 }
 
 export class SaveAudienceDto {

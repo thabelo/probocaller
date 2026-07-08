@@ -138,10 +138,19 @@ export class ProfileService {
 
   // ─── Audience queries (business) ──────────────────────────────────────────
 
-  private async matchingProfiles(filters: Record<string, { op: string; value: any }> = {}): Promise<UserProfile[]> {
+  private async matchingProfiles(
+    filters: Record<string, { op: string; value: any }> = {},
+    dateRange: { from?: string; to?: string } = {},
+  ): Promise<UserProfile[]> {
     const profiles = await this.profileRepo.find();
+    const fromTs = dateRange.from ? new Date(dateRange.from).getTime() : null;
+    const toTs = dateRange.to ? new Date(dateRange.to).getTime() : null;
     return profiles.filter((p) => {
       if (!p.data || Object.keys(p.data).length === 0) return false;
+      // Date-range filter on when the profile data was last updated.
+      const updated = p.lastUpdated ? new Date(p.lastUpdated).getTime() : null;
+      if (fromTs !== null && (updated === null || updated < fromTs)) return false;
+      if (toTs !== null && (updated === null || updated > toTs)) return false;
       return Object.entries(filters).every(([key, { op, value }]) => {
         const v = p.data[key];
         if (v === undefined || v === null) return false;
@@ -161,7 +170,7 @@ export class ProfileService {
     if (!business) throw new ForbiddenException('Business profile required');
     const fields = await this.getEnabledFields();
     const fieldMap = Object.fromEntries(fields.map((f) => [f.key, f]));
-    const matches = await this.matchingProfiles(dto.filters);
+    const matches = await this.matchingProfiles(dto.filters, { from: dto.fromDate, to: dto.toDate });
 
     // Estimate cost: sum of creditCost for each requested field × matched users
     const requestedKeys = dto.filters ? Object.keys(dto.filters) : fields.map((f) => f.key);
@@ -185,7 +194,7 @@ export class ProfileService {
 
     const fields = await this.getEnabledFields();
     const fieldMap = Object.fromEntries(fields.map((f) => [f.key, f]));
-    const matches = await this.matchingProfiles(dto.filters);
+    const matches = await this.matchingProfiles(dto.filters, { from: dto.fromDate, to: dto.toDate });
     if (matches.length === 0) return { purchased: 0, leads: [], totalCost: 0 };
 
     const requestedKeys = dto.filters ? Object.keys(dto.filters) : fields.map((f) => f.key);
@@ -245,6 +254,18 @@ export class ProfileService {
 
         lockedCaller.walletBalance = parseFloat((Number(lockedCaller.walletBalance) - costForUser).toFixed(6));
         user.walletBalance = parseFloat((Number(user.walletBalance) + userEarning).toFixed(6));
+
+        // Notify the data owner of the profit (in-app; the app polls
+        // /user/notifications and surfaces it via notifee).
+        user.notifications = [
+          ...(user.notifications || []),
+          {
+            id: Date.now() + profile.userId,
+            message: `You earned R${userEarning.toFixed(2)} — ${business.companyName} accessed your data`,
+            timestamp: new Date(),
+            read: false,
+          },
+        ];
         await manager.save(User, user);
 
         // Incognito (premium): skip attributing this access in the user's

@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards, Request, ParseIntPipe, HttpCode } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
+import { AdminGuard } from '../admin/admin.guard';
 import { BusinessService } from './business.service';
 
 @ApiTags('business')
@@ -86,5 +87,21 @@ export class BusinessController {
   @ApiOperation({ summary: 'Remove a number from my business profile' })
   deleteNumber(@Request() req, @Param('id', ParseIntPipe) id: number) {
     return this.businessService.deleteNumber(req.user.userId, id);
+  }
+
+  // ─── Admin: API key management (businesses use keys to call /leads) ──────────
+
+  @Get('admin/api-keys')
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: 'Admin: list businesses with their API keys' })
+  adminListApiKeys() {
+    return this.businessService.adminListApiKeys();
+  }
+
+  @Post('admin/:id/api-key')
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: 'Admin: generate (rotate) a business API key' })
+  adminGenerateApiKey(@Param('id', ParseIntPipe) id: number) {
+    return this.businessService.generateApiKey(id);
   }
 }
