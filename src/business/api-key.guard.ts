@@ -1,4 +1,4 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import { CanActivate, ExecutionContext, Injectable, UnauthorizedException, ForbiddenException } from '@nestjs/common';
 import { BusinessService } from './business.service';
 
 /**
@@ -15,6 +15,10 @@ export class ApiKeyGuard implements CanActivate {
     const key = request.headers['x-api-key'];
     const apiKey = await this.businessService.findActiveApiKey(key);
     if (!apiKey || !apiKey.business) throw new UnauthorizedException('Invalid or missing API key');
+    // The /leads API is only available to KYB-verified businesses.
+    if (!apiKey.business.verified) {
+      throw new ForbiddenException('API access requires KYB verification');
+    }
     request.apiKey = apiKey;
     request.business = apiKey.business;
     return true;

@@ -1,4 +1,4 @@
-import { UnauthorizedException, ExecutionContext } from '@nestjs/common';
+import { UnauthorizedException, ForbiddenException, ExecutionContext } from '@nestjs/common';
 import { ApiKeyGuard } from './api-key.guard';
 
 function ctx(request: any): ExecutionContext {
@@ -6,8 +6,8 @@ function ctx(request: any): ExecutionContext {
 }
 
 describe('ApiKeyGuard', () => {
-  it('allows an active key and attaches the key (scopes) + business', async () => {
-    const apiKey = { id: 1, key: 'pk_abc', scopes: ['income_range'], business: { id: 3, userId: 7 } };
+  it('allows an active key whose business is KYB-verified, attaching key + business', async () => {
+    const apiKey = { id: 1, key: 'pk_abc', scopes: ['income_range'], business: { id: 3, userId: 7, verified: true } };
     const svc = { findActiveApiKey: jest.fn().mockResolvedValue(apiKey) } as any;
     const guard = new ApiKeyGuard(svc);
     const request: any = { headers: { 'x-api-key': 'pk_abc' } };
@@ -18,7 +18,14 @@ describe('ApiKeyGuard', () => {
     expect(request.business).toBe(apiKey.business);
   });
 
-  it('rejects a missing/invalid/revoked key', async () => {
+  it('rejects a key whose business is NOT KYB-verified (403)', async () => {
+    const apiKey = { id: 1, key: 'pk_abc', scopes: [], business: { id: 3, userId: 7, verified: false } };
+    const svc = { findActiveApiKey: jest.fn().mockResolvedValue(apiKey) } as any;
+    const guard = new ApiKeyGuard(svc);
+    await expect(guard.canActivate(ctx({ headers: { 'x-api-key': 'pk_abc' } }))).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('rejects a missing/invalid/revoked key (401)', async () => {
     const svc = { findActiveApiKey: jest.fn().mockResolvedValue(null) } as any;
     const guard = new ApiKeyGuard(svc);
     await expect(guard.canActivate(ctx({ headers: {} }))).rejects.toBeInstanceOf(UnauthorizedException);
