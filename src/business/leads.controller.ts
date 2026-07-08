@@ -20,12 +20,14 @@ export class LeadsController {
   @ApiSecurity('api-key')
   @ApiOperation({ summary: 'Buy filtered leads (metered against the business wallet)' })
   async getLeads(@Request() req: any, @Body() dto: QueryAudienceDto) {
+    const userId = req.business.userId;
+    const scopes: string[] = req.apiKey?.scopes ?? [];
     // dryRun estimates the reach/cost via queryAudience WITHOUT billing — used
     // by the admin "Test" button so it never charges the wallet.
     if (dto.dryRun) {
-      const estimate = await this.profileService.queryAudience(req.business.userId, dto);
-      return { dryRun: true, ...estimate };
+      const estimate = await this.profileService.queryAudience(userId, dto, scopes);
+      return { dryRun: true, scopes, ...estimate };
     }
-    return this.profileService.purchaseLeads(req.business.userId, dto);
+    return this.profileService.purchaseLeads(userId, dto, scopes);
   }
 }

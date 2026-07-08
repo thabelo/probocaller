@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { randomBytes } from 'crypto';
 import { Business } from './business.entity';
 import { BusinessNumber, NUMBER_PURPOSES } from './business-number.entity';
+import { ApiKey } from './api-key.entity';
 import { User } from '../user/user.entity';
 
 @Injectable()
@@ -13,6 +14,8 @@ export class BusinessService {
     private businessRepo: Repository<Business>,
     @InjectRepository(BusinessNumber)
     private numberRepo: Repository<BusinessNumber>,
+    @InjectRepository(ApiKey)
+    private apiKeyRepo: Repository<ApiKey>,
     @InjectRepository(User)
     private userRepo: Repository<User>,
   ) {}
@@ -204,22 +207,39 @@ export class BusinessService {
 
   // ─── API keys (businesses call the /leads API with these) ───────────────────
 
-  /** Generate (or rotate) the business's API key. Returns the plaintext key. */
-  async generateApiKey(businessId: number): Promise<Business> {
+  /** Create a new API key for a business, scoped to specific profile fields. */
+  async createApiKey(
+    businessId: number,
+    opts: { label?: string; scopes?: string[] },
+  ): Promise<ApiKey> {
     const business = await this.businessRepo.findOne({ where: { id: businessId } });
     if (!business) throw new NotFoundException('Business not found');
-    business.apiKey = 'pk_' + randomBytes(24).toString('hex');
-    return this.businessRepo.save(business);
+    const key = this.apiKeyRepo.create({
+      businessId,
+      key: 'pk_' + randomBytes(24).toString('hex'),
+      label: opts.label ?? null,
+      scopes: opts.scopes ?? [],
+      revoked: false,
+    });
+    return this.apiKeyRepo.save(key);
   }
 
-  /** Resolve a business from its API key (null for a blank/unknown key). */
-  async findByApiKey(apiKey: string): Promise<Business | null> {
-    if (!apiKey) return null;
-    return this.businessRepo.findOne({ where: { apiKey } });
+  /** Resolve an active API key (with its business); null for blank/unknown. */
+  async findActiveApiKey(key: string): Promise<ApiKey | null> {
+    if (!key) return null;
+    return this.apiKeyRepo.findOne({ where: { key, revoked: false }, relations: ['business'] });
   }
 
-  /** Admin: all businesses with their key metadata. */
-  async adminListApiKeys(): Promise<Business[]> {
-    return this.businessRepo.find({ order: { companyName: 'ASC' } });
+  /** Admin: every API key with its owning business, newest first. */
+  async adminListApiKeys(): Promise<ApiKey[]> {
+    return this.apiKeyRepo.find({ relations: ['business'], order: { createdAt: 'DESC' } });
+  }
+
+  /** Revoke an API key (it stops authenticating immediately). */
+  async revokeApiKey(id: number): Promise<ApiKey> {
+    const key = await this.apiKeyRepo.findOne({ where: { id } });
+    if (!key) throw new NotFoundException('API key not found');
+    key.revoked = true;
+    return this.apiKeyRepo.save(key);
   }
 }

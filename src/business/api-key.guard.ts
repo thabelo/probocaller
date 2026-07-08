@@ -12,10 +12,11 @@ export class ApiKeyGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest();
-    const key = request.headers['x-api-key'] || request.headers['x-api-key'.toUpperCase()];
-    const business = await this.businessService.findByApiKey(key);
-    if (!business) throw new UnauthorizedException('Invalid or missing API key');
-    request.business = business;
+    const key = request.headers['x-api-key'];
+    const apiKey = await this.businessService.findActiveApiKey(key);
+    if (!apiKey || !apiKey.business) throw new UnauthorizedException('Invalid or missing API key');
+    request.apiKey = apiKey;
+    request.business = apiKey.business;
     return true;
   }
 }

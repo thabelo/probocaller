@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { PassportModule } from '@nestjs/passport';
 import { Business } from './business.entity';
 import { BusinessNumber } from './business-number.entity';
+import { ApiKey } from './api-key.entity';
 import { User } from '../user/user.entity';
 import { BusinessService } from './business.service';
 import { BusinessController } from './business.controller';
@@ -12,7 +13,7 @@ import { ProfileModule } from '../profile/profile.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Business, BusinessNumber, User]),
+    TypeOrmModule.forFeature([Business, BusinessNumber, ApiKey, User]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     ProfileModule,
   ],

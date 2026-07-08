@@ -93,15 +93,25 @@ export class BusinessController {
 
   @Get('admin/api-keys')
   @UseGuards(AdminGuard)
-  @ApiOperation({ summary: 'Admin: list businesses with their API keys' })
+  @ApiOperation({ summary: 'Admin: list every API key with its business' })
   adminListApiKeys() {
     return this.businessService.adminListApiKeys();
   }
 
-  @Post('admin/:id/api-key')
+  @Post('admin/:businessId/api-keys')
   @UseGuards(AdminGuard)
-  @ApiOperation({ summary: 'Admin: generate (rotate) a business API key' })
-  adminGenerateApiKey(@Param('id', ParseIntPipe) id: number) {
-    return this.businessService.generateApiKey(id);
+  @ApiOperation({ summary: 'Admin: create a scoped API key for a business' })
+  adminCreateApiKey(
+    @Param('businessId', ParseIntPipe) businessId: number,
+    @Body() body: { label?: string; scopes?: string[] },
+  ) {
+    return this.businessService.createApiKey(businessId, body || {});
+  }
+
+  @Post('admin/api-keys/:id/revoke')
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: 'Admin: revoke an API key' })
+  adminRevokeApiKey(@Param('id', ParseIntPipe) id: number) {
+    return this.businessService.revokeApiKey(id);
   }
 }

@@ -165,15 +165,17 @@ export class ProfileService {
     });
   }
 
-  async queryAudience(businessUserId: number, dto: QueryAudienceDto) {
+  async queryAudience(businessUserId: number, dto: QueryAudienceDto, allowedFields: string[] = []) {
     const business = await this.businessRepo.findOne({ where: { userId: businessUserId } });
     if (!business) throw new ForbiddenException('Business profile required');
     const fields = await this.getEnabledFields();
     const fieldMap = Object.fromEntries(fields.map((f) => [f.key, f]));
     const matches = await this.matchingProfiles(dto.filters, { from: dto.fromDate, to: dto.toDate });
 
-    // Estimate cost: sum of creditCost for each requested field × matched users
-    const requestedKeys = dto.filters ? Object.keys(dto.filters) : fields.map((f) => f.key);
+    // Estimate cost: sum of creditCost for each requested field × matched users.
+    // An API key's scopes (allowedFields) cap which fields it may access.
+    let requestedKeys = dto.filters ? Object.keys(dto.filters) : fields.map((f) => f.key);
+    if (allowedFields.length) requestedKeys = requestedKeys.filter((k) => allowedFields.includes(k));
     const costPerUser = requestedKeys.reduce((s, k) => s + Number(fieldMap[k]?.creditCost || 0), 0);
     const estimatedCost = parseFloat((costPerUser * matches.length).toFixed(4));
 
@@ -185,7 +187,7 @@ export class ProfileService {
     };
   }
 
-  async purchaseLeads(businessUserId: number, dto: QueryAudienceDto) {
+  async purchaseLeads(businessUserId: number, dto: QueryAudienceDto, allowedFields: string[] = []) {
     const business = await this.businessRepo.findOne({ where: { userId: businessUserId } });
     if (!business) throw new ForbiddenException('Business profile required');
 
@@ -197,7 +199,9 @@ export class ProfileService {
     const matches = await this.matchingProfiles(dto.filters, { from: dto.fromDate, to: dto.toDate });
     if (matches.length === 0) return { purchased: 0, leads: [], totalCost: 0 };
 
-    const requestedKeys = dto.filters ? Object.keys(dto.filters) : fields.map((f) => f.key);
+    // An API key's scopes (allowedFields) cap which fields it may buy.
+    let requestedKeys = dto.filters ? Object.keys(dto.filters) : fields.map((f) => f.key);
+    if (allowedFields.length) requestedKeys = requestedKeys.filter((k) => allowedFields.includes(k));
     // H7 bugfix — compute costPerUser EXPLICITLY before the affordability
     // calc. The old expression was
     //     Math.floor(budget / sum || matches.length)
