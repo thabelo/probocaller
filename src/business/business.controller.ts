@@ -24,12 +24,14 @@ export class BusinessController {
     @Body() body: {
       companyName: string;
       industry: string;
+      country: string;
       registrationNumber?: string;
       website?: string;
       description?: string;
       contactEmail?: string;
       contactPhone?: string;
       address?: string;
+      logoUrl?: string;
     },
   ) {
     return this.businessService.register(req.user.userId, body);
@@ -113,5 +115,49 @@ export class BusinessController {
   @ApiOperation({ summary: 'Admin: revoke an API key' })
   adminRevokeApiKey(@Param('id', ParseIntPipe) id: number) {
     return this.businessService.revokeApiKey(id);
+  }
+
+  // ─── Business self-service: manage only your own keys ────────────────────────
+
+  @Get('api-keys')
+  @ApiOperation({ summary: 'List the API keys of the businesses I own' })
+  listMyApiKeys(@Request() req) {
+    return this.businessService.listApiKeysForUser(req.user.userId);
+  }
+
+  @Post('api-keys')
+  @ApiOperation({ summary: 'Create a scoped API key for one of my KYB-verified businesses' })
+  createMyApiKey(
+    @Request() req,
+    @Body() body: { businessId: number; label?: string; scopes?: string[] },
+  ) {
+    return this.businessService.createApiKeyForUser(req.user.userId, body.businessId, {
+      label: body.label,
+      scopes: body.scopes,
+    });
+  }
+
+  @Post('api-keys/:id/revoke')
+  @ApiOperation({ summary: 'Revoke one of my own API keys' })
+  revokeMyApiKey(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.businessService.revokeApiKeyForUser(req.user.userId, id);
+  }
+
+  // ─── Business wallet (balance the call/API billing deducts from) ─────────────
+
+  @Get(':businessId/wallet')
+  @ApiOperation({ summary: 'Get a business wallet — balance + transaction ledger' })
+  getWallet(@Request() req, @Param('businessId', ParseIntPipe) businessId: number) {
+    return this.businessService.getWallet(businessId, req.user.userId);
+  }
+
+  @Post(':businessId/wallet/topup')
+  @ApiOperation({ summary: 'Add funds to a business wallet' })
+  topUpWallet(
+    @Request() req,
+    @Param('businessId', ParseIntPipe) businessId: number,
+    @Body() body: { amount: number },
+  ) {
+    return this.businessService.topUpWallet(businessId, req.user.userId, Number(body?.amount));
   }
 }

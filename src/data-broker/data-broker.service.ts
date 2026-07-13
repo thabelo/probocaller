@@ -156,6 +156,21 @@ export class DataBrokerService {
     return !!r;
   }
 
+  /**
+   * Whether a business caller may reach this recipient, per the recipient's own
+   * call-permission mode. Lets the incoming-call UI auto-reject a disallowed
+   * business call before it rings — mirrors the gate in CallService.initiateCall.
+   */
+  async isBusinessCallerAllowed(recipientUserId: number, callerBusinessId: number | null): Promise<boolean> {
+    const recipient = await this.userRepo.findOne({ where: { id: recipientUserId } });
+    const mode = recipient?.callPermissionMode || 'all';
+    if (mode === 'none') return false;
+    if (mode === 'approved_only') {
+      return callerBusinessId != null && (await this.hasApproval(callerBusinessId, recipientUserId));
+    }
+    return true;
+  }
+
   async adminGetAllRequests() {
     return this.permissionRepo.find({
       order: { createdAt: 'DESC' },

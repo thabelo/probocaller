@@ -9,6 +9,7 @@ import { ReportService } from '../report/report.service';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { PhoneReport } from '../report/phone-report.entity';
+import { ReverseLookupService } from '../lookup/reverse-lookup.service';
 
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -21,7 +22,26 @@ export class AdminController {
     private readonly reportService: ReportService,
     @InjectRepository(PhoneReport)
     private readonly reportRepo: Repository<PhoneReport>,
+    private readonly reverseLookup: ReverseLookupService,
   ) {}
+
+  @Get('reverse-lookups')
+  @ApiOperation({ summary: 'Reverse-lookup (Google Places) usage, cost and stats' })
+  async getReverseLookupStats() {
+    return this.reverseLookup.getStats();
+  }
+
+  @Get('reverse-lookups/history')
+  @ApiOperation({ summary: 'Recent reverse-lookup billing events' })
+  async getReverseLookupHistory(
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.reverseLookup.getHistory(
+      limit ? Number(limit) : 50,
+      offset ? Number(offset) : 0,
+    );
+  }
 
   @Get('stats')
   @ApiOperation({ summary: 'Get platform statistics' })
@@ -176,7 +196,7 @@ export class AdminController {
   @Post('businesses')
   @ApiOperation({ summary: 'Register a new business profile for a user (admin)' })
   async adminCreateBusiness(
-    @Body() body: { userId: number; companyName: string; industry: string; description?: string; contactPhone?: string; contactEmail?: string; website?: string; registrationNumber?: string; address?: string },
+    @Body() body: { userId: number; companyName: string; industry: string; country: string; description?: string; contactPhone?: string; contactEmail?: string; website?: string; registrationNumber?: string; address?: string },
   ) {
     const { userId, ...data } = body;
     return this.businessService.adminRegisterBusiness(userId, data);

@@ -5,6 +5,7 @@ import { Setting } from '../../config/setting.entity';
 import { Business } from '../../business/business.entity';
 import { BusinessNumber } from '../../business/business-number.entity';
 import { ApiKey } from '../../business/api-key.entity';
+import { Campaign } from '../../campaign/campaign.entity';
 import { Transaction } from '../../transaction/transaction.entity';
 import { PhoneReport } from '../../report/phone-report.entity';
 import { PhoneReportVote } from '../../report/phone-report-vote.entity';
@@ -32,6 +33,7 @@ import { AuditLog } from '../../audit/audit-log.entity';
 import { UserConsent } from '../../consent/user-consent.entity';
 import { ErrorLog } from '../../error-log/error-log.entity';
 import { SuppressionEntry } from '../../suppression/suppression.entity';
+import { ReverseLookupEvent } from '../../lookup/reverse-lookup-event.entity';
 
 /**
  * Canonical list of every persisted TypeORM entity.
@@ -51,6 +53,7 @@ export const ENTITIES = [
   Business,
   BusinessNumber,
   ApiKey,
+  Campaign,
   Transaction,
   PhoneReport,
   PhoneReportVote,
@@ -78,4 +81,5 @@ export const ENTITIES = [
   UserConsent,
   ErrorLog,
   SuppressionEntry,
+  ReverseLookupEvent,
 ];

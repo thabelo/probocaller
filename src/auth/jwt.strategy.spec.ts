@@ -71,6 +71,14 @@ describe('JwtStrategy — deactivated user gate', () => {
     expect(repo.findOne).toHaveBeenCalledWith({ where: { id: 7 }, select: ['id', 'deactivatedAt'] });
   });
 
+  it('carries the impersonator id (imp claim) so a view-as session can be exited', async () => {
+    const { JwtStrategy } = require('./jwt.strategy');
+    const repo = { findOne: jest.fn().mockResolvedValue({ id: 7, deactivatedAt: null }) };
+    const strategy = new JwtStrategy(repo);
+    await expect(strategy.validate({ sub: 7, phoneNumber: '+27', imp: 152 }))
+      .resolves.toMatchObject({ userId: 7, impersonatorId: 152 });
+  });
+
   it('throws UnauthorizedException when the user is deactivated', async () => {
     const { JwtStrategy } = require('./jwt.strategy');
     const { UnauthorizedException } = require('@nestjs/common');

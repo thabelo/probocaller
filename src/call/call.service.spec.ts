@@ -5,6 +5,9 @@ import { CallLog } from './call.entity';
 import { CallRating } from './call-rating.entity';
 import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
+import { BusinessNumber } from '../business/business-number.entity';
+import { Campaign } from '../campaign/campaign.entity';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { Setting } from '../config/setting.entity';
 import { TransactionService } from '../transaction/transaction.service';
 import { DataBrokerService } from '../data-broker/data-broker.service';
@@ -60,6 +63,7 @@ describe('CallService — LOW_FUNDS blocking', () => {
         { provide: getRepositoryToken(CallRating), useFactory: mockRepo },
         { provide: getRepositoryToken(User),       useFactory: mockRepo },
         { provide: getRepositoryToken(Business),   useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
         { provide: getRepositoryToken(Setting),    useFactory: mockSettingRepo },
         { provide: TransactionService, useValue: { log: jest.fn() } },
         { provide: DataBrokerService,  useValue: { hasApproval: jest.fn().mockResolvedValue(true) } },
@@ -220,6 +224,7 @@ describe('CallService — completeCall reward integrity', () => {
         { provide: getRepositoryToken(CallRating), useFactory: mockRepo },
         { provide: getRepositoryToken(User),       useFactory: mockRepo },
         { provide: getRepositoryToken(Business),   useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
         { provide: getRepositoryToken(Setting),    useFactory: mockSettingRepo },
         { provide: TransactionService, useValue: txService },
         { provide: DataBrokerService,  useValue: { hasApproval: jest.fn().mockResolvedValue(true) } },
@@ -280,6 +285,27 @@ describe('CallService — completeCall reward integrity', () => {
     expect(result.platformCut + result.userEarnings).toBeCloseTo(result.cost, 6);
     expect(business.walletBalance).toBeCloseTo(98.0, 6);
     expect(earner.walletBalance).toBeCloseTo(1.52, 6);
+  });
+
+  // Direction independence: the business must be charged and the user paid even
+  // when the business is the recorded CALLER (fromUser) rather than the callee.
+  // A server-initiated business call (e.g. an outbound campaign) records the
+  // business as fromUser; that must still move money the same way.
+  it('charges the business and pays the user when the business is the fromUser', async () => {
+    const business = mockUser({ id: 2, isBusiness: true, walletBalance: 100 }); // call.fromUserId — charged
+    const earner   = mockUser({ id: 1, isBusiness: false, walletBalance: 0 });  // call.toUserId — earns
+    const call = { id: 60, fromUserId: 2, toUserId: 1, status: 'initiated', ratePerSecond: 0.002 };
+
+    callRepo.findOne.mockResolvedValue(call);
+    wireWallets(business, earner, call);
+
+    const result = await service.completeCall(2, 60, 1000); // $2.00 gross
+
+    expect(result.cost).toBeCloseTo(2.0, 6);
+    expect(result.platformCut).toBeCloseTo(0.48, 6);
+    expect(result.userEarnings).toBeCloseTo(1.52, 6);
+    expect(business.walletBalance).toBeCloseTo(98.0, 6);  // business charged
+    expect(earner.walletBalance).toBeCloseTo(1.52, 6);    // user paid
   });
 
   it('charges + credits + logs all through the SAME transaction manager (atomicity)', async () => {
@@ -349,5 +375,247 @@ describe('CallService — completeCall reward integrity', () => {
     expect(referral.payCommission).not.toHaveBeenCalled();  // no commission
     expect(business.walletBalance).toBe(100);               // unchanged
     expect(earner.walletBalance).toBe(0);
+  });
+});
+
+describe('CallService — per-business attribution', () => {
+  let service: CallService;
+  let userRepo: ReturnType<typeof mockRepo>;
+  let callRepo: ReturnType<typeof mockRepo>;
+  let numberRepo: ReturnType<typeof mockRepo>;
+  let businessRepo: ReturnType<typeof mockRepo>;
+
+  const CALLER = 7;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CallService,
+        { provide: getRepositoryToken(CallLog),        useFactory: mockRepo },
+        { provide: getRepositoryToken(CallRating),     useFactory: mockRepo },
+        { provide: getRepositoryToken(User),           useFactory: mockRepo },
+        { provide: getRepositoryToken(Business),       useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+        { provide: getRepositoryToken(Campaign),       useFactory: mockRepo },
+        { provide: getRepositoryToken(Setting),        useFactory: mockSettingRepo },
+        { provide: TransactionService, useValue: { log: jest.fn() } },
+        { provide: DataBrokerService,  useValue: { hasApproval: jest.fn().mockResolvedValue(true) } },
+        { provide: ReferralService, useValue: { payCommission: jest.fn() } },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service      = module.get(CallService);
+    userRepo     = module.get(getRepositoryToken(User));
+    callRepo     = module.get(getRepositoryToken(CallLog));
+    numberRepo   = module.get(getRepositoryToken(BusinessNumber));
+    businessRepo = module.get(getRepositoryToken(Business));
+
+    // caller (business w/ funds) + a fresh recipient
+    userRepo.findOne
+      .mockResolvedValueOnce(mockUser({ id: CALLER, isBusiness: true, walletBalance: 100 }))
+      .mockResolvedValueOnce(mockUser({ id: 2, phoneNumber: '+27829999999', isBusiness: false }));
+  });
+
+  describe('initiateCall attribution', () => {
+    it("attributes the call to the caller's own number's business + number", async () => {
+      numberRepo.findOne.mockResolvedValue({ id: 42, businessId: 3, business: { id: 3, userId: CALLER } });
+      await service.initiateCall(CALLER, '+27829999999', { fromNumberId: 42 });
+      expect(numberRepo.findOne).toHaveBeenCalledWith({
+        where: { id: 42, business: { userId: CALLER } },
+        relations: ['business'],
+      });
+      expect(callRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'initiated', businessId: 3, callingNumberId: 42 }),
+      );
+    });
+
+    it('rejects a calling number the caller does not own', async () => {
+      numberRepo.findOne.mockResolvedValue(null);
+      await expect(service.initiateCall(CALLER, '+27829999999', { fromNumberId: 999 }))
+        .rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('creates an unattributed call when no number is supplied (personal / legacy)', async () => {
+      await service.initiateCall(CALLER, '+27829999999');
+      expect(callRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'initiated', businessId: null, callingNumberId: null }),
+      );
+    });
+  });
+
+  describe('getBusinessCallHistory', () => {
+    it("returns a business's calls, owner-scoped and newest first", async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 3, userId: CALLER });
+      const qb: any = {
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([{ id: 1 }]),
+      };
+      (callRepo as any).createQueryBuilder = jest.fn().mockReturnValue(qb);
+      const res = await service.getBusinessCallHistory(CALLER, 3);
+      expect(res).toEqual([{ id: 1 }]);
+      expect(qb.where).toHaveBeenCalledWith('call.businessId = :businessId', { businessId: 3 });
+    });
+
+    it('refuses a business the caller does not own', async () => {
+      businessRepo.findOne.mockResolvedValue(null);
+      await expect(service.getBusinessCallHistory(CALLER, 999)).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+});
+
+// A business is only billed for an incoming call the recipient actually allows.
+// The permission gate in initiateCall decides billability: an allowed call is
+// 'initiated' (and gets charged on completion); a blocked one is 'blocked' and
+// completeCall refuses it, so no money ever moves.
+describe('CallService — a business is billed only when the user allows the call', () => {
+  let service: CallService;
+  let userRepo: ReturnType<typeof mockRepo>;
+  let businessRepo: ReturnType<typeof mockRepo>;
+  const hasApproval = jest.fn();
+
+  const business = mockUser({ id: 1, isBusiness: true, walletBalance: 100 }); // the calling business
+  const userWithMode = (mode: string) =>
+    mockUser({ id: 2, phoneNumber: '+27829999999', isBusiness: false, walletBalance: 0, callPermissionMode: mode });
+
+  beforeEach(async () => {
+    hasApproval.mockReset();
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CallService,
+        { provide: getRepositoryToken(CallLog),    useFactory: mockRepo },
+        { provide: getRepositoryToken(CallRating), useFactory: mockRepo },
+        { provide: getRepositoryToken(User),       useFactory: mockRepo },
+        { provide: getRepositoryToken(Business),   useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+        { provide: getRepositoryToken(Setting),    useFactory: mockSettingRepo },
+        { provide: TransactionService, useValue: { log: jest.fn() } },
+        { provide: DataBrokerService,  useValue: { hasApproval } },
+        { provide: ReferralService, useValue: { payCommission: jest.fn().mockResolvedValue(undefined) } },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service     = module.get(CallService);
+    userRepo    = module.get(getRepositoryToken(User));
+    businessRepo = module.get(getRepositoryToken(Business));
+  });
+
+  // fromUser = the calling business, toUser = the user being called.
+  const wire = (mode: string) =>
+    userRepo.findOne.mockResolvedValueOnce(business).mockResolvedValueOnce(userWithMode(mode));
+
+  it('lets the call through to billing when the user allows ALL calls', async () => {
+    wire('all');
+    const res = await service.initiateCall(1, '+27829999999');
+    expect(res.blocked).toBe(false);
+    expect(res.call.status).toBe('initiated'); // billable on completion
+  });
+
+  it('blocks the call — and never bills — when the user accepts NO business calls', async () => {
+    wire('none');
+    const res = await service.initiateCall(1, '+27829999999');
+    expect(res.blocked).toBe(true);
+    expect(res.call.status).toBe('blocked');
+    expect(res.call.blockedReason).toBe('PERMISSION_REQUIRED');
+  });
+
+  it('blocks (no bill) under APPROVED-ONLY when the business is not approved', async () => {
+    wire('approved_only');
+    businessRepo.findOne.mockResolvedValue({ id: 7, userId: 1 }); // caller's business
+    hasApproval.mockResolvedValue(false);
+    const res = await service.initiateCall(1, '+27829999999');
+    expect(res.blocked).toBe(true);
+    expect(res.call.blockedReason).toBe('PERMISSION_REQUIRED');
+  });
+
+  it('lets an APPROVED business through to billing under approved-only', async () => {
+    wire('approved_only');
+    businessRepo.findOne.mockResolvedValue({ id: 7, userId: 1 });
+    hasApproval.mockResolvedValue(true);
+    const res = await service.initiateCall(1, '+27829999999');
+    expect(res.blocked).toBe(false);
+    expect(res.call.status).toBe('initiated');
+  });
+
+  it('completeCall refuses a permission-blocked call, so no money moves', async () => {
+    const blocked = { id: 5, fromUserId: 1, toUserId: 2, status: 'blocked', ratePerSecond: DEFAULT_RATE };
+    const callRepo = (service as any).callRepository;
+    callRepo.findOne = jest.fn().mockResolvedValue(blocked);
+    await expect(service.completeCall(1, 5, 120)).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+// The mobile client records an incoming business call as fromUser=user (the
+// recipient) and toUser=business (the caller) — the reverse of a server-initiated
+// call. The recipient's own permission must still gate it: a user who accepts no
+// business calls (or only approved ones) must not have the call go through.
+describe('CallService — incoming direction: the RECIPIENT user\'s permission is enforced', () => {
+  let service: CallService;
+  let userRepo: ReturnType<typeof mockRepo>;
+  let businessRepo: ReturnType<typeof mockRepo>;
+  const hasApproval = jest.fn();
+
+  const businessCaller = mockUser({ id: 2, phoneNumber: '5091234567', isBusiness: true, walletBalance: 50 });
+  const recipient = (mode: string) =>
+    mockUser({ id: 1, phoneNumber: '+27821111111', isBusiness: false, walletBalance: 0, callPermissionMode: mode });
+
+  beforeEach(async () => {
+    hasApproval.mockReset();
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CallService,
+        { provide: getRepositoryToken(CallLog),    useFactory: mockRepo },
+        { provide: getRepositoryToken(CallRating), useFactory: mockRepo },
+        { provide: getRepositoryToken(User),       useFactory: mockRepo },
+        { provide: getRepositoryToken(Business),   useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+        { provide: getRepositoryToken(Setting),    useFactory: mockSettingRepo },
+        { provide: TransactionService, useValue: { log: jest.fn() } },
+        { provide: DataBrokerService,  useValue: { hasApproval } },
+        { provide: ReferralService, useValue: { payCommission: jest.fn().mockResolvedValue(undefined) } },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service      = module.get(CallService);
+    userRepo     = module.get(getRepositoryToken(User));
+    businessRepo = module.get(getRepositoryToken(Business));
+  });
+
+  // fromUser = the recipient user, toUser = the calling business (app incoming order).
+  const wire = (mode: string) =>
+    userRepo.findOne.mockResolvedValueOnce(recipient(mode)).mockResolvedValueOnce(businessCaller);
+
+  it('blocks an incoming business call when the recipient accepts NO business calls', async () => {
+    wire('none');
+    const res = await service.initiateCall(1, '5091234567');
+    expect(res.blocked).toBe(true);
+    expect(res.call.blockedReason).toBe('PERMISSION_REQUIRED');
+  });
+
+  it('blocks incoming under APPROVED_ONLY when the calling business is not approved', async () => {
+    wire('approved_only');
+    businessRepo.findOne.mockResolvedValue({ id: 9, userId: 2 }); // the CALLER's business (userId = toUser.id)
+    hasApproval.mockResolvedValue(false);
+    const res = await service.initiateCall(1, '5091234567');
+    expect(res.blocked).toBe(true);
+    expect(res.call.blockedReason).toBe('PERMISSION_REQUIRED');
+  });
+
+  it('lets the incoming call through when the recipient allows ALL calls', async () => {
+    wire('all');
+    const res = await service.initiateCall(1, '5091234567');
+    expect(res.blocked).toBe(false);
+    expect(res.call.status).toBe('initiated');
+  });
+
+  it('lets an APPROVED business through under approved_only', async () => {
+    wire('approved_only');
+    businessRepo.findOne.mockResolvedValue({ id: 9, userId: 2 });
+    hasApproval.mockResolvedValue(true);
+    const res = await service.initiateCall(1, '5091234567');
+    expect(res.blocked).toBe(false);
+    expect(res.call.status).toBe('initiated');
   });
 });

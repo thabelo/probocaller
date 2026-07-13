@@ -1,3 +1,6 @@
+import { COUNTRIES as ISO_COUNTRIES } from '../banks/banks-data';
+import { isIsoCountryCode as isIso } from '../common/countries';
+
 export interface KybDocumentRequirement {
   key: string;
   label: string;
@@ -17,7 +20,8 @@ export interface KybBusinessInfoField {
   options?: string[];
 }
 
-export interface CountryKybConfig {
+/** A jurisdiction's KYB requirements, before the tailored/generic flag is applied. */
+export interface KybConfigBase {
   countryCode: string;
   countryName: string;
   currency: string;
@@ -25,6 +29,15 @@ export interface CountryKybConfig {
   documents: KybDocumentRequirement[];
   businessInfoFields: KybBusinessInfoField[];
   notes?: string;
+}
+
+export interface CountryKybConfig extends KybConfigBase {
+  /**
+   * true  — requirements researched for this jurisdiction (named registry, statutory docs).
+   * false — jurisdiction-neutral fallback. We deliberately do NOT invent registry names or
+   *         statutory document titles for countries we haven't researched.
+   */
+  tailored: boolean;
 }
 
 const PDF_IMG = ['pdf', 'jpg', 'jpeg', 'png'];
@@ -65,7 +78,7 @@ const LEGAL_NAME_FIELD = field('legal_name', 'Legal Company Name', 'text', true,
 
 const INCORPORATION_DATE_FIELD = field('incorporation_date', 'Date of Incorporation', 'date', false);
 
-export const KYB_COUNTRY_CONFIGS: CountryKybConfig[] = [
+export const KYB_COUNTRY_CONFIGS: KybConfigBase[] = [
   // ─── AFRICA ──────────────────────────────────────────────────────────────────
   {
     countryCode: 'ZA',
@@ -318,6 +331,252 @@ export const KYB_COUNTRY_CONFIGS: CountryKybConfig[] = [
       BUSINESS_TYPE_FIELD,
       field('reg_number', 'Company Registration Number', 'text', true),
       field('tin', 'RRA Tax Identification Number (TIN)', 'text', true),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+
+  // ─── SADC / SOUTHERN AFRICA ──────────────────────────────────────────────────
+  // Registrar names and certificate titles below were researched against official
+  // registry sources. Number FORMATS are only shown where an official specimen was
+  // found — we leave a placeholder off rather than invent one. Mozambique and the
+  // Comoros are deliberately absent: research could not verify their registrar
+  // details, so they fall through to the jurisdiction-neutral generic config.
+  {
+    countryCode: 'BW',
+    countryName: 'Botswana',
+    currency: 'BWP',
+    registrationAuthority: 'CIPA (Companies and Intellectual Property Authority)',
+    documents: [
+      doc('registration_certificate', 'Certificate of Incorporation', 'Certificate issued by CIPA confirming the company is registered.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+      doc('tax_clearance', 'BURS Tax Clearance Certificate', 'Certificate from the Botswana Unified Revenue Service confirming the company\'s tax affairs are in good standing.', false),
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Company Registration Number', 'text', true),
+      field('tax_number', 'BURS Taxpayer Identification Number (TIN)', 'text', false),
+      field('vat_number', 'VAT Registration Number', 'text', false),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'NA',
+    countryName: 'Namibia',
+    currency: 'NAD',
+    registrationAuthority: 'BIPA (Business and Intellectual Property Authority)',
+    documents: [
+      doc('registration_certificate', 'Certificate of Incorporation', 'Certificate issued by BIPA confirming the company is registered.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+      doc('good_standing', 'Good Standing Certificate', 'Certificate from BIPA confirming the entity is validly registered and up to date with its filings.', false),
+      doc('tax_clearance', 'NamRA Tax Good Standing Certificate', 'Certificate from the Namibia Revenue Agency confirming tax compliance.', false),
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Registration Number', 'text', true),
+      field('tax_number', 'NamRA Taxpayer Identification Number (TIN)', 'text', false),
+      field('vat_number', 'VAT Registration Number', 'text', false),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'ZM',
+    countryName: 'Zambia',
+    currency: 'ZMW',
+    registrationAuthority: 'PACRA (Patents and Companies Registration Agency)',
+    documents: [
+      doc('registration_certificate', 'Certificate of Incorporation', 'Certificate issued by PACRA confirming the company is registered.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+      doc('tax_clearance', 'ZRA Tax Clearance Certificate', 'Certificate from the Zambia Revenue Authority confirming the company\'s tax affairs are in order.', false),
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Registration Number', 'text', true),
+      field('tax_number', 'ZRA Taxpayer Identification Number (TPIN)', 'text', true),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'LS',
+    countryName: 'Lesotho',
+    currency: 'LSL',
+    registrationAuthority: 'Registrar of Companies (One-Stop Business Facilitation Centre, Ministry of Trade)',
+    documents: [
+      doc('registration_certificate', 'Certificate of Incorporation', 'Certificate issued by the Registrar of Companies confirming the company is registered.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+      doc('tax_clearance', 'RSL Tax Clearance Certificate', 'Certificate from Revenue Services Lesotho confirming the taxpayer\'s affairs are in order.', false),
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Company Registration Number', 'text', true),
+      field('tax_number', 'RSL Taxpayer Identification Number (TIN)', 'text', false),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'SZ',
+    countryName: 'Eswatini',
+    currency: 'SZL',
+    registrationAuthority: 'Registrar of Companies (Ministry of Commerce, Industry and Trade)',
+    documents: [
+      doc('registration_certificate', 'Certificate of Incorporation', 'Certificate issued by the Registrar of Companies confirming the company is registered.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+      doc('tax_clearance', 'ERS Tax Compliance Certificate', 'Certificate from the Eswatini Revenue Service confirming tax compliance.', false),
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Company Registration Number', 'text', true),
+      field('tax_number', 'ERS Taxpayer Identification Number (TIN)', 'text', false),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'MW',
+    countryName: 'Malawi',
+    currency: 'MWK',
+    registrationAuthority: 'CRIPC (Companies, Registrations and Intellectual Property Centre)',
+    documents: [
+      doc('registration_certificate', 'Certificate of Incorporation', 'Certificate issued by CRIPC confirming the company is registered.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+      doc('tax_clearance', 'MRA Tax Clearance Certificate', 'Certificate from the Malawi Revenue Authority confirming tax compliance.', false),
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Company Registration Number', 'text', true),
+      field('tax_number', 'MRA Taxpayer Identification Number (TPIN)', 'text', false),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'AO',
+    countryName: 'Angola',
+    currency: 'AOA',
+    registrationAuthority: 'Conservatória do Registo Comercial (via Guiché Único da Empresa)',
+    documents: [
+      doc('registration_certificate', 'Certidão Comercial (Certidão do Registo Comercial)', 'Commercial registry certificate issued by the Conservatória do Registo Comercial.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+      doc('tax_clearance', 'Certidão de Não Dívida (AGT)', 'Tax compliance certificate from the Administração Geral Tributária confirming no outstanding debts to the State.', false),
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Número de Matrícula (Commercial Registration Number)', 'text', true),
+      field('tax_number', 'NIF (Número de Identificação Fiscal)', 'text', true),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'MG',
+    countryName: 'Madagascar',
+    currency: 'MGA',
+    registrationAuthority: 'Registre du Commerce et des Sociétés (RCS), via the EDBM Guichet Unique',
+    documents: [
+      doc('registration_certificate', 'Extrait d\'immatriculation au RCS', 'Extract of registration in the Registre du Commerce et des Sociétés.'),
+      doc('carte_identification_fiscale', 'Carte d\'Identification Fiscale', 'Fiscal identification card issued by the Direction Générale des Impôts carrying the NIF. Required before conducting any activity.'),
+      doc('numero_stat', 'Numéro Statistique (STAT)', 'Statistical registration issued by INSTAT identifying the establishment\'s main activity.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Numéro RCS', 'text', true, { placeholder: 'e.g. RCS Antananarivo B 2020 00123' }),
+      field('tax_number', 'NIF (Numéro d\'Identification Fiscale)', 'text', true),
+      field('stat_number', 'Numéro Statistique (STAT)', 'text', false),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'MU',
+    countryName: 'Mauritius',
+    currency: 'MUR',
+    registrationAuthority: 'Corporate and Business Registration Department (CBRD), Registrar of Companies',
+    documents: [
+      doc('registration_certificate', 'Certificate of Incorporation', 'Certificate issued by the Registrar of Companies confirming the company is incorporated.'),
+      doc('business_registration_card', 'Business Registration Card (BRC)', 'Card issued by the CBRD alongside the Certificate of Incorporation, bearing the Business Registration Number (BRN).'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Business Registration Number (BRN)', 'text', true),
+      field('tax_number', 'MRA Tax Account Number (TAN)', 'text', false),
+      field('vat_number', 'VAT Registration Number', 'text', false),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'SC',
+    countryName: 'Seychelles',
+    currency: 'SCR',
+    registrationAuthority: 'Financial Services Authority (FSA), Registrar of Companies',
+    documents: [
+      doc('registration_certificate', 'Certificate of Incorporation', 'Certificate issued by the Registrar of Companies confirming the company is incorporated.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+      doc('good_standing', 'Certificate of Good Standing', 'Certificate from the FSA confirming the company exists and has met its filing and fee obligations.', false),
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Company Number', 'text', true),
+      field('tax_number', 'SRC Taxpayer Identification Number (TIN)', 'text', false),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'CD',
+    countryName: 'DR Congo',
+    currency: 'CDF',
+    registrationAuthority: 'RCCM (Registre du Commerce et du Crédit Mobilier), via the Guichet Unique de Création d\'Entreprise',
+    documents: [
+      doc('registration_certificate', 'Certificat d\'immatriculation au RCCM', 'Certificate of registration in the Registre du Commerce et du Crédit Mobilier.'),
+      doc('id_nat', 'Numéro d\'Identification Nationale (Id. Nat.)', 'National identification number for economic operators, delivered by the Guichet Unique alongside the RCCM.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+      doc('cnss_certificate', 'Attestation d\'immatriculation CNSS', 'Social security registration certificate issued via the Guichet Unique.', false),
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Numéro RCCM', 'text', true, { placeholder: 'e.g. CD/KNG/RCCM/20-B-01065' }),
+      field('id_nat', 'Numéro d\'Identification Nationale (Id. Nat.)', 'text', false),
+      field('tax_number', 'NIF (Numéro d\'Identification Fiscale)', 'text', true),
       field('registered_address', 'Registered Business Address', 'text', true),
       field('director_name', 'Director / Authorised Signatory Name', 'text', true),
       INCORPORATION_DATE_FIELD,
@@ -721,6 +980,344 @@ export const KYB_COUNTRY_CONFIGS: CountryKybConfig[] = [
       field('director_name', 'Administrateur / Gérant / Authorised Signatory', 'text', true),
       INCORPORATION_DATE_FIELD,
     ],
+  },
+
+  // ─── REST OF EU / EEA ────────────────────────────────────────────────────────
+  // Registrar names and extract titles researched against official registries.
+  // EU VAT formats follow the European Commission / VIES published patterns.
+  // Currencies reflect current adoption (HR euro 2023, BG euro 2026). Iceland and
+  // Liechtenstein are EEA but OUTSIDE EU VIES, so no EU-style VAT example is shown.
+  // Where no official specimen exists we describe the format in a hint rather than
+  // invent a realistic-looking number.
+  {
+    countryCode: 'CZ',
+    countryName: 'Czechia',
+    currency: 'CZK',
+    registrationAuthority: 'Obchodní rejstřík (Commercial Register), maintained by the regional registration courts',
+    documents: [
+      doc('registration_certificate', 'Výpis z obchodního rejstříku (Extract from the Commercial Register)', 'Current extract from the Commercial Register showing the company, its IČO and statutory representatives.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+      doc('trade_licence', 'Výpis ze živnostenského rejstříku (Trade Licensing Register extract)', 'Proof of trade licence — commonly required for sole traders and trade-based businesses.', false),
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'IČO (Company Identification Number)', 'text', true, { hint: '8 digits.' }),
+      field('vat_number', 'DIČ / EU VAT number', 'text', false, { placeholder: 'CZ12345678' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'SK',
+    countryName: 'Slovakia',
+    currency: 'EUR',
+    registrationAuthority: 'Obchodný register Slovenskej republiky (Commercial Register), maintained by the district courts',
+    documents: [
+      doc('registration_certificate', 'Výpis z obchodného registra (Extract from the Commercial Register)', 'Current extract from the Commercial Register showing the company and its IČO.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+      doc('trade_licence', 'Výpis zo živnostenského registra (Trade Register extract)', 'Trade licence extract — commonly required for sole traders and trade-based businesses.', false),
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'IČO (Organisation Identification Number)', 'text', true, { hint: '8 digits.' }),
+      field('vat_number', 'IČ DPH / EU VAT number', 'text', false, { placeholder: 'SK1234567890' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'HU',
+    countryName: 'Hungary',
+    currency: 'HUF',
+    registrationAuthority: 'Cégjegyzék (Company Register), maintained by the Cégbíróság (Court of Registration)',
+    documents: [
+      doc('registration_certificate', 'Cégkivonat (Company Extract)', 'Current company extract from the Cégjegyzék showing the registration number and representatives.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Cégjegyzékszám (Company Registration Number)', 'text', true, { placeholder: 'e.g. 01-09-123456' }),
+      field('tax_number', 'Adószám (domestic tax number)', 'text', false),
+      field('vat_number', 'Közösségi adószám (EU VAT number)', 'text', false, { placeholder: 'HU12345678' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'RO',
+    countryName: 'Romania',
+    currency: 'RON',
+    registrationAuthority: 'ONRC (Oficiul Național al Registrului Comerțului) — National Trade Register Office',
+    documents: [
+      doc('registration_certificate', 'Certificat constatator (Ascertaining Certificate)', 'ONRC certificate showing the company\'s current status, CUI and representatives.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+      doc('registration_cert_cui', 'Certificat de înregistrare (Registration Certificate)', 'ONRC-issued registration certificate displaying the company\'s CUI.', false),
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'CUI (Cod Unic de Înregistrare)', 'text', true, { hint: 'Also provide the trade register number, e.g. J40/12345/2020.' }),
+      field('vat_number', 'Cod de înregistrare în scopuri de TVA', 'text', false, { placeholder: 'RO12345678' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'BG',
+    countryName: 'Bulgaria',
+    currency: 'EUR',
+    registrationAuthority: 'Commercial Register and Register of Non-Profit Legal Entities (Registry Agency / Агенция по вписванията)',
+    documents: [
+      doc('registration_certificate', 'Удостоверение за актуално състояние (Certificate of Current Status)', 'Certificate of current status from the Commercial Register showing the company\'s UIC and representatives.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'ЕИК / UIC (Unified Identification Code)', 'text', true, { hint: '9 digits.' }),
+      field('vat_number', 'VAT number (ДДС номер)', 'text', false, { placeholder: 'BG123456789' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'GR',
+    countryName: 'Greece',
+    currency: 'EUR',
+    registrationAuthority: 'Γ.Ε.ΜΗ. (GEMI — General Commercial Registry)',
+    documents: [
+      doc('registration_certificate', 'Γενικό Πιστοποιητικό ΓΕΜΗ (General GEMI Certificate)', 'GEMI certificate showing the company\'s registration number, date and current status.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Αριθμός ΓΕΜΗ (GEMI Number)', 'text', true, { hint: '12 digits.' }),
+      // Greece's EU VAT prefix is EL, not GR.
+      field('vat_number', 'ΑΦΜ / EU VAT number', 'text', false, { placeholder: 'EL123456789' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'HR',
+    countryName: 'Croatia',
+    currency: 'EUR',
+    registrationAuthority: 'Sudski registar (Court Register), maintained by the commercial courts',
+    documents: [
+      doc('registration_certificate', 'Izvadak iz sudskog registra (Extract from the Court Register)', 'Court Register extract showing the company, its MBS and authorised representatives.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'MBS (Matični broj subjekta)', 'text', true, { hint: 'Court register entry number. The OIB is a separate 11-digit identifier.' }),
+      field('vat_number', 'PDV identifikacijski broj (VAT ID)', 'text', false, { placeholder: 'HR12345678901' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'SI',
+    countryName: 'Slovenia',
+    currency: 'EUR',
+    registrationAuthority: 'Poslovni register Slovenije / Sodni register, managed by AJPES',
+    documents: [
+      doc('registration_certificate', 'Izpisek iz Poslovnega registra Slovenije (Business Register extract)', 'Extract from the Slovenian Business Register / Court Register showing the entity and its registration number.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Matična številka (Registration Number)', 'text', true, { hint: '10 digits, assigned by AJPES.' }),
+      field('vat_number', 'ID za DDV (VAT identification number)', 'text', false, { placeholder: 'SI12345678' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'EE',
+    countryName: 'Estonia',
+    currency: 'EUR',
+    registrationAuthority: 'Äriregister (e-Business Register), Tartu County Court / Centre of Registers and Information Systems (RIK)',
+    documents: [
+      doc('registration_certificate', 'Äriregistri väljavõte (Extract from the Business Register)', 'Registry card extract from the e-Business Register showing the entity and its registry code.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Registrikood (Registry Code)', 'text', true, { hint: '8 digits.' }),
+      field('vat_number', 'KMKR (EU VAT number)', 'text', false, { placeholder: 'EE123456789' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'LV',
+    countryName: 'Latvia',
+    currency: 'EUR',
+    registrationAuthority: 'Register of Enterprises of the Republic of Latvia (Uzņēmumu reģistrs)',
+    documents: [
+      doc('registration_certificate', 'Izziņa no Uzņēmumu reģistra (Extract from the Register of Enterprises)', 'Extract from the Register of Enterprises. Paper registration certificates were discontinued — an extract is the current proof.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Reģistrācijas numurs (Registration Number)', 'text', true, { hint: '11 digits; commercial companies commonly begin 4000.' }),
+      field('vat_number', 'PVN maksātāja numurs (EU VAT number)', 'text', false, { placeholder: 'LV12345678901' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'LT',
+    countryName: 'Lithuania',
+    currency: 'EUR',
+    registrationAuthority: 'Register of Legal Entities (Juridinių asmenų registras), administered by Registrų centras',
+    documents: [
+      doc('registration_certificate', 'Juridinių asmenų registro išrašas (Extract from the Register of Legal Entities)', 'Extract from the Register of Legal Entities showing the entity and its legal entity code.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Juridinio asmens kodas (Legal Entity Code)', 'text', true, { hint: '9 digits.' }),
+      field('vat_number', 'PVM mokėtojo kodas (EU VAT number)', 'text', false, { placeholder: 'LT123456789' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'LU',
+    countryName: 'Luxembourg',
+    currency: 'EUR',
+    registrationAuthority: 'Registre de Commerce et des Sociétés (RCS), managed by Luxembourg Business Registers',
+    documents: [
+      doc('registration_certificate', 'Extrait du Registre de Commerce et des Sociétés (RCS extract)', 'RCS extract showing the company, its registration number and authorised representatives.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Numéro d\'immatriculation RCS', 'text', true, { placeholder: 'e.g. B123456' }),
+      field('vat_number', 'Numéro d\'identification à la TVA (EU VAT number)', 'text', false, { placeholder: 'LU12345678' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'MT',
+    countryName: 'Malta',
+    currency: 'EUR',
+    registrationAuthority: 'Malta Business Registry (MBR), Registrar of Companies',
+    documents: [
+      doc('registration_certificate', 'Certificate of Registration / Certificate of Incorporation', 'Certificate issued by the Malta Business Registry confirming the company is registered.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+      doc('good_standing', 'Certificate of Good Standing', 'MBR confirmation that the company is active and has met its annual filing and fee obligations.', false),
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Company Registration Number', 'text', true, { placeholder: 'e.g. C 2833' }),
+      field('vat_number', 'VAT Registration Number', 'text', false, { placeholder: 'MT12345678' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'CY',
+    countryName: 'Cyprus',
+    currency: 'EUR',
+    registrationAuthority: 'Department of Registrar of Companies and Intellectual Property (DRCIP)',
+    documents: [
+      doc('registration_certificate', 'Certificate of Incorporation (Πιστοποιητικό Σύστασης)', 'Certificate issued by the Registrar of Companies confirming incorporation and showing the HE number.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+      doc('certificate_directors', 'Certificate of Directors and Secretary', 'DRCIP certificate listing the company\'s directors and secretary.', false),
+      doc('certificate_shareholders', 'Certificate of Shareholders', 'DRCIP certificate listing the registered shareholders.', false),
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Registration Number (HE number)', 'text', true, { placeholder: 'e.g. HE 12345' }),
+      field('vat_number', 'VAT Number', 'text', false, { placeholder: 'CY12345678L' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+  },
+  {
+    countryCode: 'IS',
+    countryName: 'Iceland',
+    currency: 'ISK',
+    registrationAuthority: 'Fyrirtækjaskrá (Register of Enterprises), maintained by Skatturinn',
+    documents: [
+      doc('registration_certificate', 'Vottorð úr fyrirtækjaskrá (Certificate from the Register of Enterprises)', 'Certificate/extract from the Register of Enterprises showing the entity and its kennitala.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Kennitala (Identification Number)', 'text', true, { hint: 'Format DDMMYY-RRRR. Legal-entity kennitalas begin with 4–7.' }),
+      field('vat_number', 'VSK-nr (Icelandic VAT number)', 'text', false, { hint: 'Iceland is outside the EU VAT (VIES) system. The VSK number is separate from the kennitala.' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+    notes: 'Iceland is an EEA (EFTA) state, not an EU member — it operates its own VAT system rather than an EU VAT number.',
+  },
+  {
+    countryCode: 'LI',
+    countryName: 'Liechtenstein',
+    currency: 'CHF',
+    registrationAuthority: 'Handelsregister (Commercial Register), maintained by the Amt für Justiz',
+    documents: [
+      doc('registration_certificate', 'Handelsregisterauszug (Commercial Register extract)', 'Extract from the Commercial Register showing the entity, its UID and authorised signatories.'),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'UID (Unternehmens-Identifikationsnummer)', 'text', true, { hint: 'Business identification number assigned on registration.' }),
+      field('vat_number', 'MWST-Nr (VAT number)', 'text', false, { hint: 'Liechtenstein shares the Swiss VAT area and is outside EU VIES.' }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+    notes: 'Liechtenstein is an EEA (EFTA) state, not an EU member, and shares a VAT area with Switzerland.',
   },
 
   // ─── MIDDLE EAST ──────────────────────────────────────────────────────────────
@@ -1286,18 +1883,96 @@ export const KYB_COUNTRY_CONFIGS: CountryKybConfig[] = [
   },
 ];
 
-const configMap = new Map<string, CountryKybConfig>(
+const configMap = new Map<string, KybConfigBase>(
   KYB_COUNTRY_CONFIGS.map((c) => [c.countryCode.toUpperCase(), c]),
 );
 
-export function getCountryKybConfig(countryCode: string): CountryKybConfig | undefined {
-  return configMap.get(countryCode.toUpperCase());
+// The ISO 3166-1 alpha-2 universe. Reused from the banks dataset so there is a
+// single source of truth for "is this a real country?".
+const isoNameByCode = new Map<string, string>(
+  ISO_COUNTRIES.map((c) => [c.code.toUpperCase(), c.name]),
+);
+
+export function isIsoCountryCode(countryCode: string): boolean {
+  return isIso(countryCode);
 }
 
-export function getAllSupportedCountries(): { countryCode: string; countryName: string; currency: string }[] {
-  return KYB_COUNTRY_CONFIGS.map(({ countryCode, countryName, currency }) => ({
+/**
+ * Requirements for a jurisdiction we have not individually researched. These are
+ * the documents/fields that apply almost everywhere a company can be registered.
+ * Intentionally generic: we never fabricate a registry name or a statutory
+ * document title we cannot verify for that country.
+ */
+function buildGenericKybConfig(countryCode: string, countryName: string): KybConfigBase {
+  return {
     countryCode,
     countryName,
-    currency,
-  }));
+    currency: '',
+    registrationAuthority: 'National business registry / companies registrar',
+    documents: [
+      doc(
+        'registration_certificate',
+        'Certificate of Incorporation / Business Registration',
+        `Official certificate issued by the business registry in ${countryName} confirming the company is registered, showing its legal name and registration number.`,
+      ),
+      COMMON_DOCS.directorId,
+      COMMON_DOCS.proofOfAddress,
+      doc(
+        'tax_certificate',
+        'Tax Registration Certificate',
+        'Certificate or letter from the national tax authority showing the business tax identification number. Upload if your business is tax-registered.',
+        false,
+      ),
+    ],
+    businessInfoFields: [
+      LEGAL_NAME_FIELD,
+      BUSINESS_TYPE_FIELD,
+      field('registration_number', 'Business Registration Number', 'text', true, {
+        hint: `The number on your ${countryName} business registration certificate.`,
+      }),
+      field('tax_number', 'Tax Identification Number', 'text', false, {
+        hint: 'Leave blank if the business is not tax-registered.',
+      }),
+      field('registered_address', 'Registered Business Address', 'text', true),
+      field('director_name', 'Director / Authorised Signatory Name', 'text', true),
+      INCORPORATION_DATE_FIELD,
+    ],
+    notes:
+      `We have not published ${countryName}-specific KYB requirements yet, so the standard international ` +
+      'set is requested. If your registry issues differently-named documents, upload the closest equivalent — ' +
+      'a reviewer will assess it.',
+  };
+}
+
+/**
+ * Resolves KYB requirements for ANY real country: the researched config when we
+ * have one, otherwise a jurisdiction-neutral fallback. Returns undefined only
+ * for codes that are not valid ISO 3166-1 alpha-2.
+ */
+export function getCountryKybConfig(countryCode: string): CountryKybConfig | undefined {
+  if (!isIsoCountryCode(countryCode)) return undefined;
+  const code = countryCode.toUpperCase();
+
+  const tailored = configMap.get(code);
+  if (tailored) return { ...tailored, tailored: true };
+
+  return { ...buildGenericKybConfig(code, isoNameByCode.get(code)!), tailored: false };
+}
+
+/** Every ISO country is supported; `tailored` says whether it has a researched config. */
+export function getAllSupportedCountries(): {
+  countryCode: string;
+  countryName: string;
+  currency: string;
+  tailored: boolean;
+}[] {
+  return ISO_COUNTRIES.map(({ code, name }) => {
+    const cfg = configMap.get(code.toUpperCase());
+    return {
+      countryCode: code.toUpperCase(),
+      countryName: cfg?.countryName ?? name,
+      currency: cfg?.currency ?? '',
+      tailored: !!cfg,
+    };
+  }).sort((a, b) => a.countryName.localeCompare(b.countryName));
 }

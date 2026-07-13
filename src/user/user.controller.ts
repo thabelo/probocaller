@@ -9,6 +9,7 @@ import { AddContactsDto } from './dto/add-contacts.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { BusinessService } from '../business/business.service';
 import { TransactionService } from '../transaction/transaction.service';
+import { DataBrokerService } from '../data-broker/data-broker.service';
 
 @ApiTags('users')
 @Controller('user')
@@ -17,6 +18,7 @@ export class UserController {
     private readonly userService: UserService,
     private readonly businessService: BusinessService,
     private readonly transactionService: TransactionService,
+    private readonly dataBrokerService: DataBrokerService,
   ) {}
 
   // ── Admin-only: returns the full user list with PII. ──────────────────
@@ -157,7 +159,7 @@ export class UserController {
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Find user by phone (caller-ID lookup, auth required)' })
-  async findUser(@Param('phoneNumber') phoneNumber: string) {
+  async findUser(@Param('phoneNumber') phoneNumber: string, @Request() req) {
     const RATE_PER_SECOND = 0.002;
     const user = await this.userService.findOrCreatePlaceholder(phoneNumber);
     const callerIdentity = await this.businessService.resolveCallerIdentity(phoneNumber);
@@ -169,6 +171,14 @@ export class UserController {
 
     const effectivelyBusiness = user.isBusiness || !!callerIdentity;
     const resolvedProfile = callerIdentity?.businessProfile ?? fallbackProfile;
+
+    // Whether the requesting user permits this caller — lets the incoming-call UI
+    // auto-reject a disallowed business call before it rings. Personal callers
+    // are always permitted (the business permission modes don't apply to them).
+    const callerBusinessId = callerIdentity?.businessId ?? fallbackProfile?.id ?? null;
+    const permittedForYou = !effectivelyBusiness
+      ? true
+      : await this.dataBrokerService.isBusinessCallerAllowed(req.user.userId, callerBusinessId);
 
     // A user is "registered" only after going through signup, which overwrites the
     // synthetic placeholder email/name. Numbers in a business directory also count.
@@ -183,6 +193,7 @@ export class UserController {
       isBusiness: effectivelyBusiness,
       isRegistered,
       hasSufficientFunds: !effectivelyBusiness || Number(user.walletBalance) >= RATE_PER_SECOND,
+      permittedForYou,
       ...(resolvedProfile && {
         businessProfile: resolvedProfile,
         numberPurpose: callerIdentity?.numberPurpose,

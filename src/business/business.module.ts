@@ -10,12 +10,14 @@ import { BusinessController } from './business.controller';
 import { LeadsController } from './leads.controller';
 import { ApiKeyGuard } from './api-key.guard';
 import { ProfileModule } from '../profile/profile.module';
+import { TransactionModule } from '../transaction/transaction.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Business, BusinessNumber, ApiKey, User]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     ProfileModule,
+    TransactionModule,
   ],
   controllers: [BusinessController, LeadsController],
   providers: [BusinessService, ApiKeyGuard],

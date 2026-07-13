@@ -1,8 +1,15 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Optional, Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../user/user.entity';
 import { BusinessService } from '../business/business.service';
+import { SuppressionService } from '../suppression/suppression.service';
+import {
+  NUMBER_INTELLIGENCE,
+  NumberIntelligence,
+  NumberIntelligenceProvider,
+} from './google-places-lookup.service';
+import { ReverseLookupService } from './reverse-lookup.service';
 
 // Threshold of community spam reports at which we consider a number "blocked"
 const COMMUNITY_BLOCK_THRESHOLD = 3;
@@ -31,6 +38,10 @@ export interface LookupResult {
   } | null;
   // Public premium badge derived from the user's subscription tier.
   badge: 'plus' | 'gold' | null;
+  // Best-effort enrichment (carrier / line type / name) from an external provider
+  // for numbers not in our own directory. Null when we already know the number,
+  // when the number is suppressed, or when no provider is configured/available.
+  external: NumberIntelligence | null;
   checkedAt: string;
 }
 
@@ -45,6 +56,12 @@ export class LookupService {
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
     private readonly businessService: BusinessService,
+    private readonly suppression: SuppressionService,
+    @Optional()
+    @Inject(NUMBER_INTELLIGENCE)
+    private readonly numberIntel?: NumberIntelligenceProvider,
+    @Optional()
+    private readonly reverseLookup?: ReverseLookupService,
   ) {}
 
   /** Strip whitespace, dashes, parens. Leaves digits and leading +. */
@@ -86,6 +103,21 @@ export class LookupService {
       );
     }
 
+    // POPIA/GDPR opt-out: a suppressed (unlisted) number must reveal nothing —
+    // no identity, business, badge or community reports — even if registered.
+    if (await this.suppression.isSuppressed(normalized)) {
+      return {
+        phoneNumber: normalized,
+        found: false,
+        status: 'not_registered',
+        flags: { globalSpam: false, userReports: 0, blocked: false },
+        business: null,
+        badge: null,
+        external: null,
+        checkedAt: new Date().toISOString(),
+      };
+    }
+
     // Try direct match, then a ZA-local → international variant.
     let user = await this.userRepo.findOne({ where: { phoneNumber: normalized } });
     let canonical = normalized;
@@ -100,10 +132,34 @@ export class LookupService {
 
     const checkedAt = new Date().toISOString();
 
-    if (!user) {
-      // Unregistered numbers are the likeliest scam callers — still surface how
-      // many users have community-reported them so Scam Shield can score them.
-      const userReports = await this.countCommunityReports(canonical);
+    // A number counts as "registered" only if it's a REAL user (not an
+    // auto-created placeholder) or it resolves to a business number. Placeholders
+    // are created by caller-ID lookups (name 'Unknown' + a @probo.local email) and
+    // must read as unregistered, so the external fallback runs for them instead of
+    // reporting "Registered · In Good Standing".
+    const callerIdentity = await this.businessService.resolveCallerIdentity(canonical);
+    const isPlaceholder = !!user && user.name === 'Unknown' && !!user.email?.endsWith('@probo.local');
+    const isRegistered = (!!user && !isPlaceholder) || !!callerIdentity;
+
+    // Community reports apply to registered and unregistered numbers alike.
+    const userReports = await this.countCommunityReports(canonical);
+
+    if (!isRegistered) {
+      // Unknown to us — fall back to the external provider (Google Places) for a
+      // public business name. Best-effort; null if unavailable. The name is shown
+      // live but never persisted (provider ToS). The provider needs a country code
+      // (it resolves E.164 only), so convert ZA-local (0…) numbers to +27 first.
+      const e164 = canonical.startsWith('+')
+        ? canonical
+        : this.toIntlVariant(canonical) ?? '+' + canonical;
+      const external = this.numberIntel ? await this.numberIntel.lookup(e164) : null;
+      // Log the (billable) lookup for the admin dashboard — fire-and-forget so a
+      // logging failure never breaks the user-facing lookup.
+      if (this.numberIntel && this.reverseLookup) {
+        this.reverseLookup
+          .record({ phoneNumber: e164, result: external, cached: false })
+          .catch(() => {});
+      }
       return {
         phoneNumber: canonical,
         found: false,
@@ -115,14 +171,13 @@ export class LookupService {
         },
         business: null,
         badge: null,
+        external,
         checkedAt,
       };
     }
 
-    // We never expose user.name / email / id / balance through the public lookup.
-    const userReports = await this.countCommunityReports(user.phoneNumber);
-    const callerIdentity = await this.businessService.resolveCallerIdentity(user.phoneNumber);
-
+    // Registered: a real user and/or a business number. We never expose
+    // user.name / email / id / balance through the public lookup.
     const business = callerIdentity?.businessProfile
       ? {
           name: callerIdentity.businessProfile.companyName,
@@ -132,23 +187,25 @@ export class LookupService {
         }
       : null;
 
+    const isSpam = !!user?.isSpam;
     let status: LookupStatus;
-    if (user.isSpam) status = 'spam';
+    if (isSpam) status = 'spam';
     else if (business?.verified) status = 'verified_business';
     else if (userReports >= COMMUNITY_BLOCK_THRESHOLD) status = 'flagged';
     else status = 'clean';
 
     return {
-      phoneNumber: user.phoneNumber,
+      phoneNumber: canonical,
       found: true,
       status,
       flags: {
-        globalSpam: user.isSpam,
+        globalSpam: isSpam,
         userReports,
-        blocked: user.isSpam || userReports >= COMMUNITY_BLOCK_THRESHOLD,
+        blocked: isSpam || userReports >= COMMUNITY_BLOCK_THRESHOLD,
       },
       business,
-      badge: tierToBadge((user as any).tier),
+      badge: tierToBadge((user as any)?.tier),
+      external: null,
       checkedAt,
     };
   }

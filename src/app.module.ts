@@ -8,6 +8,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { User } from './user/user.entity';
 import { UserModule } from './user/user.module';
 import { UserController } from './user/user.controller';
+import { AuthController } from './auth/auth.controller';
 import { UserService } from './user/user.service';
 import { JwtStrategy } from './auth/jwt.strategy';
 
@@ -25,6 +26,7 @@ import { AdminService } from './admin/admin.service';
 import { Business } from './business/business.entity';
 import { BusinessNumber } from './business/business-number.entity';
 import { BusinessModule } from './business/business.module';
+import { CampaignModule } from './campaign/campaign.module';
 
 import { Transaction } from './transaction/transaction.entity';
 import { TransactionModule } from './transaction/transaction.module';
@@ -72,6 +74,8 @@ import { FicaModule } from './fica/fica.module';
 import { FicaSubmission } from './fica/entities/fica-submission.entity';
 import { FicaDocument } from './fica/entities/fica-document.entity';
 import { WithdrawalModule } from './withdrawal/withdrawal.module';
+import { AirtimeModule } from './airtime/airtime.module';
+import { SuppressionModule } from './suppression/suppression.module';
 import { Withdrawal } from './withdrawal/withdrawal.entity';
 import { Conversation } from './messaging/conversation.entity';
 import { Message } from './messaging/message.entity';
@@ -154,11 +158,12 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
         limit: 60,
       },
     ]),
-    TypeOrmModule.forFeature([User]),
+    TypeOrmModule.forFeature([User, Business]),
     UserModule,
     CallModule,
     AdminModule,
     BusinessModule,
+    CampaignModule,
     TransactionModule,
     DataMigrationModule,
     LookupModule,
@@ -182,13 +187,15 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
     BankAccountModule,
     FicaModule,
     WithdrawalModule,
+    AirtimeModule,
+    SuppressionModule,
     TransferModule,
     BanksModule,
     HealthModule,
     GdprModule,
     MessagingModule,
   ],
-  controllers: [UserController],
+  controllers: [UserController, AuthController],
   providers: [
     UserService,
     JwtStrategy,

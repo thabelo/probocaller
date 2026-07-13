@@ -173,4 +173,36 @@ describe('DataBrokerService', () => {
       expect(payToContact.stake).not.toHaveBeenCalled();
     });
   });
+
+  // Whether a business caller may reach a recipient, per the recipient's own
+  // call-permission mode. Used to auto-reject a disallowed incoming call before
+  // it rings — mirrors the gate in CallService.initiateCall.
+  describe('isBusinessCallerAllowed', () => {
+    it('allows the caller when the recipient accepts ALL calls', async () => {
+      userRepo.findOne.mockResolvedValue(mockUser({ id: 5, callPermissionMode: 'all' }));
+      expect(await service.isBusinessCallerAllowed(5, 3)).toBe(true);
+    });
+
+    it('rejects the caller when the recipient accepts NO business calls', async () => {
+      userRepo.findOne.mockResolvedValue(mockUser({ id: 5, callPermissionMode: 'none' }));
+      expect(await service.isBusinessCallerAllowed(5, 3)).toBe(false);
+    });
+
+    it('under APPROVED_ONLY, allows only an approved business', async () => {
+      userRepo.findOne.mockResolvedValue(mockUser({ id: 5, callPermissionMode: 'approved_only' }));
+      permissionRepo.findOne.mockResolvedValue({ id: 1, businessId: 3, userId: 5, status: 'approved' });
+      expect(await service.isBusinessCallerAllowed(5, 3)).toBe(true);
+    });
+
+    it('under APPROVED_ONLY, rejects an unapproved business', async () => {
+      userRepo.findOne.mockResolvedValue(mockUser({ id: 5, callPermissionMode: 'approved_only' }));
+      permissionRepo.findOne.mockResolvedValue(null);
+      expect(await service.isBusinessCallerAllowed(5, 3)).toBe(false);
+    });
+
+    it('under APPROVED_ONLY with no identifiable business, rejects', async () => {
+      userRepo.findOne.mockResolvedValue(mockUser({ id: 5, callPermissionMode: 'approved_only' }));
+      expect(await service.isBusinessCallerAllowed(5, null)).toBe(false);
+    });
+  });
 });

@@ -1,11 +1,21 @@
-import { Injectable, NotFoundException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { randomBytes } from 'crypto';
 import { Business } from './business.entity';
+import { normaliseCountryCode } from '../common/countries';
+import { normalisePhoneNumber } from '../common/phone';
 import { BusinessNumber, NUMBER_PURPOSES } from './business-number.entity';
 import { ApiKey } from './api-key.entity';
 import { User } from '../user/user.entity';
+import { TransactionService } from '../transaction/transaction.service';
+
+/**
+ * The Probocaller-branded placeholder logo every business gets when its owner
+ * doesn't supply one — so a business always has an image to show. Served as a
+ * static asset by the app front-ends.
+ */
+export const DEFAULT_BUSINESS_LOGO_URL = '/probocaller-logo.svg';
 
 @Injectable()
 export class BusinessService {
@@ -18,7 +28,61 @@ export class BusinessService {
     private apiKeyRepo: Repository<ApiKey>,
     @InjectRepository(User)
     private userRepo: Repository<User>,
+    private readonly transactionService: TransactionService,
+    private readonly dataSource: DataSource,
   ) {}
+
+  /** Load a business the caller owns, or throw. The wallet is the owner user's. */
+  private async ownedBusinessOrThrow(businessId: number, requesterUserId: number): Promise<Business> {
+    const business = await this.businessRepo.findOne({ where: { id: businessId } });
+    if (!business) throw new NotFoundException('Business not found');
+    if (business.userId !== requesterUserId) {
+      throw new ForbiddenException('You do not own this business');
+    }
+    return business;
+  }
+
+  /**
+   * Business wallet = the owner user's walletBalance (what the call/API billing
+   * deducts from). Returns the live balance + the owner's transaction ledger.
+   */
+  async getWallet(businessId: number, requesterUserId: number) {
+    const business = await this.ownedBusinessOrThrow(businessId, requesterUserId);
+    const owner = await this.userRepo.findOne({ where: { id: business.userId } });
+    const transactions = await this.transactionService.findByUser(business.userId);
+    return {
+      businessId: business.id,
+      companyName: business.companyName,
+      balance: Number(owner?.walletBalance ?? 0),
+      transactions,
+    };
+  }
+
+  /** Add funds to the business wallet (atomic credit + audited transaction). */
+  async topUpWallet(businessId: number, requesterUserId: number, amount: number) {
+    if (!(Number(amount) > 0)) throw new BadRequestException('Amount must be greater than zero');
+    const business = await this.ownedBusinessOrThrow(businessId, requesterUserId);
+
+    return this.dataSource.transaction(async (manager) => {
+      const owner = await manager.findOne(User, {
+        where: { id: business.userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!owner) throw new NotFoundException('Business owner not found');
+      const next = Number(owner.walletBalance) + Number(amount);
+      owner.walletBalance = next as any;
+      await manager.save(owner);
+      await this.transactionService.log(
+        owner.id,
+        'CREDIT_ADDED',
+        Number(amount),
+        'Business wallet top-up',
+        undefined,
+        manager,
+      );
+      return { businessId: business.id, balance: next };
+    });
+  }
 
   getPurposes() {
     return Object.entries(NUMBER_PURPOSES).map(([value, label]) => ({ value, label }));
@@ -27,14 +91,30 @@ export class BusinessService {
   async register(userId: number, data: {
     companyName: string;
     industry: string;
+    country: string;
     registrationNumber?: string;
     website?: string;
     description?: string;
     contactEmail?: string;
     contactPhone?: string;
     address?: string;
+    logoUrl?: string;
   }): Promise<Business> {
-    const profile = this.businessRepo.create({ ...data, userId });
+    // The country decides which KYB requirements the business must satisfy, so
+    // it has to be a real jurisdiction and is captured at registration time.
+    const country = normaliseCountryCode(data.country);
+    if (!country) {
+      throw new BadRequestException(
+        data.country
+          ? `"${data.country}" is not a valid ISO 3166-1 alpha-2 country code.`
+          : 'A country is required to register a business.',
+      );
+    }
+
+    // Every business shows an image; fall back to the Probocaller logo.
+    const logoUrl = (data.logoUrl ?? '').trim() || DEFAULT_BUSINESS_LOGO_URL;
+
+    const profile = this.businessRepo.create({ ...data, country, logoUrl, userId });
     const saved = await this.businessRepo.save(profile);
 
     const user = await this.userRepo.findOne({ where: { id: userId } });
@@ -82,10 +162,19 @@ export class BusinessService {
     const profile = await this.businessRepo.findOne({ where: { id: data.businessId, userId } });
     if (!profile) throw new NotFoundException('Business profile not found or does not belong to your account.');
 
-    const existing = await this.numberRepo.findOne({ where: { phoneNumber: data.phoneNumber } });
-    if (existing) throw new ConflictException(`${data.phoneNumber} is already registered to a business`);
+    // Numbers are stored in canonical E.164. A bare national number could be from
+    // anywhere, so we ask for the country code rather than guess.
+    const phoneNumber = normalisePhoneNumber(data.phoneNumber);
+    if (!phoneNumber) {
+      throw new BadRequestException(
+        `"${data.phoneNumber}" needs a country code — enter it in international format, e.g. +27 11 000 1111.`,
+      );
+    }
 
-    const num = this.numberRepo.create({ ...data, businessId: profile.id });
+    const existing = await this.numberRepo.findOne({ where: { phoneNumber } });
+    if (existing) throw new ConflictException(`${phoneNumber} is already registered to a business`);
+
+    const num = this.numberRepo.create({ ...data, phoneNumber, businessId: profile.id });
     return this.numberRepo.save(num);
   }
 
@@ -115,6 +204,7 @@ export class BusinessService {
 
   async resolveCallerIdentity(phoneNumber: string): Promise<{
     isBusiness: boolean;
+    businessId: number;
     businessProfile?: { companyName: string; industry: string; description?: string; verified: boolean };
     numberPurpose?: string;
     numberPurposeLabel?: string;
@@ -129,6 +219,7 @@ export class BusinessService {
     const b = num.business;
     return {
       isBusiness: true,
+      businessId: b.id,
       businessProfile: {
         companyName: b.companyName,
         industry: b.industry,
@@ -141,7 +232,7 @@ export class BusinessService {
     };
   }
 
-  async getProfileByUserId(userId: number): Promise<{ companyName: string; industry: string; description?: string; verified: boolean } | null> {
+  async getProfileByUserId(userId: number): Promise<{ id: number; companyName: string; industry: string; description?: string; verified: boolean } | null> {
     // Caller-ID fallback when the calling number isn't registered to any business.
     // Returns the user's most recently created active profile.
     const b = await this.businessRepo.findOne({
@@ -149,7 +240,7 @@ export class BusinessService {
       order: { createdAt: 'DESC' },
     });
     if (!b) return null;
-    return { companyName: b.companyName, industry: b.industry, description: b.description, verified: b.verified };
+    return { id: b.id, companyName: b.companyName, industry: b.industry, description: b.description, verified: b.verified };
   }
 
   async adminAddNumber(businessId: number, data: {
@@ -170,6 +261,7 @@ export class BusinessService {
   async adminRegisterBusiness(userId: number, data: {
     companyName: string;
     industry: string;
+    country: string;
     description?: string;
     contactPhone?: string;
     contactEmail?: string;
@@ -233,6 +325,41 @@ export class BusinessService {
   /** Admin: every API key with its owning business, newest first. */
   async adminListApiKeys(): Promise<ApiKey[]> {
     return this.apiKeyRepo.find({ relations: ['business'], order: { createdAt: 'DESC' } });
+  }
+
+  /** Business self-service: only the keys of businesses the user owns, newest first. */
+  async listApiKeysForUser(userId: number): Promise<ApiKey[]> {
+    return this.apiKeyRepo.find({
+      where: { business: { userId } },
+      relations: ['business'],
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  /**
+   * Business self-service: create a scoped key for a business the user owns.
+   * Mirrors the /leads guard — keys can only be minted for KYB-verified businesses.
+   */
+  async createApiKeyForUser(
+    userId: number,
+    businessId: number,
+    opts: { label?: string; scopes?: string[] },
+  ): Promise<ApiKey> {
+    const business = await this.businessRepo.findOne({ where: { id: businessId, userId } });
+    if (!business) throw new NotFoundException('Business not found or does not belong to your account.');
+    if (!business.verified) throw new ForbiddenException('API access requires KYB verification');
+    return this.createApiKey(businessId, opts);
+  }
+
+  /** Business self-service: revoke a key, but only if it belongs to the user's own business. */
+  async revokeApiKeyForUser(userId: number, keyId: number): Promise<ApiKey> {
+    const key = await this.apiKeyRepo.findOne({ where: { id: keyId }, relations: ['business'] });
+    if (!key) throw new NotFoundException('API key not found');
+    if (!key.business || key.business.userId !== userId) {
+      throw new ForbiddenException('This API key does not belong to your account.');
+    }
+    key.revoked = true;
+    return this.apiKeyRepo.save(key);
   }
 
   /** Revoke an API key (it stops authenticating immediately). */

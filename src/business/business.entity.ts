@@ -20,6 +20,14 @@ export class Business {
   @Column({ nullable: true })
   registrationNumber: string;
 
+  /**
+   * ISO 3166-1 alpha-2 country the business is registered in. Required for new
+   * businesses (it drives the KYB requirements); nullable so pre-existing rows
+   * that predate this column keep loading.
+   */
+  @Column({ type: 'varchar', length: 2, nullable: true })
+  country: string | null;
+
   @Column()
   industry: string;
 
@@ -61,10 +69,6 @@ export class Business {
 
   @Column({ type: 'int', default: 0 })
   totalRatings: number;
-
-  // API key businesses use to call the /leads API (x-api-key header).
-  @Column({ type: 'varchar', nullable: true, unique: true })
-  apiKey: string | null;
 
   @OneToMany(() => BusinessNumber, (bn) => bn.business, { cascade: true, eager: true })
   numbers: BusinessNumber[];

@@ -6,7 +6,7 @@ describe('AdminController — bulk update + CSV export', () => {
 
   beforeEach(() => {
     adminService = { bulkUpdateUsers: jest.fn(), exportUsersCsv: jest.fn() };
-    controller = new AdminController(adminService as any, {} as any, {} as any, {} as any);
+    controller = new AdminController(adminService as any, {} as any, {} as any, {} as any, {} as any);
   });
 
   it('delegates a bulk user update with the acting admin id', async () => {

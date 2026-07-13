@@ -68,6 +68,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
     if (!user) throw new UnauthorizedException();
     if (user.deactivatedAt) throw new UnauthorizedException('Account deactivated');
-    return { userId: payload.sub, phoneNumber: payload.phoneNumber };
+    // `imp` is set only on admin "view as business" sessions — carry it so the
+    // session knows who to restore on exit and can render the view-as banner.
+    return { userId: payload.sub, phoneNumber: payload.phoneNumber, impersonatorId: payload.imp ?? null };
   }
 }

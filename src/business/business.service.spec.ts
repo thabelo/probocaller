@@ -1,23 +1,31 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { NotFoundException } from '@nestjs/common';
-import { BusinessService } from './business.service';
+import { DataSource } from 'typeorm';
+import { NotFoundException, ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
+import { BusinessService, DEFAULT_BUSINESS_LOGO_URL } from './business.service';
 import { Business } from './business.entity';
 import { BusinessNumber } from './business-number.entity';
 import { ApiKey } from './api-key.entity';
 import { User } from '../user/user.entity';
+import { TransactionService } from '../transaction/transaction.service';
 
 const mockRepo = () => ({
   find: jest.fn(), findOne: jest.fn(), create: jest.fn(), save: jest.fn(),
   increment: jest.fn(), update: jest.fn(),
 });
 
+const mockTx = () => ({ findByUser: jest.fn().mockResolvedValue([]), log: jest.fn() });
+
 describe('BusinessService — API keys', () => {
   let service: BusinessService;
   let businessRepo: ReturnType<typeof mockRepo>;
   let apiKeyRepo: ReturnType<typeof mockRepo>;
+  let userRepo: ReturnType<typeof mockRepo>;
+  let txService: ReturnType<typeof mockTx>;
+  let dataSource: { transaction: jest.Mock };
 
   beforeEach(async () => {
+    dataSource = { transaction: jest.fn() };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         BusinessService,
@@ -25,13 +33,65 @@ describe('BusinessService — API keys', () => {
         { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
         { provide: getRepositoryToken(ApiKey), useFactory: mockRepo },
         { provide: getRepositoryToken(User), useFactory: mockRepo },
+        { provide: TransactionService, useFactory: mockTx },
+        { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
     service = module.get(BusinessService);
     businessRepo = module.get(getRepositoryToken(Business));
     apiKeyRepo = module.get(getRepositoryToken(ApiKey));
+    userRepo = module.get(getRepositoryToken(User));
+    txService = module.get(TransactionService);
     apiKeyRepo.create.mockImplementation((x: any) => x);
     apiKeyRepo.save.mockImplementation(async (x: any) => x);
+  });
+
+  describe('getWallet', () => {
+    it("returns the owner's balance + transactions for a business the caller owns", async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9, companyName: 'Acme' });
+      userRepo.findOne.mockResolvedValue({ id: 9, walletBalance: '123.4500' });
+      txService.findByUser.mockResolvedValue([{ id: 1, type: 'CALL_CHARGE', amount: '-2' }]);
+      const res = await service.getWallet(5, 9);
+      expect(res.balance).toBe(123.45);
+      expect(res.transactions).toHaveLength(1);
+      expect(txService.findByUser).toHaveBeenCalledWith(9);
+    });
+
+    it('forbids reading a wallet the caller does not own', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9, companyName: 'Acme' });
+      await expect(service.getWallet(5, 999)).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('404s for an unknown business', async () => {
+      businessRepo.findOne.mockResolvedValue(null);
+      await expect(service.getWallet(404, 9)).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
+  describe('topUpWallet', () => {
+    it('credits the wallet atomically and logs a transaction', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9, companyName: 'Acme' });
+      const manager = {
+        findOne: jest.fn().mockResolvedValue({ id: 9, walletBalance: '100.0000' }),
+        save: jest.fn().mockImplementation(async (x: any) => x),
+      };
+      dataSource.transaction.mockImplementation(async (cb: any) => cb(manager));
+      const res = await service.topUpWallet(5, 9, 50);
+      expect(res.balance).toBe(150);
+      expect(manager.save).toHaveBeenCalled();
+      expect(txService.log).toHaveBeenCalledWith(9, 'CREDIT_ADDED', 50, expect.any(String), undefined, manager);
+    });
+
+    it('rejects a non-positive amount', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9 });
+      await expect(service.topUpWallet(5, 9, 0)).rejects.toThrow();
+      expect(dataSource.transaction).not.toHaveBeenCalled();
+    });
+
+    it('forbids topping up a wallet the caller does not own', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9 });
+      await expect(service.topUpWallet(5, 999, 50)).rejects.toBeInstanceOf(ForbiddenException);
+    });
   });
 
   describe('createApiKey', () => {
@@ -109,5 +169,172 @@ describe('BusinessService — API keys', () => {
       expect(apiKeyRepo.increment).toHaveBeenCalledWith({ id: 5 }, 'callCount', 1);
       expect(apiKeyRepo.increment).not.toHaveBeenCalledWith({ id: 5 }, 'totalSpend', expect.anything());
     });
+  });
+
+  describe('listApiKeysForUser', () => {
+    it('lists only keys of businesses owned by the user, newest first', async () => {
+      apiKeyRepo.find.mockResolvedValue([{ id: 1, business: { id: 3, userId: 7 } }]);
+      const res = await service.listApiKeysForUser(7);
+      expect(res).toEqual([{ id: 1, business: { id: 3, userId: 7 } }]);
+      expect(apiKeyRepo.find).toHaveBeenCalledWith({
+        where: { business: { userId: 7 } },
+        relations: ['business'],
+        order: { createdAt: 'DESC' },
+      });
+    });
+  });
+
+  describe('createApiKeyForUser', () => {
+    it('creates a scoped key for a KYB-verified business the user owns', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 3, userId: 7, verified: true });
+      const res = await service.createApiKeyForUser(7, 3, { label: 'CRM', scopes: ['income_range'] });
+      expect(businessRepo.findOne).toHaveBeenCalledWith({ where: { id: 3, userId: 7 } });
+      expect(res.businessId).toBe(3);
+      expect(res.scopes).toEqual(['income_range']);
+      expect(res.key).toMatch(/^pk_[a-f0-9]{32,}$/);
+    });
+
+    it('throws NotFound when the business is not found or not owned by the user', async () => {
+      businessRepo.findOne.mockResolvedValue(null);
+      await expect(service.createApiKeyForUser(7, 999, {})).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('throws Forbidden when the owned business is not KYB-verified', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 3, userId: 7, verified: false });
+      await expect(service.createApiKeyForUser(7, 3, {})).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('revokeApiKeyForUser', () => {
+    it('revokes a key that belongs to a business the user owns', async () => {
+      const key: any = { id: 5, revoked: false, business: { id: 3, userId: 7 } };
+      apiKeyRepo.findOne.mockResolvedValue(key);
+      const res = await service.revokeApiKeyForUser(7, 5);
+      expect(apiKeyRepo.findOne).toHaveBeenCalledWith({ where: { id: 5 }, relations: ['business'] });
+      expect(key.revoked).toBe(true);
+      expect(res.revoked).toBe(true);
+    });
+
+    it('throws NotFound for an unknown key', async () => {
+      apiKeyRepo.findOne.mockResolvedValue(null);
+      await expect(service.revokeApiKeyForUser(7, 99)).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it("throws Forbidden when the key belongs to another user's business", async () => {
+      apiKeyRepo.findOne.mockResolvedValue({ id: 5, revoked: false, business: { id: 3, userId: 999 } });
+      await expect(service.revokeApiKeyForUser(7, 5)).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+});
+
+describe('BusinessService — register requires a country', () => {
+  let service: BusinessService;
+  let businessRepo: ReturnType<typeof mockRepo>;
+  let userRepo: ReturnType<typeof mockRepo>;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BusinessService,
+        { provide: getRepositoryToken(Business), useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+        { provide: getRepositoryToken(ApiKey), useFactory: mockRepo },
+        { provide: getRepositoryToken(User), useFactory: mockRepo },
+        { provide: TransactionService, useFactory: mockTx },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(BusinessService);
+    businessRepo = module.get(getRepositoryToken(Business));
+    userRepo = module.get(getRepositoryToken(User));
+    businessRepo.create.mockImplementation((x: any) => x);
+    businessRepo.save.mockImplementation(async (x: any) => ({ ...x, id: 5 }));
+    businessRepo.findOne.mockResolvedValue({ id: 5, country: 'ZA' });
+    userRepo.findOne.mockResolvedValue({ id: 7, isBusiness: false });
+    userRepo.save.mockImplementation(async (x: any) => x);
+  });
+
+  const base = { companyName: 'Acme', industry: 'insurance' };
+
+  it('persists the country, upper-cased', async () => {
+    await service.register(7, { ...base, country: 'za' } as any);
+    expect(businessRepo.create).toHaveBeenCalledWith(expect.objectContaining({ country: 'ZA', userId: 7 }));
+  });
+
+  it('rejects a missing country', async () => {
+    await expect(service.register(7, base as any)).rejects.toBeInstanceOf(BadRequestException);
+    expect(businessRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('rejects a country code that is not ISO 3166-1 alpha-2', async () => {
+    await expect(service.register(7, { ...base, country: 'XX' } as any)).rejects.toBeInstanceOf(BadRequestException);
+    expect(businessRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('gives a business with no image the default Probocaller logo', async () => {
+    await service.register(7, { ...base, country: 'ZA' } as any);
+    expect(businessRepo.create).toHaveBeenCalledWith(expect.objectContaining({ logoUrl: DEFAULT_BUSINESS_LOGO_URL }));
+  });
+
+  it('falls back to the default logo when the image is blank', async () => {
+    await service.register(7, { ...base, country: 'ZA', logoUrl: '   ' } as any);
+    expect(businessRepo.create).toHaveBeenCalledWith(expect.objectContaining({ logoUrl: DEFAULT_BUSINESS_LOGO_URL }));
+  });
+
+  it('keeps a logo the caller provides', async () => {
+    await service.register(7, { ...base, country: 'ZA', logoUrl: 'https://acme.co/logo.png' } as any);
+    expect(businessRepo.create).toHaveBeenCalledWith(expect.objectContaining({ logoUrl: 'https://acme.co/logo.png' }));
+  });
+});
+
+describe('BusinessService — calling numbers are stored in E.164', () => {
+  let service: BusinessService;
+  let businessRepo: ReturnType<typeof mockRepo>;
+  let numberRepo: ReturnType<typeof mockRepo>;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BusinessService,
+        { provide: getRepositoryToken(Business), useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+        { provide: getRepositoryToken(ApiKey), useFactory: mockRepo },
+        { provide: getRepositoryToken(User), useFactory: mockRepo },
+        { provide: TransactionService, useFactory: mockTx },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(BusinessService);
+    businessRepo = module.get(getRepositoryToken(Business));
+    numberRepo = module.get(getRepositoryToken(BusinessNumber));
+    businessRepo.findOne.mockResolvedValue({ id: 3, userId: 7 });
+    numberRepo.findOne.mockResolvedValue(null);
+    numberRepo.create.mockImplementation((x: any) => x);
+    numberRepo.save.mockImplementation(async (x: any) => ({ id: 1, ...x }));
+  });
+
+  const base = { businessId: 3, purpose: 'INSURANCE' };
+
+  it('stores an international number in canonical E.164 form', async () => {
+    const res: any = await service.addNumber(7, { ...base, phoneNumber: '+27 82 555 0001' });
+    expect(res.phoneNumber).toBe('+27825550001');
+  });
+
+  it('promotes a South African national number', async () => {
+    const res: any = await service.addNumber(7, { ...base, phoneNumber: '0831119999' });
+    expect(res.phoneNumber).toBe('+27831119999');
+  });
+
+  it('rejects a number with no country code rather than guessing', async () => {
+    await expect(service.addNumber(7, { ...base, phoneNumber: '5551234567' }))
+      .rejects.toBeInstanceOf(BadRequestException);
+    expect(numberRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('checks for duplicates against the normalised number', async () => {
+    numberRepo.findOne.mockResolvedValue({ id: 9, phoneNumber: '+27831119999' });
+    await expect(service.addNumber(7, { ...base, phoneNumber: '0831119999' }))
+      .rejects.toBeInstanceOf(ConflictException);
+    expect(numberRepo.findOne).toHaveBeenCalledWith({ where: { phoneNumber: '+27831119999' } });
   });
 });

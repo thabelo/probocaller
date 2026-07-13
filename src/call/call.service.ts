@@ -5,6 +5,7 @@ import { CallLog } from './call.entity';
 import { CallRating } from './call-rating.entity';
 import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
+import { BusinessNumber } from '../business/business-number.entity';
 import { Setting } from '../config/setting.entity';
 import { TransactionService } from '../transaction/transaction.service';
 import { DataBrokerService } from '../data-broker/data-broker.service';
@@ -24,6 +25,8 @@ export class CallService {
     private userRepository: Repository<User>,
     @InjectRepository(Business)
     private businessRepository: Repository<Business>,
+    @InjectRepository(BusinessNumber)
+    private numberRepository: Repository<BusinessNumber>,
     @InjectRepository(Setting)
     private settingRepository: Repository<Setting>,
     private readonly transactionService: TransactionService,
@@ -59,9 +62,36 @@ export class CallService {
     return 'verified';
   }
 
-  async initiateCall(fromUserId: number, toPhoneNumber: string): Promise<{ call: CallLog; blocked: boolean; voiceNote: boolean; message: string }> {
+  /**
+   * Resolve which business + number a call is placed from. `fromNumberId` must be
+   * one of the caller's own business numbers; if omitted the call is unattributed
+   * (personal / legacy). Captured at call time so history is stable if the number
+   * is later changed or removed.
+   */
+  private async resolveAttribution(
+    fromUserId: number,
+    opts?: { fromNumberId?: number; campaignId?: number },
+  ): Promise<{ businessId: number | null; callingNumberId: number | null; campaignId: number | null }> {
+    if (!opts?.fromNumberId) {
+      return { businessId: null, callingNumberId: null, campaignId: opts?.campaignId ?? null };
+    }
+    const number = await this.numberRepository.findOne({
+      where: { id: opts.fromNumberId, business: { userId: fromUserId } },
+      relations: ['business'],
+    });
+    if (!number) throw new BadRequestException('That calling number does not belong to your account.');
+    return { businessId: number.businessId, callingNumberId: number.id, campaignId: opts.campaignId ?? null };
+  }
+
+  async initiateCall(
+    fromUserId: number,
+    toPhoneNumber: string,
+    opts?: { fromNumberId?: number; campaignId?: number },
+  ): Promise<{ call: CallLog; blocked: boolean; voiceNote: boolean; message: string }> {
     const fromUser = await this.userRepository.findOne({ where: { id: fromUserId } });
     if (!fromUser) throw new NotFoundException('User not found');
+
+    const attribution = await this.resolveAttribution(fromUserId, opts);
 
     let toUser = await this.userRepository.findOne({ where: { phoneNumber: toPhoneNumber } });
     if (!toUser) {
@@ -78,6 +108,7 @@ export class CallService {
     // Caller (business) has insufficient wallet balance
     if (fromUser.isBusiness && Number(fromUser.walletBalance) < ratePerSecond) {
       const blockedCall = this.callRepository.create({
+        ...attribution,
         fromUserId,
         toUserId: toUser.id,
         status: 'blocked',
@@ -96,6 +127,7 @@ export class CallService {
     // Receiver (business) has insufficient wallet balance to accept the call
     if (toUser.isBusiness && Number(toUser.walletBalance) < ratePerSecond) {
       const blockedCall = this.callRepository.create({
+        ...attribution,
         fromUserId,
         toUserId: toUser.id,
         status: 'blocked',
@@ -111,10 +143,20 @@ export class CallService {
       return { call: blockedCall, blocked: true, voiceNote: true, message: 'Hello, Your call is blocked by Probo Caller, please load funds. Visit ProboCaller dot com to learn more.  Your call is blocked by Probo Caller, please load funds. Visit Probo Caller dot com to learn more. Goodbye!' };
     }
 
+    // Identify the human recipient and the calling business by role, not by
+    // from/to position. The mobile client records an incoming business call as
+    // fromUser=user, toUser=business; a server-initiated call is the reverse.
+    // Either way it's the RECIPIENT's own preferences (call windows + permission
+    // mode) that gate the call, and approved_only is checked against the CALLER.
+    const appIncoming = toUser.isBusiness && !fromUser.isBusiness;
+    const recipient = appIncoming ? fromUser : toUser;
+    const callerBusinessUserId = appIncoming ? toUser.id : fromUserId;
+
     // Data broker: check call windows first (applies to all callers)
-    const windows = toUser.allowedCallWindows || [];
+    const windows = recipient.allowedCallWindows || [];
     if (windows.length > 0 && !this.isWithinCallWindows(windows)) {
       const blockedCall = this.callRepository.create({
+        ...attribution,
         fromUserId,
         toUserId: toUser.id,
         status: 'blocked',
@@ -126,10 +168,11 @@ export class CallService {
       return { call: blockedCall, blocked: true, voiceNote: true, message: 'This person is not accepting calls at this time.' };
     }
 
-    // Data broker: check call permission mode
-    const permMode = toUser.callPermissionMode || 'all';
+    // Data broker: check the recipient's call permission mode
+    const permMode = recipient.callPermissionMode || 'all';
     if (permMode === 'none') {
       const blockedCall = this.callRepository.create({
+        ...attribution,
         fromUserId,
         toUserId: toUser.id,
         status: 'blocked',
@@ -141,9 +184,9 @@ export class CallService {
       return { call: blockedCall, blocked: true, voiceNote: true, message: 'This person is not accepting calls through Probo Caller.' };
     }
     if (permMode === 'approved_only') {
-      const callerBusiness = await this.businessRepository.findOne({ where: { userId: fromUserId } });
+      const callerBusiness = await this.businessRepository.findOne({ where: { userId: callerBusinessUserId } });
       const hasApproval = callerBusiness
-        ? await this.dataBrokerService.hasApproval(callerBusiness.id, toUser.id)
+        ? await this.dataBrokerService.hasApproval(callerBusiness.id, recipient.id)
         : false;
       if (!hasApproval) {
         const blockedCall = this.callRepository.create({
@@ -163,6 +206,7 @@ export class CallService {
     if (recipientBlocksCaller) {
       const blockedReason = 'USER_BLOCKED';
       const blockedCall = this.callRepository.create({
+        ...attribution,
         fromUserId,
         toUserId: toUser.id,
         status: 'blocked',
@@ -174,10 +218,38 @@ export class CallService {
       return { call: blockedCall, blocked: true, voiceNote: false, message: 'You have blocked this number.' };
     }
 
-    const call = this.callRepository.create({ fromUserId, toUserId: toUser.id, status: 'initiated', ratePerSecond });
+    const call = this.callRepository.create({ ...attribution, fromUserId, toUserId: toUser.id, status: 'initiated', ratePerSecond });
     await this.callRepository.save(call);
 
     return { call, blocked: false, voiceNote: false, message: 'Call initiated' };
+  }
+
+  /** A single business's call history, owner-scoped. Same shape as getCallHistory. */
+  async getBusinessCallHistory(userId: number, businessId: number, period?: string): Promise<CallLog[]> {
+    const business = await this.businessRepository.findOne({ where: { id: businessId, userId } });
+    if (!business) throw new NotFoundException('Business not found or does not belong to your account.');
+
+    const qb = this.callRepository
+      .createQueryBuilder('call')
+      .leftJoinAndSelect('call.fromUser', 'fromUser')
+      .leftJoinAndSelect('call.toUser', 'toUser')
+      .where('call.businessId = :businessId', { businessId })
+      .orderBy('call.startedAt', 'DESC');
+
+    const from = this.periodStart(period);
+    if (from) qb.andWhere('call.startedAt >= :from', { from });
+
+    return qb.getMany();
+  }
+
+  /** Start-of-window for a period filter, or undefined for 'all'/none. */
+  private periodStart(period?: string): Date | undefined {
+    if (!period || period === 'all') return undefined;
+    const now = new Date();
+    if (period === 'day') { const d = new Date(now); d.setHours(0, 0, 0, 0); return d; }
+    if (period === 'week') return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    if (period === 'month') return new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    return undefined;
   }
 
   async completeCall(requestingUserId: number, callId: number, duration: number): Promise<CallLog> {
@@ -205,9 +277,30 @@ export class CallService {
       throw new BadRequestException('Invalid call duration');
     }
 
-    const callerUser = await this.userRepository.findOne({ where: { id: call.toUserId } });
+    // A business call moves money the same way whichever direction it was
+    // recorded in: the business party pays, the user on the other end earns.
+    // The mobile client records the user as fromUser and the business as toUser,
+    // but a server-initiated business call (e.g. an outbound campaign) records
+    // the business as fromUser — both must charge the business and pay the user.
+    const [fromParty, toParty] = await Promise.all([
+      this.userRepository.findOne({ where: { id: call.fromUserId } }),
+      this.userRepository.findOne({ where: { id: call.toUserId } }),
+    ]);
+    const chargePartyId = toParty?.isBusiness
+      ? call.toUserId
+      : fromParty?.isBusiness
+        ? call.fromUserId
+        : null;
+    const payPartyId = chargePartyId === null
+      ? null
+      : chargePartyId === call.toUserId
+        ? call.fromUserId
+        : call.toUserId;
 
-    if (callerUser?.isBusiness) {
+    if (chargePartyId !== null) {
+      // Loaded relations describe each party for the ledger narration.
+      const payParty = payPartyId === call.fromUserId ? call.fromUser : call.toUser;
+      const chargeParty = chargePartyId === call.fromUserId ? call.fromUser : call.toUser;
       const platformCutRate = await this.getPlatformCutRate();
       const rate = Number(call.ratePerSecond) || DEFAULT_RATE_PER_SECOND;
 
@@ -231,7 +324,7 @@ export class CallService {
         if (!locked || locked.status === 'completed') return;
 
         const businessRow = await m.findOne(User, {
-          where: { id: call.toUserId },
+          where: { id: chargePartyId },
           lock: { mode: 'pessimistic_write' },
         });
         if (!businessRow) return;
@@ -261,13 +354,13 @@ export class CallService {
           businessRow.id,
           'CALL_CHARGE',
           -businessCost,
-          `${duration}s call to ${call.fromUser?.phoneNumber || 'user'} — rate $${rate}/s`,
+          `${duration}s call to ${payParty?.phoneNumber || 'user'} — rate $${rate}/s`,
           callId,
           m,
         );
 
         const receiverUser = await m.findOne(User, {
-          where: { id: call.fromUserId },
+          where: { id: payPartyId },
           lock: { mode: 'pessimistic_write' },
         });
         if (receiverUser) {
@@ -277,7 +370,7 @@ export class CallService {
             receiverUser.id,
             'CALL_EARN',
             userEarnings,
-            `Earned from ${duration}s business call from ${call.toUser?.name || call.toUser?.phoneNumber || 'business'}`,
+            `Earned from ${duration}s business call from ${chargeParty?.name || chargeParty?.phoneNumber || 'business'}`,
             callId,
             m,
           );

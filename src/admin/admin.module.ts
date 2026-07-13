@@ -17,6 +17,7 @@ import { PhoneReport } from '../report/phone-report.entity';
 import { PhoneReportVote } from '../report/phone-report-vote.entity';
 import { ReportModule } from '../report/report.module';
 import { AuditModule } from '../audit/audit.module';
+import { LookupModule } from '../lookup/lookup.module';
 import { JwtModule } from '@nestjs/jwt';
 import { AdminAuthController } from './admin-auth.controller';
 
@@ -28,6 +29,7 @@ import { AdminAuthController } from './admin-auth.controller';
     TransactionModule,
     ReportModule,
     AuditModule,
+    LookupModule,
     JwtModule.registerAsync({
       useFactory: () => ({
         secret: process.env.JWT_SECRET,

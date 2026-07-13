@@ -1,5 +1,6 @@
-import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, ManyToOne, JoinColumn } from 'typeorm';
+import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, ManyToOne, JoinColumn, Index } from 'typeorm';
 import { User } from '../user/user.entity';
+import { Business } from '../business/business.entity';
 
 @Entity('call_logs')
 export class CallLog {
@@ -19,6 +20,24 @@ export class CallLog {
   @ManyToOne(() => User)
   @JoinColumn({ name: 'toUserId' })
   toUser: User;
+
+  // ─── Per-business attribution (captured at call time; null for personal /
+  // legacy calls). Links are nulled — never cascade-deleted — so history
+  // survives a business or number being removed. ───────────────────────────────
+  @Index()
+  @Column({ type: 'int', nullable: true })
+  businessId: number | null;
+
+  @ManyToOne(() => Business, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({ name: 'businessId' })
+  business: Business | null;
+
+  @Column({ type: 'int', nullable: true })
+  callingNumberId: number | null;
+
+  @Index()
+  @Column({ type: 'int', nullable: true })
+  campaignId: number | null;
 
   @Column({ type: 'int', default: 0 })
   duration: number;

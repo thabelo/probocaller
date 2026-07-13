@@ -53,9 +53,13 @@ export class KybService {
   // ─── Country config ─────────────────────────────────────────────────────────
 
   getRequirements(countryCode: string): CountryKybConfig {
+    // Every real country resolves (researched config, else a generic one), so the
+    // only failure mode left is a code that isn't a country at all.
     const config = getCountryKybConfig(countryCode);
     if (!config) {
-      throw new NotFoundException(`No KYB configuration found for country code "${countryCode.toUpperCase()}". Use GET /kyb/countries to list supported countries.`);
+      throw new BadRequestException(
+        `"${String(countryCode).toUpperCase()}" is not a valid ISO 3166-1 alpha-2 country code. Use GET /kyb/countries to list countries.`,
+      );
     }
     return config;
   }

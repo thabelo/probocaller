@@ -36,6 +36,12 @@ export class CallController {
     return this.callService.getCallHistory(req.user.userId, period);
   }
 
+  @Get('business/:businessId')
+  @ApiOperation({ summary: "Call history for one of the caller's businesses" })
+  async getBusinessCallHistory(@Request() req, @Param('businessId') businessId: string, @Query('period') period?: string) {
+    return this.callService.getBusinessCallHistory(req.user.userId, Number(businessId), period);
+  }
+
   @Post('rate')
   @HttpCode(200)
   @ApiOperation({ summary: 'Rate a completed business call (1–5 stars)' })
@@ -72,6 +78,11 @@ export class CallAliasController {
   @Get('history')
   async getCallHistory(@Request() req, @Query('period') period?: string) {
     return this.callService.getCallHistory(req.user.userId, period);
+  }
+
+  @Get('business/:businessId')
+  async getBusinessCallHistory(@Request() req, @Param('businessId') businessId: string, @Query('period') period?: string) {
+    return this.callService.getBusinessCallHistory(req.user.userId, Number(businessId), period);
   }
 
   @Post('rate')
