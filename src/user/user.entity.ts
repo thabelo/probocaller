@@ -38,9 +38,14 @@ export class User {
   notifications: { id: number; message: string; timestamp: Date; read: boolean }[];
 
   // Call-permission preset name (one of the six tiers) or 'custom'. Derived from the
-  // two policy dials below, which are the source of truth for gating.
+  // four category policies below, which are the source of truth for gating.
   @Column({ default: 'all_paid_biz' })
   callPermissionMode: string;
+
+  // The base tier the user selected; custom per-category rules are overrides layered
+  // on top. Deleting a rule reverts that category to this base's value.
+  @Column({ default: 'all_paid_biz' })
+  callBasePreset: string;
 
   // Four-category call policy (see call/call-policy.ts). Each: free | paid | blocked.
   // The six tiers are named combinations; anything else reads as 'custom'.

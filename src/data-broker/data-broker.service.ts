@@ -40,6 +40,8 @@ export class DataBrokerService {
     return {
       // Preset name is always derived from the four categories, so it never drifts.
       callPermissionMode: presetFor(policy),
+      // The base tier the user selected; custom rules are overrides on top of it.
+      callBasePreset: user.callBasePreset || 'all_paid_biz',
       contactsCallPolicy: policy.contacts,
       businessCallPolicy: policy.business,
       newCallPolicy: policy.newCaller,
@@ -64,9 +66,16 @@ export class DataBrokerService {
       unknown: (user.unknownCallPolicy || 'free') as any,
     };
     if (dto.callPermissionMode !== undefined) {
-      const preset = policyForPreset(LEGACY_MODE_ALIAS[dto.callPermissionMode] ?? dto.callPermissionMode);
-      if (preset) Object.assign(policy, preset);
-      else if (dto.callPermissionMode === 'none') policy.business = 'blocked';
+      const presetName = LEGACY_MODE_ALIAS[dto.callPermissionMode] ?? dto.callPermissionMode;
+      const preset = policyForPreset(presetName);
+      if (preset) {
+        // Picking a preset resets all categories and becomes the new base (clears
+        // any custom override rules).
+        Object.assign(policy, preset);
+        user.callBasePreset = presetName;
+      } else if (dto.callPermissionMode === 'none') {
+        policy.business = 'blocked';
+      }
     }
     if (dto.contactsCallPolicy !== undefined) policy.contacts = dto.contactsCallPolicy as any;
     if (dto.businessCallPolicy !== undefined) policy.business = dto.businessCallPolicy as any;

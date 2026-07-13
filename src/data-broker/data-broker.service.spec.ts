@@ -101,17 +101,19 @@ describe('DataBrokerService', () => {
       expect(saved.newCallPolicy).toBe('blocked');
       expect(saved.unknownCallPolicy).toBe('blocked');
       expect(saved.callPermissionMode).toBe('contacts_paid_biz');
+      expect(saved.callBasePreset).toBe('contacts_paid_biz'); // picking a preset sets the base
     });
 
-    it('accepts custom per-category values and derives callPermissionMode=custom when off-preset', async () => {
-      const user = mockUser();
+    it('a per-category override keeps the base preset and reads as custom', async () => {
+      const user = mockUser({ callBasePreset: 'all_paid_biz' });
       userRepo.findOne.mockResolvedValue(user);
       userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
       await service.updatePreferences(1, { newCallPolicy: 'paid', unknownCallPolicy: 'blocked' });
       const saved = userRepo.save.mock.calls[0][0];
       expect(saved.newCallPolicy).toBe('paid');
       expect(saved.unknownCallPolicy).toBe('blocked');
-      expect(saved.callPermissionMode).toBe('custom');
+      expect(saved.callPermissionMode).toBe('custom'); // effective is off-preset
+      expect(saved.callBasePreset).toBe('all_paid_biz'); // base unchanged by an override
     });
   });
 
