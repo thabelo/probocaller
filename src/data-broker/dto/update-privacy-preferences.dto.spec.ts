@@ -12,12 +12,15 @@ describe('UpdatePrivacyPreferencesDto — call-policy fields', () => {
     }
   });
 
-  it('accepts the custom personal + business dials', async () => {
-    expect(await errorsFor({ personalCallPolicy: 'contacts_paid', businessCallPolicy: 'free' })).toHaveLength(0);
+  it('accepts the four custom category policies', async () => {
+    expect(await errorsFor({
+      contactsCallPolicy: 'free', businessCallPolicy: 'paid', newCallPolicy: 'paid', unknownCallPolicy: 'blocked',
+    })).toHaveLength(0);
   });
 
-  it('rejects an unknown personal or business policy', async () => {
-    expect((await errorsFor({ personalCallPolicy: 'whatever' })).length).toBeGreaterThan(0);
-    expect((await errorsFor({ businessCallPolicy: 'sometimes' })).length).toBeGreaterThan(0);
+  it('rejects an unknown category policy value', async () => {
+    expect((await errorsFor({ contactsCallPolicy: 'whatever' })).length).toBeGreaterThan(0);
+    expect((await errorsFor({ newCallPolicy: 'sometimes' })).length).toBeGreaterThan(0);
+    expect((await errorsFor({ unknownCallPolicy: 'maybe' })).length).toBeGreaterThan(0);
   });
 });

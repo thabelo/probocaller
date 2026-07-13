@@ -28,18 +28,31 @@ export class UpdatePrivacyPreferencesDto {
   ])
   callPermissionMode?: string;
 
-  // Custom dials (see call/call-policy.ts). Take precedence over a preset when sent.
-  @ApiPropertyOptional({ enum: ['everyone', 'contacts', 'contacts_paid', 'paid', 'blocked'] })
+  // Custom per-category policies (see call/call-policy.ts). Each free|paid|blocked.
+  // Take precedence over a preset when sent.
+  @ApiPropertyOptional({ enum: ['free', 'paid', 'blocked'] })
   @IsOptional()
   @IsString()
-  @IsIn(['everyone', 'contacts', 'contacts_paid', 'paid', 'blocked'])
-  personalCallPolicy?: string;
+  @IsIn(['free', 'paid', 'blocked'])
+  contactsCallPolicy?: string;
 
   @ApiPropertyOptional({ enum: ['free', 'paid', 'blocked'] })
   @IsOptional()
   @IsString()
   @IsIn(['free', 'paid', 'blocked'])
   businessCallPolicy?: string;
+
+  @ApiPropertyOptional({ enum: ['free', 'paid', 'blocked'] })
+  @IsOptional()
+  @IsString()
+  @IsIn(['free', 'paid', 'blocked'])
+  newCallPolicy?: string;
+
+  @ApiPropertyOptional({ enum: ['free', 'paid', 'blocked'] })
+  @IsOptional()
+  @IsString()
+  @IsIn(['free', 'paid', 'blocked'])
+  unknownCallPolicy?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

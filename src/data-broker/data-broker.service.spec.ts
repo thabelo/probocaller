@@ -53,14 +53,19 @@ describe('DataBrokerService', () => {
   });
 
   describe('getPreferences', () => {
-    it('returns the two dials and the preset derived from them', async () => {
-      const user = mockUser({ dataShareEnabled: true, personalCallPolicy: 'contacts', businessCallPolicy: 'paid' });
+    it('returns the four category policies and the preset derived from them', async () => {
+      const user = mockUser({
+        dataShareEnabled: true,
+        contactsCallPolicy: 'free', businessCallPolicy: 'paid', newCallPolicy: 'blocked', unknownCallPolicy: 'blocked',
+      });
       userRepo.findOne.mockResolvedValue(user);
 
       const result = await service.getPreferences(1);
       expect(result.dataShareEnabled).toBe(true);
-      expect(result.personalCallPolicy).toBe('contacts');
+      expect(result.contactsCallPolicy).toBe('free');
       expect(result.businessCallPolicy).toBe('paid');
+      expect(result.newCallPolicy).toBe('blocked');
+      expect(result.unknownCallPolicy).toBe('blocked');
       expect(result.callPermissionMode).toBe('contacts_paid_biz'); // derived preset
     });
   });
@@ -85,25 +90,27 @@ describe('DataBrokerService', () => {
       expect(result.incognitoEnabled).toBe(true);
     });
 
-    it('maps a preset to the two dials and stores the derived mode', async () => {
+    it('maps a preset to the four categories and stores the derived mode', async () => {
       const user = mockUser();
       userRepo.findOne.mockResolvedValue(user);
       userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
       await service.updatePreferences(1, { callPermissionMode: 'contacts_paid_biz' });
       const saved = userRepo.save.mock.calls[0][0];
-      expect(saved.personalCallPolicy).toBe('contacts');
+      expect(saved.contactsCallPolicy).toBe('free');
       expect(saved.businessCallPolicy).toBe('paid');
+      expect(saved.newCallPolicy).toBe('blocked');
+      expect(saved.unknownCallPolicy).toBe('blocked');
       expect(saved.callPermissionMode).toBe('contacts_paid_biz');
     });
 
-    it('accepts custom dials and derives callPermissionMode=custom when off-preset', async () => {
+    it('accepts custom per-category values and derives callPermissionMode=custom when off-preset', async () => {
       const user = mockUser();
       userRepo.findOne.mockResolvedValue(user);
       userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
-      await service.updatePreferences(1, { personalCallPolicy: 'contacts_paid', businessCallPolicy: 'free' });
+      await service.updatePreferences(1, { newCallPolicy: 'paid', unknownCallPolicy: 'blocked' });
       const saved = userRepo.save.mock.calls[0][0];
-      expect(saved.personalCallPolicy).toBe('contacts_paid');
-      expect(saved.businessCallPolicy).toBe('free');
+      expect(saved.newCallPolicy).toBe('paid');
+      expect(saved.unknownCallPolicy).toBe('blocked');
       expect(saved.callPermissionMode).toBe('custom');
     });
   });

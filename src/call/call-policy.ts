@@ -1,77 +1,78 @@
 /**
- * Call-permission policy as two independent dials — a personal-caller policy and a
- * business-caller policy. The six user-facing tiers are named combinations of the
- * two; any other combination is "custom". One engine drives backend gating, mobile
- * on-device screening, and admin config.
+ * Call-permission policy over FOUR caller categories, each set to free | paid |
+ * blocked. The six user-facing tiers are named combinations; any other combination
+ * is "custom" (configured via the Add Custom dialog). One engine drives backend
+ * gating, mobile on-device screening, and admin config.
  *
- *   1 All calls                 (everyone, free)   — business rings free, you earn nothing
- *   2 All calls + Paid Business (everyone, paid)   — everyone free, business pays
- *   3 Contacts + Paid Business  (contacts, paid)   — contacts free, others blocked, business pays
- *   4 Paid Personal + Paid Biz  (paid,     paid)   — everyone pays
- *   5 Contacts only             (contacts, blocked)— contacts free, no business
- *   6 Do Not Disturb            (blocked,  blocked)— nobody
+ * Categories (resolved by precedence, see categoryFor):
+ *   contacts  — in your device contacts
+ *   business  — an identified business
+ *   newCaller — a first-time caller: has a caller-ID/number but isn't a contact
+ *   unknown   — no caller-ID at all (private/withheld/unregistered)
  */
 
-export type PersonalPolicy = 'everyone' | 'contacts' | 'contacts_paid' | 'paid' | 'blocked';
-export type BusinessPolicy = 'free' | 'paid' | 'blocked';
+export type CategoryPolicy = 'free' | 'paid' | 'blocked';
+export type CallCategory = 'contacts' | 'business' | 'newCaller' | 'unknown';
 export type CallDecision = 'allow_free' | 'allow_paid' | 'block';
 
-export interface CallPolicy {
-  personal: PersonalPolicy;
-  business: BusinessPolicy;
-}
+export type CallPolicy = Record<CallCategory, CategoryPolicy>;
 
 export const CALL_PRESETS: Record<string, CallPolicy> = {
-  all_calls: { personal: 'everyone', business: 'free' },
-  all_paid_biz: { personal: 'everyone', business: 'paid' },
-  contacts_paid_biz: { personal: 'contacts', business: 'paid' },
-  paid_all: { personal: 'paid', business: 'paid' },
-  contacts_only: { personal: 'contacts', business: 'blocked' },
-  dnd: { personal: 'blocked', business: 'blocked' },
+  all_calls: { contacts: 'free', business: 'free', newCaller: 'free', unknown: 'free' },
+  all_paid_biz: { contacts: 'free', business: 'paid', newCaller: 'free', unknown: 'free' },
+  contacts_paid_biz: { contacts: 'free', business: 'paid', newCaller: 'blocked', unknown: 'blocked' },
+  paid_all: { contacts: 'free', business: 'paid', newCaller: 'paid', unknown: 'paid' },
+  contacts_only: { contacts: 'free', business: 'blocked', newCaller: 'blocked', unknown: 'blocked' },
+  dnd: { contacts: 'blocked', business: 'blocked', newCaller: 'blocked', unknown: 'blocked' },
 };
+
+/** Default for a new user: reachable by everyone, business pays (= all_paid_biz). */
+export const DEFAULT_POLICY: CallPolicy = CALL_PRESETS.all_paid_biz;
 
 /** The preset name for a policy, or 'custom' when it matches none of the six. */
 export function presetFor(policy: CallPolicy): string {
   for (const [name, p] of Object.entries(CALL_PRESETS)) {
-    if (p.personal === policy.personal && p.business === policy.business) return name;
+    if (
+      p.contacts === policy.contacts &&
+      p.business === policy.business &&
+      p.newCaller === policy.newCaller &&
+      p.unknown === policy.unknown
+    ) {
+      return name;
+    }
   }
   return 'custom';
 }
 
-/** The (personal, business) dials for a named preset, or null if unknown. */
 export function policyForPreset(preset: string): CallPolicy | null {
   return CALL_PRESETS[preset] ?? null;
+}
+
+/** Which category a caller falls into, by precedence. */
+export function categoryFor(input: {
+  isContact?: boolean;
+  isBusiness?: boolean;
+  hasCallerId?: boolean;
+}): CallCategory {
+  if (input.isContact) return 'contacts';
+  if (input.isBusiness) return 'business';
+  if (input.hasCallerId === false) return 'unknown';
+  return 'newCaller';
 }
 
 /**
  * The decision for an incoming caller under a policy:
  *  - allow_free: rings, no charge
- *  - allow_paid: rings, the caller pays (business per-second, or personal pay-to-contact)
+ *  - allow_paid: rings, the caller pays (business per-second, or pay-to-contact)
  *  - block: rejected before ringing
- * `isContact` is only meaningful for personal callers and is evaluated on-device.
  */
 export function resolveCallDecision(input: {
-  isBusiness: boolean;
   isContact?: boolean;
-  personal: PersonalPolicy;
-  business: BusinessPolicy;
+  isBusiness?: boolean;
+  hasCallerId?: boolean;
+  policy: CallPolicy;
 }): CallDecision {
-  if (input.isBusiness) {
-    if (input.business === 'blocked') return 'block';
-    return input.business === 'paid' ? 'allow_paid' : 'allow_free';
-  }
-  switch (input.personal) {
-    case 'everyone':
-      return 'allow_free';
-    case 'contacts':
-      return input.isContact ? 'allow_free' : 'block';
-    case 'contacts_paid':
-      return input.isContact ? 'allow_free' : 'allow_paid';
-    case 'paid':
-      return 'allow_paid';
-    case 'blocked':
-      return 'block';
-    default:
-      return 'allow_free'; // fail open on an unknown policy — never silently drop a call
-  }
+  const cat = categoryFor(input);
+  const p = input.policy[cat];
+  return p === 'blocked' ? 'block' : p === 'paid' ? 'allow_paid' : 'allow_free';
 }

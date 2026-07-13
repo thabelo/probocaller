@@ -7,7 +7,7 @@ import { CallPermissionRequest } from './call-permission-request.entity';
 import { UpdatePrivacyPreferencesDto } from './dto/update-privacy-preferences.dto';
 import { RequestCallPermissionDto } from './dto/request-call-permission.dto';
 import { PayToContactService } from '../pay-to-contact/pay-to-contact.service';
-import { presetFor, policyForPreset } from '../call/call-policy';
+import { presetFor, policyForPreset, CallPolicy } from '../call/call-policy';
 
 // Legacy callPermissionMode values → new preset names (mapped on save).
 const LEGACY_MODE_ALIAS: Record<string, string> = {
@@ -31,13 +31,19 @@ export class DataBrokerService {
   async getPreferences(userId: number) {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
-    const personal = (user.personalCallPolicy || 'everyone') as any;
-    const business = (user.businessCallPolicy || 'paid') as any;
+    const policy: CallPolicy = {
+      contacts: (user.contactsCallPolicy || 'free') as any,
+      business: (user.businessCallPolicy || 'paid') as any,
+      newCaller: (user.newCallPolicy || 'free') as any,
+      unknown: (user.unknownCallPolicy || 'free') as any,
+    };
     return {
-      // Preset name is always derived from the two dials, so it never drifts.
-      callPermissionMode: presetFor({ personal, business }),
-      personalCallPolicy: personal,
-      businessCallPolicy: business,
+      // Preset name is always derived from the four categories, so it never drifts.
+      callPermissionMode: presetFor(policy),
+      contactsCallPolicy: policy.contacts,
+      businessCallPolicy: policy.business,
+      newCallPolicy: policy.newCaller,
+      unknownCallPolicy: policy.unknown,
       allowedCallWindows: user.allowedCallWindows || [],
       dataShareEnabled: user.dataShareEnabled,
       dataCategories: user.dataCategories || [],
@@ -49,24 +55,28 @@ export class DataBrokerService {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
-    // Resolve the two dials from a preset first, then let explicit dials override.
-    let personal = user.personalCallPolicy || 'everyone';
-    let business = user.businessCallPolicy || 'paid';
+    // Resolve the four categories from a preset first, then let explicit
+    // per-category values override.
+    const policy: CallPolicy = {
+      contacts: (user.contactsCallPolicy || 'free') as any,
+      business: (user.businessCallPolicy || 'paid') as any,
+      newCaller: (user.newCallPolicy || 'free') as any,
+      unknown: (user.unknownCallPolicy || 'free') as any,
+    };
     if (dto.callPermissionMode !== undefined) {
       const preset = policyForPreset(LEGACY_MODE_ALIAS[dto.callPermissionMode] ?? dto.callPermissionMode);
-      if (preset) {
-        personal = preset.personal;
-        business = preset.business;
-      } else if (dto.callPermissionMode === 'none') {
-        personal = 'everyone';
-        business = 'blocked';
-      }
+      if (preset) Object.assign(policy, preset);
+      else if (dto.callPermissionMode === 'none') policy.business = 'blocked';
     }
-    if (dto.personalCallPolicy !== undefined) personal = dto.personalCallPolicy;
-    if (dto.businessCallPolicy !== undefined) business = dto.businessCallPolicy;
-    user.personalCallPolicy = personal;
-    user.businessCallPolicy = business;
-    user.callPermissionMode = presetFor({ personal: personal as any, business: business as any });
+    if (dto.contactsCallPolicy !== undefined) policy.contacts = dto.contactsCallPolicy as any;
+    if (dto.businessCallPolicy !== undefined) policy.business = dto.businessCallPolicy as any;
+    if (dto.newCallPolicy !== undefined) policy.newCaller = dto.newCallPolicy as any;
+    if (dto.unknownCallPolicy !== undefined) policy.unknown = dto.unknownCallPolicy as any;
+    user.contactsCallPolicy = policy.contacts;
+    user.businessCallPolicy = policy.business;
+    user.newCallPolicy = policy.newCaller;
+    user.unknownCallPolicy = policy.unknown;
+    user.callPermissionMode = presetFor(policy);
 
     if (dto.allowedCallWindows !== undefined) user.allowedCallWindows = dto.allowedCallWindows;
     if (dto.dataShareEnabled !== undefined) user.dataShareEnabled = dto.dataShareEnabled;

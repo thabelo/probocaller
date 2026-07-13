@@ -42,13 +42,19 @@ export class User {
   @Column({ default: 'all_paid_biz' })
   callPermissionMode: string;
 
-  // Two-dial call policy (see call/call-policy.ts). personal governs individuals,
-  // business governs businesses. The six tiers are named combinations.
-  @Column({ default: 'everyone' })
-  personalCallPolicy: string; // everyone | contacts | contacts_paid | paid | blocked
+  // Four-category call policy (see call/call-policy.ts). Each: free | paid | blocked.
+  // The six tiers are named combinations; anything else reads as 'custom'.
+  @Column({ default: 'free' })
+  contactsCallPolicy: string; // in your device contacts
 
   @Column({ default: 'paid' })
-  businessCallPolicy: string; // free | paid | blocked
+  businessCallPolicy: string; // an identified business
+
+  @Column({ default: 'free' })
+  newCallPolicy: string; // first-time caller (has caller-ID, not a contact)
+
+  @Column({ default: 'free' })
+  unknownCallPolicy: string; // no caller-ID (private/withheld/unregistered)
 
   // JSON array of { dayOfWeek: 0–6, startTime: "HH:mm", endTime: "HH:mm" }; empty = no restriction
   @Column({ type: 'simple-json', default: '[]' })
