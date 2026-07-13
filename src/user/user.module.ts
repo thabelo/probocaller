@@ -5,6 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 import { User } from './user.entity';
 import { UserService } from './user.service';
 import { UserController } from './user.controller';
+import { ExternalLookupRateLimiter } from './external-lookup-rate-limiter';
 import { JwtStrategy } from '../auth/jwt.strategy';
 import { BusinessModule } from '../business/business.module';
 import { TransactionModule } from '../transaction/transaction.module';
@@ -27,8 +28,15 @@ import { JWT_SECRET } from '../app.module';
     forwardRef(() => DataBrokerModule),
     LookupModule,
   ],
-  providers: [UserService, JwtStrategy],
+  providers: [
+    UserService,
+    JwtStrategy,
+    // Factory-provided so its numeric/clock constructor args aren't injected.
+    { provide: ExternalLookupRateLimiter, useFactory: () => new ExternalLookupRateLimiter() },
+  ],
   controllers: [UserController],
-  exports: [UserService],
+  // Export the limiter too: UserController is also declared in AppModule's
+  // controllers, so its dependencies must be resolvable in AppModule's scope.
+  exports: [UserService, ExternalLookupRateLimiter],
 })
 export class UserModule {}

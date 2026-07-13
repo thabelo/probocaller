@@ -11,6 +11,7 @@ import { BusinessService } from '../business/business.service';
 import { TransactionService } from '../transaction/transaction.service';
 import { DataBrokerService } from '../data-broker/data-broker.service';
 import { LookupService } from '../lookup/lookup.service';
+import { ExternalLookupRateLimiter } from './external-lookup-rate-limiter';
 
 @ApiTags('users')
 @Controller('user')
@@ -21,6 +22,7 @@ export class UserController {
     private readonly transactionService: TransactionService,
     private readonly dataBrokerService: DataBrokerService,
     private readonly lookupService: LookupService,
+    private readonly externalLookupLimiter: ExternalLookupRateLimiter,
   ) {}
 
   // ── Admin-only: returns the full user list with PII. ──────────────────
@@ -192,9 +194,19 @@ export class UserController {
     // name is external data: flag it non-cacheable so the app shows it live but
     // never persists it (provider ToS). resolveExternalName honors suppression and
     // records the billable lookup; it fails soft (null) so it never blocks a ring.
+    //
+    // Two guards before we spend a billable lookup:
+    //  1. Only for clients that advertise support (header) — older app builds can't
+    //     honor cacheable:false, so they'd wrongly persist the external name.
+    //  2. Per-user rate limit — an unknown looping caller can't rack up cost.
+    const clientSupportsExternal = req.headers?.['x-supports-external-caller-name'] === '1';
     let name = resolvedProfile?.companyName || user.name;
     let externalName = false;
-    if (!isRegistered) {
+    if (
+      !isRegistered &&
+      clientSupportsExternal &&
+      this.externalLookupLimiter.tryAcquire(String(req.user.userId))
+    ) {
       const ext = await this.lookupService.resolveExternalName(phoneNumber).catch(() => null);
       if (ext) {
         name = ext;
