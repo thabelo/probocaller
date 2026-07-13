@@ -115,6 +115,15 @@ describe('DataBrokerService', () => {
       expect(saved.callPermissionMode).toBe('custom'); // effective is off-preset
       expect(saved.callBasePreset).toBe('all_paid_biz'); // base unchanged by an override
     });
+
+    it('persists custom rule names and returns them', async () => {
+      const user = mockUser();
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
+      const result = await service.updatePreferences(1, { newCallPolicy: 'blocked', callRuleNames: { newCaller: 'No strangers' } });
+      expect(userRepo.save.mock.calls[0][0].callRuleNames).toEqual({ newCaller: 'No strangers' });
+      expect(result.callRuleNames).toEqual({ newCaller: 'No strangers' });
+    });
   });
 
   describe('respondToRequest — Pay-to-Contact settlement', () => {

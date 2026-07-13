@@ -1,4 +1,4 @@
-import { IsString, IsIn, IsBoolean, IsArray, IsOptional, ValidateNested, IsInt, Min, Max, Matches } from 'class-validator';
+import { IsString, IsIn, IsBoolean, IsArray, IsOptional, ValidateNested, IsInt, Min, Max, Matches, IsObject } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
 
@@ -53,6 +53,12 @@ export class UpdatePrivacyPreferencesDto {
   @IsString()
   @IsIn(['free', 'paid', 'blocked'])
   unknownCallPolicy?: string;
+
+  // Friendly names for custom rules, keyed by category. e.g. { newCaller: 'No strangers' }.
+  @ApiPropertyOptional({ type: 'object', additionalProperties: { type: 'string' } })
+  @IsOptional()
+  @IsObject()
+  callRuleNames?: Record<string, string>;
 
   @ApiPropertyOptional()
   @IsOptional()

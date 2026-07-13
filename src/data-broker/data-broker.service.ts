@@ -42,6 +42,7 @@ export class DataBrokerService {
       callPermissionMode: presetFor(policy),
       // The base tier the user selected; custom rules are overrides on top of it.
       callBasePreset: user.callBasePreset || 'all_paid_biz',
+      callRuleNames: user.callRuleNames || {},
       contactsCallPolicy: policy.contacts,
       businessCallPolicy: policy.business,
       newCallPolicy: policy.newCaller,
@@ -81,6 +82,7 @@ export class DataBrokerService {
     if (dto.businessCallPolicy !== undefined) policy.business = dto.businessCallPolicy as any;
     if (dto.newCallPolicy !== undefined) policy.newCaller = dto.newCallPolicy as any;
     if (dto.unknownCallPolicy !== undefined) policy.unknown = dto.unknownCallPolicy as any;
+    if (dto.callRuleNames !== undefined) user.callRuleNames = dto.callRuleNames;
     user.contactsCallPolicy = policy.contacts;
     user.businessCallPolicy = policy.business;
     user.newCallPolicy = policy.newCaller;

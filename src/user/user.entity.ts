@@ -61,6 +61,11 @@ export class User {
   @Column({ default: 'free' })
   unknownCallPolicy: string; // no caller-ID (private/withheld/unregistered)
 
+  // Friendly name for each custom override rule, keyed by category
+  // (contacts | business | newCaller | unknown). e.g. { newCaller: 'No strangers' }.
+  @Column({ type: 'simple-json', default: '{}' })
+  callRuleNames: Record<string, string>;
+
   // JSON array of { dayOfWeek: 0–6, startTime: "HH:mm", endTime: "HH:mm" }; empty = no restriction
   @Column({ type: 'simple-json', default: '[]' })
   allowedCallWindows: { dayOfWeek: number; startTime: string; endTime: string }[];
