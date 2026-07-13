@@ -9,8 +9,9 @@ describe('UserController — findUser caller-ID lookup: permittedForYou', () => 
     const businessService: any = { resolveCallerIdentity: jest.fn(), getProfileByUserId: jest.fn() };
     const transactionService: any = {};
     const dataBrokerService: any = { isBusinessCallerAllowed: jest.fn() };
-    const controller = new UserController(userService, businessService, transactionService, dataBrokerService);
-    return { controller, userService, businessService, dataBrokerService };
+    const lookupService: any = { resolveExternalName: jest.fn().mockResolvedValue(null) };
+    const controller = new UserController(userService, businessService, transactionService, dataBrokerService, lookupService);
+    return { controller, userService, businessService, dataBrokerService, lookupService };
   };
 
   const businessCallerUser = {
@@ -43,5 +44,43 @@ describe('UserController — findUser caller-ID lookup: permittedForYou', () => 
 
     expect(res.permittedForYou).toBe(true);
     expect(dataBrokerService.isBusinessCallerAllowed).not.toHaveBeenCalled();
+  });
+
+  // For an unknown number (not registered, no business), fall back to the external
+  // provider so the app shows a business name instead of "Unknown". The name is
+  // external data — flag it non-cacheable so the app never persists it (ToS).
+  it('enriches an unknown caller with an external business name, marked non-cacheable', async () => {
+    const { controller, userService, businessService, lookupService } = makeController();
+    userService.findOrCreatePlaceholder.mockResolvedValue({
+      id: 12, phoneNumber: '+27115292888', email: '+27115292888@probo.local',
+      name: 'Unknown', isBusiness: false, isSpam: false, walletBalance: 0,
+    });
+    businessService.resolveCallerIdentity.mockResolvedValue(null);
+    businessService.getProfileByUserId.mockResolvedValue(null);
+    lookupService.resolveExternalName.mockResolvedValue('Discovery Health Franchise Office');
+
+    const res: any = await controller.findUser('+27115292888', { user: { userId: 5 } } as any);
+
+    expect(res.name).toBe('Discovery Health Franchise Office');
+    expect(res.externalName).toBe(true);
+    expect(res.cacheable).toBe(false);
+    expect(res.isRegistered).toBe(false);
+    expect(lookupService.resolveExternalName).toHaveBeenCalledWith('+27115292888');
+  });
+
+  it('does not query the external provider for a registered/business caller', async () => {
+    const { controller, userService, businessService, lookupService } = makeController();
+    userService.findOrCreatePlaceholder.mockResolvedValue(businessCallerUser);
+    businessService.resolveCallerIdentity.mockResolvedValue({
+      isBusiness: true, businessId: 3,
+      businessProfile: { companyName: 'Kalahari', industry: 'Finance', verified: true },
+    });
+    businessService.getProfileByUserId.mockResolvedValue(null);
+
+    const res: any = await controller.findUser('5091234567', { user: { userId: 5 } } as any);
+
+    expect(res.name).toBe('Kalahari');
+    expect(res.cacheable).not.toBe(false);
+    expect(lookupService.resolveExternalName).not.toHaveBeenCalled();
   });
 });

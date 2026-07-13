@@ -10,6 +10,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { BusinessService } from '../business/business.service';
 import { TransactionService } from '../transaction/transaction.service';
 import { DataBrokerService } from '../data-broker/data-broker.service';
+import { LookupService } from '../lookup/lookup.service';
 
 @ApiTags('users')
 @Controller('user')
@@ -19,6 +20,7 @@ export class UserController {
     private readonly businessService: BusinessService,
     private readonly transactionService: TransactionService,
     private readonly dataBrokerService: DataBrokerService,
+    private readonly lookupService: LookupService,
   ) {}
 
   // ── Admin-only: returns the full user list with PII. ──────────────────
@@ -185,10 +187,28 @@ export class UserController {
     const isPlaceholderEmail = user.email === `${user.phoneNumber}@probo.local`;
     const isRegistered = (!isPlaceholderEmail && user.name !== 'Unknown') || !!callerIdentity;
 
+    // Unknown to us — fall back to the external provider (Google Places) for a
+    // public business name so the app shows something better than "Unknown". This
+    // name is external data: flag it non-cacheable so the app shows it live but
+    // never persists it (provider ToS). resolveExternalName honors suppression and
+    // records the billable lookup; it fails soft (null) so it never blocks a ring.
+    let name = resolvedProfile?.companyName || user.name;
+    let externalName = false;
+    if (!isRegistered) {
+      const ext = await this.lookupService.resolveExternalName(phoneNumber).catch(() => null);
+      if (ext) {
+        name = ext;
+        externalName = true;
+      }
+    }
+
     return {
       id: user.id,
       phoneNumber: user.phoneNumber,
-      name: resolvedProfile?.companyName || user.name,
+      name,
+      externalName,
+      // External names must not be persisted by the client (provider ToS).
+      cacheable: !externalName,
       isSpam: user.isSpam,
       isBusiness: effectivelyBusiness,
       isRegistered,

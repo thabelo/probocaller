@@ -156,6 +156,43 @@ describe('LookupService — external number-intelligence fallback', () => {
   });
 });
 
+// resolveExternalName is the lean caller-ID path the mobile app uses (via
+// user.controller): resolve a public business name for an unknown number, honoring
+// suppression (POPIA) and recording the billable lookup, without the full public
+// lookup payload.
+describe('LookupService — resolveExternalName (app caller-ID)', () => {
+  function make(providerResult: any, opts: { suppressed?: boolean } = {}) {
+    const userRepo: any = {
+      findOne: jest.fn().mockResolvedValue(null),
+      createQueryBuilder: jest.fn(() => ({ where: jest.fn().mockReturnThis(), getCount: jest.fn().mockResolvedValue(0) })),
+    };
+    const businessService: any = { resolveCallerIdentity: jest.fn() };
+    const suppression: any = { isSuppressed: jest.fn().mockResolvedValue(!!opts.suppressed) };
+    const provider: any = { lookup: jest.fn().mockResolvedValue(providerResult) };
+    const reverseLookup: any = { record: jest.fn().mockResolvedValue(undefined) };
+    return { svc: new LookupService(userRepo, businessService, suppression, provider, reverseLookup), provider, reverseLookup };
+  }
+
+  it('returns the external business name for an unknown ZA number (E.164) and records billing', async () => {
+    const { svc, provider, reverseLookup } = make({ callerName: 'Discovery Bank' });
+    const name = await svc.resolveExternalName('0115292888');
+    expect(name).toBe('Discovery Bank');
+    expect(provider.lookup).toHaveBeenCalledWith('+27115292888');
+    expect(reverseLookup.record).toHaveBeenCalledWith(expect.objectContaining({ phoneNumber: '+27115292888' }));
+  });
+
+  it('returns null and never queries the provider for a suppressed number (POPIA)', async () => {
+    const { svc, provider } = make({ callerName: 'X' }, { suppressed: true });
+    expect(await svc.resolveExternalName('+27115292888')).toBeNull();
+    expect(provider.lookup).not.toHaveBeenCalled();
+  });
+
+  it('returns null when the provider has no name', async () => {
+    const { svc } = make(null);
+    expect(await svc.resolveExternalName('+27115292888')).toBeNull();
+  });
+});
+
 // Placeholder rows (auto-created by caller-ID lookups: name 'Unknown' + a
 // @probo.local email) are NOT real registrations. They must read as unregistered
 // so the external fallback runs — otherwise a looked-up unknown number reads as

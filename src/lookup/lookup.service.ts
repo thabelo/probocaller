@@ -93,6 +93,34 @@ export class LookupService {
       .getCount();
   }
 
+  /**
+   * Lean caller-ID path for the mobile app (via user.controller): resolve a public
+   * business name for an unknown number from the external provider. Honors
+   * suppression (POPIA — suppressed numbers are never sent to the provider),
+   * normalizes ZA-local numbers to E.164, and records the billable lookup. Returns
+   * null when suppressed, when no provider is configured, or when nothing matched.
+   *
+   * The returned name is external (Google) data: it may be shown live but must NOT
+   * be persisted/cached by the caller (provider ToS).
+   */
+  async resolveExternalName(rawPhone: string): Promise<string | null> {
+    const normalized = this.normalize(rawPhone || '');
+    if (!/^\+?\d{5,15}$/.test(normalized)) return null;
+    if (!this.numberIntel) return null;
+    if (await this.suppression.isSuppressed(normalized)) return null;
+
+    const e164 = normalized.startsWith('+')
+      ? normalized
+      : this.toIntlVariant(normalized) ?? '+' + normalized;
+    const external = await this.numberIntel.lookup(e164);
+    if (this.reverseLookup) {
+      this.reverseLookup
+        .record({ phoneNumber: e164, result: external, cached: false })
+        .catch(() => {});
+    }
+    return external?.callerName ?? null;
+  }
+
   async lookup(rawPhone: string): Promise<LookupResult> {
     const normalized = this.normalize(rawPhone || '');
 
