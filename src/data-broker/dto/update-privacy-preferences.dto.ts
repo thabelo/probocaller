@@ -16,10 +16,10 @@ class CallWindowDto {
 }
 
 export class UpdatePrivacyPreferencesDto {
-  @ApiPropertyOptional({ enum: ['all', 'approved_only', 'none'] })
+  @ApiPropertyOptional({ enum: ['everyone', 'all', 'approved_only', 'none'] })
   @IsOptional()
   @IsString()
-  @IsIn(['all', 'approved_only', 'none'])
+  @IsIn(['everyone', 'all', 'approved_only', 'none'])
   callPermissionMode?: string;
 
   @ApiPropertyOptional()

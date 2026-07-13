@@ -183,6 +183,11 @@ describe('DataBrokerService', () => {
       expect(await service.isBusinessCallerAllowed(5, 3)).toBe(true);
     });
 
+    it('allows the caller under EVERYONE (personal + paid business)', async () => {
+      userRepo.findOne.mockResolvedValue(mockUser({ id: 5, callPermissionMode: 'everyone' }));
+      expect(await service.isBusinessCallerAllowed(5, 3)).toBe(true);
+    });
+
     it('rejects the caller when the recipient accepts NO business calls', async () => {
       userRepo.findOne.mockResolvedValue(mockUser({ id: 5, callPermissionMode: 'none' }));
       expect(await service.isBusinessCallerAllowed(5, 3)).toBe(false);
