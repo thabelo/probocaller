@@ -168,9 +168,11 @@ export class CallService {
       return { call: blockedCall, blocked: true, voiceNote: true, message: 'This person is not accepting calls at this time.' };
     }
 
-    // Data broker: check the recipient's call permission mode
-    const permMode = recipient.callPermissionMode || 'all';
-    if (permMode === 'none') {
+    // Data broker: business callers are gated by the recipient's business dial —
+    // blocked → reject; free → ring but never charge (tier 1 "All calls"); paid →
+    // charge per second. (callerBusinessUserId identifies the calling business.)
+    const businessPolicy = recipient.businessCallPolicy || 'paid';
+    if (businessPolicy === 'blocked') {
       const blockedCall = this.callRepository.create({
         ...attribution,
         fromUserId,
@@ -183,24 +185,8 @@ export class CallService {
       await this.callRepository.save(blockedCall);
       return { call: blockedCall, blocked: true, voiceNote: true, message: 'This person is not accepting calls through Probo Caller.' };
     }
-    if (permMode === 'approved_only') {
-      const callerBusiness = await this.businessRepository.findOne({ where: { userId: callerBusinessUserId } });
-      const hasApproval = callerBusiness
-        ? await this.dataBrokerService.hasApproval(callerBusiness.id, recipient.id)
-        : false;
-      if (!hasApproval) {
-        const blockedCall = this.callRepository.create({
-          fromUserId,
-          toUserId: toUser.id,
-          status: 'blocked',
-          ratePerSecond,
-          blockedReason: 'PERMISSION_REQUIRED',
-          completedAt: new Date(),
-        });
-        await this.callRepository.save(blockedCall);
-        return { call: blockedCall, blocked: true, voiceNote: true, message: 'You need call permission from this user. Request it via the Data Broker portal.' };
-      }
-    }
+    // Tier 1: business rings free — the call carries a zero rate, so no one is charged.
+    const chargeRate = businessPolicy === 'free' ? 0 : ratePerSecond;
 
     const recipientBlocksCaller = fromUser.spamList?.includes(toUser.phoneNumber);
     if (recipientBlocksCaller) {
@@ -218,7 +204,7 @@ export class CallService {
       return { call: blockedCall, blocked: true, voiceNote: false, message: 'You have blocked this number.' };
     }
 
-    const call = this.callRepository.create({ ...attribution, fromUserId, toUserId: toUser.id, status: 'initiated', ratePerSecond });
+    const call = this.callRepository.create({ ...attribution, fromUserId, toUserId: toUser.id, status: 'initiated', ratePerSecond: chargeRate });
     await this.callRepository.save(call);
 
     return { call, blocked: false, voiceNote: false, message: 'Call initiated' };

@@ -37,9 +37,18 @@ export class User {
   @Column({ type: 'simple-json', default: '[]' })
   notifications: { id: number; message: string; timestamp: Date; read: boolean }[];
 
-  // Data broker: 'all' lets anyone call | 'approved_only' requires prior permission | 'none' blocks all business calls
-  @Column({ default: 'all' })
+  // Call-permission preset name (one of the six tiers) or 'custom'. Derived from the
+  // two policy dials below, which are the source of truth for gating.
+  @Column({ default: 'all_paid_biz' })
   callPermissionMode: string;
+
+  // Two-dial call policy (see call/call-policy.ts). personal governs individuals,
+  // business governs businesses. The six tiers are named combinations.
+  @Column({ default: 'everyone' })
+  personalCallPolicy: string; // everyone | contacts | contacts_paid | paid | blocked
+
+  @Column({ default: 'paid' })
+  businessCallPolicy: string; // free | paid | blocked
 
   // JSON array of { dayOfWeek: 0–6, startTime: "HH:mm", endTime: "HH:mm" }; empty = no restriction
   @Column({ type: 'simple-json', default: '[]' })

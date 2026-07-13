@@ -477,8 +477,8 @@ describe('CallService — a business is billed only when the user allows the cal
   const hasApproval = jest.fn();
 
   const business = mockUser({ id: 1, isBusiness: true, walletBalance: 100 }); // the calling business
-  const userWithMode = (mode: string) =>
-    mockUser({ id: 2, phoneNumber: '+27829999999', isBusiness: false, walletBalance: 0, callPermissionMode: mode });
+  const userWithMode = (biz: string) =>
+    mockUser({ id: 2, phoneNumber: '+27829999999', isBusiness: false, walletBalance: 0, businessCallPolicy: biz });
 
   beforeEach(async () => {
     hasApproval.mockReset();
@@ -506,37 +506,28 @@ describe('CallService — a business is billed only when the user allows the cal
   const wire = (mode: string) =>
     userRepo.findOne.mockResolvedValueOnce(business).mockResolvedValueOnce(userWithMode(mode));
 
-  it('lets the call through to billing when the user allows ALL calls', async () => {
-    wire('all');
+  it('lets the call through to billing when the business dial is PAID', async () => {
+    wire('paid');
     const res = await service.initiateCall(1, '+27829999999');
     expect(res.blocked).toBe(false);
     expect(res.call.status).toBe('initiated'); // billable on completion
+    expect(Number(res.call.ratePerSecond)).toBeGreaterThan(0);
   });
 
-  it('blocks the call — and never bills — when the user accepts NO business calls', async () => {
-    wire('none');
+  it('blocks the call — and never bills — when the business dial is BLOCKED', async () => {
+    wire('blocked');
     const res = await service.initiateCall(1, '+27829999999');
     expect(res.blocked).toBe(true);
     expect(res.call.status).toBe('blocked');
     expect(res.call.blockedReason).toBe('PERMISSION_REQUIRED');
   });
 
-  it('blocks (no bill) under APPROVED-ONLY when the business is not approved', async () => {
-    wire('approved_only');
-    businessRepo.findOne.mockResolvedValue({ id: 7, userId: 1 }); // caller's business
-    hasApproval.mockResolvedValue(false);
-    const res = await service.initiateCall(1, '+27829999999');
-    expect(res.blocked).toBe(true);
-    expect(res.call.blockedReason).toBe('PERMISSION_REQUIRED');
-  });
-
-  it('lets an APPROVED business through to billing under approved-only', async () => {
-    wire('approved_only');
-    businessRepo.findOne.mockResolvedValue({ id: 7, userId: 1 });
-    hasApproval.mockResolvedValue(true);
+  it('tier 1: business dial FREE lets the call through at a zero rate (no earnings)', async () => {
+    wire('free');
     const res = await service.initiateCall(1, '+27829999999');
     expect(res.blocked).toBe(false);
     expect(res.call.status).toBe('initiated');
+    expect(Number(res.call.ratePerSecond)).toBe(0);
   });
 
   it('completeCall refuses a permission-blocked call, so no money moves', async () => {
@@ -558,8 +549,8 @@ describe('CallService — incoming direction: the RECIPIENT user\'s permission i
   const hasApproval = jest.fn();
 
   const businessCaller = mockUser({ id: 2, phoneNumber: '5091234567', isBusiness: true, walletBalance: 50 });
-  const recipient = (mode: string) =>
-    mockUser({ id: 1, phoneNumber: '+27821111111', isBusiness: false, walletBalance: 0, callPermissionMode: mode });
+  const recipient = (biz: string) =>
+    mockUser({ id: 1, phoneNumber: '+27821111111', isBusiness: false, walletBalance: 0, businessCallPolicy: biz });
 
   beforeEach(async () => {
     hasApproval.mockReset();
@@ -587,33 +578,15 @@ describe('CallService — incoming direction: the RECIPIENT user\'s permission i
   const wire = (mode: string) =>
     userRepo.findOne.mockResolvedValueOnce(recipient(mode)).mockResolvedValueOnce(businessCaller);
 
-  it('blocks an incoming business call when the recipient accepts NO business calls', async () => {
-    wire('none');
+  it('blocks an incoming business call when the recipient BLOCKS business', async () => {
+    wire('blocked');
     const res = await service.initiateCall(1, '5091234567');
     expect(res.blocked).toBe(true);
     expect(res.call.blockedReason).toBe('PERMISSION_REQUIRED');
   });
 
-  it('blocks incoming under APPROVED_ONLY when the calling business is not approved', async () => {
-    wire('approved_only');
-    businessRepo.findOne.mockResolvedValue({ id: 9, userId: 2 }); // the CALLER's business (userId = toUser.id)
-    hasApproval.mockResolvedValue(false);
-    const res = await service.initiateCall(1, '5091234567');
-    expect(res.blocked).toBe(true);
-    expect(res.call.blockedReason).toBe('PERMISSION_REQUIRED');
-  });
-
-  it('lets the incoming call through when the recipient allows ALL calls', async () => {
-    wire('all');
-    const res = await service.initiateCall(1, '5091234567');
-    expect(res.blocked).toBe(false);
-    expect(res.call.status).toBe('initiated');
-  });
-
-  it('lets an APPROVED business through under approved_only', async () => {
-    wire('approved_only');
-    businessRepo.findOne.mockResolvedValue({ id: 9, userId: 2 });
-    hasApproval.mockResolvedValue(true);
+  it('lets the incoming call through when the recipient allows PAID business', async () => {
+    wire('paid');
     const res = await service.initiateCall(1, '5091234567');
     expect(res.blocked).toBe(false);
     expect(res.call.status).toBe('initiated');

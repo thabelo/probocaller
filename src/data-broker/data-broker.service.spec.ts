@@ -53,13 +53,15 @@ describe('DataBrokerService', () => {
   });
 
   describe('getPreferences', () => {
-    it('returns dataShareEnabled and callPermissionMode for the user', async () => {
-      const user = mockUser({ dataShareEnabled: true, callPermissionMode: 'approved_only' });
+    it('returns the two dials and the preset derived from them', async () => {
+      const user = mockUser({ dataShareEnabled: true, personalCallPolicy: 'contacts', businessCallPolicy: 'paid' });
       userRepo.findOne.mockResolvedValue(user);
 
       const result = await service.getPreferences(1);
       expect(result.dataShareEnabled).toBe(true);
-      expect(result.callPermissionMode).toBe('approved_only');
+      expect(result.personalCallPolicy).toBe('contacts');
+      expect(result.businessCallPolicy).toBe('paid');
+      expect(result.callPermissionMode).toBe('contacts_paid_biz'); // derived preset
     });
   });
 
@@ -83,14 +85,26 @@ describe('DataBrokerService', () => {
       expect(result.incognitoEnabled).toBe(true);
     });
 
-    it('saves valid callPermissionMode', async () => {
-      // DTO validation rejects invalid values at the controller layer.
-      // The service itself saves whatever arrives — test that it persists.
+    it('maps a preset to the two dials and stores the derived mode', async () => {
       const user = mockUser();
-      userRepo.findOne.mockResolvedValueOnce(user).mockResolvedValueOnce(user);
+      userRepo.findOne.mockResolvedValue(user);
       userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
-      await service.updatePreferences(1, { callPermissionMode: 'approved_only' });
-      expect(userRepo.save.mock.calls[0][0].callPermissionMode).toBe('approved_only');
+      await service.updatePreferences(1, { callPermissionMode: 'contacts_paid_biz' });
+      const saved = userRepo.save.mock.calls[0][0];
+      expect(saved.personalCallPolicy).toBe('contacts');
+      expect(saved.businessCallPolicy).toBe('paid');
+      expect(saved.callPermissionMode).toBe('contacts_paid_biz');
+    });
+
+    it('accepts custom dials and derives callPermissionMode=custom when off-preset', async () => {
+      const user = mockUser();
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
+      await service.updatePreferences(1, { personalCallPolicy: 'contacts_paid', businessCallPolicy: 'free' });
+      const saved = userRepo.save.mock.calls[0][0];
+      expect(saved.personalCallPolicy).toBe('contacts_paid');
+      expect(saved.businessCallPolicy).toBe('free');
+      expect(saved.callPermissionMode).toBe('custom');
     });
   });
 
@@ -177,37 +191,20 @@ describe('DataBrokerService', () => {
   // Whether a business caller may reach a recipient, per the recipient's own
   // call-permission mode. Used to auto-reject a disallowed incoming call before
   // it rings — mirrors the gate in CallService.initiateCall.
-  describe('isBusinessCallerAllowed', () => {
-    it('allows the caller when the recipient accepts ALL calls', async () => {
-      userRepo.findOne.mockResolvedValue(mockUser({ id: 5, callPermissionMode: 'all' }));
+  describe('isBusinessCallerAllowed — gated on the business dial', () => {
+    it('allows a business caller when the business dial is paid', async () => {
+      userRepo.findOne.mockResolvedValue(mockUser({ id: 5, businessCallPolicy: 'paid' }));
       expect(await service.isBusinessCallerAllowed(5, 3)).toBe(true);
     });
 
-    it('allows the caller under EVERYONE (personal + paid business)', async () => {
-      userRepo.findOne.mockResolvedValue(mockUser({ id: 5, callPermissionMode: 'everyone' }));
+    it('allows a business caller when the business dial is free (tier 1, no charge)', async () => {
+      userRepo.findOne.mockResolvedValue(mockUser({ id: 5, businessCallPolicy: 'free' }));
       expect(await service.isBusinessCallerAllowed(5, 3)).toBe(true);
     });
 
-    it('rejects the caller when the recipient accepts NO business calls', async () => {
-      userRepo.findOne.mockResolvedValue(mockUser({ id: 5, callPermissionMode: 'none' }));
+    it('rejects a business caller when the business dial is blocked', async () => {
+      userRepo.findOne.mockResolvedValue(mockUser({ id: 5, businessCallPolicy: 'blocked' }));
       expect(await service.isBusinessCallerAllowed(5, 3)).toBe(false);
-    });
-
-    it('under APPROVED_ONLY, allows only an approved business', async () => {
-      userRepo.findOne.mockResolvedValue(mockUser({ id: 5, callPermissionMode: 'approved_only' }));
-      permissionRepo.findOne.mockResolvedValue({ id: 1, businessId: 3, userId: 5, status: 'approved' });
-      expect(await service.isBusinessCallerAllowed(5, 3)).toBe(true);
-    });
-
-    it('under APPROVED_ONLY, rejects an unapproved business', async () => {
-      userRepo.findOne.mockResolvedValue(mockUser({ id: 5, callPermissionMode: 'approved_only' }));
-      permissionRepo.findOne.mockResolvedValue(null);
-      expect(await service.isBusinessCallerAllowed(5, 3)).toBe(false);
-    });
-
-    it('under APPROVED_ONLY with no identifiable business, rejects', async () => {
-      userRepo.findOne.mockResolvedValue(mockUser({ id: 5, callPermissionMode: 'approved_only' }));
-      expect(await service.isBusinessCallerAllowed(5, null)).toBe(false);
     });
   });
 });

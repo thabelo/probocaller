@@ -7,6 +7,14 @@ import { CallPermissionRequest } from './call-permission-request.entity';
 import { UpdatePrivacyPreferencesDto } from './dto/update-privacy-preferences.dto';
 import { RequestCallPermissionDto } from './dto/request-call-permission.dto';
 import { PayToContactService } from '../pay-to-contact/pay-to-contact.service';
+import { presetFor, policyForPreset } from '../call/call-policy';
+
+// Legacy callPermissionMode values → new preset names (mapped on save).
+const LEGACY_MODE_ALIAS: Record<string, string> = {
+  all: 'all_paid_biz',
+  everyone: 'all_paid_biz',
+  approved_only: 'contacts_paid_biz',
+};
 
 @Injectable()
 export class DataBrokerService {
@@ -23,8 +31,13 @@ export class DataBrokerService {
   async getPreferences(userId: number) {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
+    const personal = (user.personalCallPolicy || 'everyone') as any;
+    const business = (user.businessCallPolicy || 'paid') as any;
     return {
-      callPermissionMode: user.callPermissionMode,
+      // Preset name is always derived from the two dials, so it never drifts.
+      callPermissionMode: presetFor({ personal, business }),
+      personalCallPolicy: personal,
+      businessCallPolicy: business,
       allowedCallWindows: user.allowedCallWindows || [],
       dataShareEnabled: user.dataShareEnabled,
       dataCategories: user.dataCategories || [],
@@ -35,7 +48,26 @@ export class DataBrokerService {
   async updatePreferences(userId: number, dto: UpdatePrivacyPreferencesDto) {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
-    if (dto.callPermissionMode !== undefined) user.callPermissionMode = dto.callPermissionMode;
+
+    // Resolve the two dials from a preset first, then let explicit dials override.
+    let personal = user.personalCallPolicy || 'everyone';
+    let business = user.businessCallPolicy || 'paid';
+    if (dto.callPermissionMode !== undefined) {
+      const preset = policyForPreset(LEGACY_MODE_ALIAS[dto.callPermissionMode] ?? dto.callPermissionMode);
+      if (preset) {
+        personal = preset.personal;
+        business = preset.business;
+      } else if (dto.callPermissionMode === 'none') {
+        personal = 'everyone';
+        business = 'blocked';
+      }
+    }
+    if (dto.personalCallPolicy !== undefined) personal = dto.personalCallPolicy;
+    if (dto.businessCallPolicy !== undefined) business = dto.businessCallPolicy;
+    user.personalCallPolicy = personal;
+    user.businessCallPolicy = business;
+    user.callPermissionMode = presetFor({ personal: personal as any, business: business as any });
+
     if (dto.allowedCallWindows !== undefined) user.allowedCallWindows = dto.allowedCallWindows;
     if (dto.dataShareEnabled !== undefined) user.dataShareEnabled = dto.dataShareEnabled;
     if (dto.dataCategories !== undefined) user.dataCategories = dto.dataCategories;
@@ -161,14 +193,12 @@ export class DataBrokerService {
    * call-permission mode. Lets the incoming-call UI auto-reject a disallowed
    * business call before it rings — mirrors the gate in CallService.initiateCall.
    */
-  async isBusinessCallerAllowed(recipientUserId: number, callerBusinessId: number | null): Promise<boolean> {
+  async isBusinessCallerAllowed(recipientUserId: number, _callerBusinessId: number | null): Promise<boolean> {
     const recipient = await this.userRepo.findOne({ where: { id: recipientUserId } });
-    const mode = recipient?.callPermissionMode || 'all';
-    if (mode === 'none') return false;
-    if (mode === 'approved_only') {
-      return callerBusinessId != null && (await this.hasApproval(callerBusinessId, recipientUserId));
-    }
-    return true;
+    // Business callers are gated purely by the business dial: blocked → rejected,
+    // free/paid → allowed to ring (free vs paid only affects billing).
+    const business = recipient?.businessCallPolicy || 'paid';
+    return business !== 'blocked';
   }
 
   async adminGetAllRequests() {

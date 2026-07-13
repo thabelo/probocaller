@@ -16,11 +16,30 @@ class CallWindowDto {
 }
 
 export class UpdatePrivacyPreferencesDto {
-  @ApiPropertyOptional({ enum: ['everyone', 'all', 'approved_only', 'none'] })
+  // One of the six tier presets, 'custom', or a legacy value (mapped on save).
+  @ApiPropertyOptional({
+    enum: ['all_calls', 'all_paid_biz', 'contacts_paid_biz', 'paid_all', 'contacts_only', 'dnd', 'custom'],
+  })
   @IsOptional()
   @IsString()
-  @IsIn(['everyone', 'all', 'approved_only', 'none'])
+  @IsIn([
+    'all_calls', 'all_paid_biz', 'contacts_paid_biz', 'paid_all', 'contacts_only', 'dnd', 'custom',
+    'everyone', 'all', 'approved_only', 'none', // legacy — mapped to dials on save
+  ])
   callPermissionMode?: string;
+
+  // Custom dials (see call/call-policy.ts). Take precedence over a preset when sent.
+  @ApiPropertyOptional({ enum: ['everyone', 'contacts', 'contacts_paid', 'paid', 'blocked'] })
+  @IsOptional()
+  @IsString()
+  @IsIn(['everyone', 'contacts', 'contacts_paid', 'paid', 'blocked'])
+  personalCallPolicy?: string;
+
+  @ApiPropertyOptional({ enum: ['free', 'paid', 'blocked'] })
+  @IsOptional()
+  @IsString()
+  @IsIn(['free', 'paid', 'blocked'])
+  businessCallPolicy?: string;
 
   @ApiPropertyOptional()
   @IsOptional()
