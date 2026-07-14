@@ -18,8 +18,12 @@ describe('UpdatePrivacyPreferencesDto — call-policy fields', () => {
     })).toHaveLength(0);
   });
 
-  it('accepts a callRuleNames map', async () => {
-    expect(await errorsFor({ newCallPolicy: 'blocked', callRuleNames: { newCaller: 'No strangers' } })).toHaveLength(0);
+  it('accepts a single callRuleName string for the custom group', async () => {
+    expect(await errorsFor({ newCallPolicy: 'blocked', callRuleName: 'No strangers' })).toHaveLength(0);
+  });
+
+  it('rejects a non-string callRuleName', async () => {
+    expect((await errorsFor({ callRuleName: { newCaller: 'x' } })).length).toBeGreaterThan(0);
   });
 
   it('rejects an unknown category policy value', async () => {

@@ -116,45 +116,57 @@ describe('DataBrokerService', () => {
       expect(saved.callBasePreset).toBe('all_paid_biz'); // base unchanged by an override
     });
 
-    it('persists custom rule names and returns them', async () => {
+    it('persists the custom-group name and returns it', async () => {
       const user = mockUser();
       userRepo.findOne.mockResolvedValue(user);
       userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
-      const result = await service.updatePreferences(1, { newCallPolicy: 'blocked', callRuleNames: { newCaller: 'No strangers' } });
-      expect(userRepo.save.mock.calls[0][0].callRuleNames).toEqual({ newCaller: 'No strangers' });
-      expect(result.callRuleNames).toEqual({ newCaller: 'No strangers' });
+      const result = await service.updatePreferences(1, { newCallPolicy: 'blocked', callRuleName: 'No strangers' });
+      expect(userRepo.save.mock.calls[0][0].callRuleName).toBe('No strangers');
+      expect(result.callRuleName).toBe('No strangers');
     });
 
-    it('drops all rule names when a clean preset is selected (no orphaned names)', async () => {
-      // A named override on the business category…
+    it('clears the custom-group name when a preset is selected (no overrides left)', async () => {
+      // A named custom group overriding business…
       const user = mockUser({
         callBasePreset: 'all_paid_biz',
         contactsCallPolicy: 'free', businessCallPolicy: 'blocked', newCallPolicy: 'free', unknownCallPolicy: 'free',
-        callRuleNames: { business: 'No cold callers' },
+        callRuleName: 'No cold callers',
       });
       userRepo.findOne.mockResolvedValue(user);
       userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
-      // …then the user picks a plain preset (without resending callRuleNames).
+      // …then the user picks a plain preset (without resending callRuleName).
       const result = await service.updatePreferences(1, { callPermissionMode: 'all_paid_biz' });
-      // Every category now matches the base, so no name may linger.
-      expect(userRepo.save.mock.calls[0][0].callRuleNames).toEqual({});
-      expect(result.callRuleNames).toEqual({});
+      // Every category now matches the base, so the group name may not linger.
+      expect(userRepo.save.mock.calls[0][0].callRuleName).toBe('');
+      expect(result.callRuleName).toBe('');
     });
 
-    it('prunes only the name of a category reverted to its base value', async () => {
-      // Two named overrides on an all_paid_biz base (business/new blocked).
+    it('clears the name when the last override is reverted', async () => {
+      // Single override (business blocked) with a group name.
+      const user = mockUser({
+        callBasePreset: 'all_paid_biz',
+        contactsCallPolicy: 'free', businessCallPolicy: 'blocked', newCallPolicy: 'free', unknownCallPolicy: 'free',
+        callRuleName: 'No cold callers',
+      });
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
+      // Revert business to base (paid); no overrides remain → name cleared.
+      await service.updatePreferences(1, { businessCallPolicy: 'paid' });
+      expect(userRepo.save.mock.calls[0][0].callRuleName).toBe('');
+    });
+
+    it('keeps the custom-group name while any override remains', async () => {
+      // Two overrides (business + new blocked) named as one group.
       const user = mockUser({
         callBasePreset: 'all_paid_biz',
         contactsCallPolicy: 'free', businessCallPolicy: 'blocked', newCallPolicy: 'blocked', unknownCallPolicy: 'free',
-        callRuleNames: { business: 'No cold callers', newCaller: 'No strangers' },
+        callRuleName: 'Strict',
       });
       userRepo.findOne.mockResolvedValue(user);
       userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
-      // Revert ONLY business to its base (paid); do NOT resend callRuleNames.
+      // Revert business only; new is still blocked (override remains) → name kept.
       await service.updatePreferences(1, { businessCallPolicy: 'paid' });
-      const saved = userRepo.save.mock.calls[0][0];
-      // business name pruned (now matches base); newCaller name kept (still an override).
-      expect(saved.callRuleNames).toEqual({ newCaller: 'No strangers' });
+      expect(userRepo.save.mock.calls[0][0].callRuleName).toBe('Strict');
     });
   });
 

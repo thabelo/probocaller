@@ -42,7 +42,8 @@ export class DataBrokerService {
       callPermissionMode: presetFor(policy),
       // The base tier the user selected; custom rules are overrides on top of it.
       callBasePreset: user.callBasePreset || 'all_paid_biz',
-      callRuleNames: user.callRuleNames || {},
+      // One name for the whole custom-rule group (empty when there are no overrides).
+      callRuleName: user.callRuleName || '',
       contactsCallPolicy: policy.contacts,
       businessCallPolicy: policy.business,
       newCallPolicy: policy.newCaller,
@@ -82,24 +83,21 @@ export class DataBrokerService {
     if (dto.businessCallPolicy !== undefined) policy.business = dto.businessCallPolicy as any;
     if (dto.newCallPolicy !== undefined) policy.newCaller = dto.newCallPolicy as any;
     if (dto.unknownCallPolicy !== undefined) policy.unknown = dto.unknownCallPolicy as any;
-    if (dto.callRuleNames !== undefined) user.callRuleNames = dto.callRuleNames;
+    if (dto.callRuleName !== undefined) user.callRuleName = dto.callRuleName;
     user.contactsCallPolicy = policy.contacts;
     user.businessCallPolicy = policy.business;
     user.newCallPolicy = policy.newCaller;
     user.unknownCallPolicy = policy.unknown;
     user.callPermissionMode = presetFor(policy);
 
-    // Reconcile rule names against the base preset: a name only makes sense for a
-    // category that actually overrides the base. Drop names for categories that now
-    // match the base — so selecting a preset or reverting an override can never leave
-    // an orphaned name, regardless of whether the client resent callRuleNames.
+    // The group name only means something while the custom group has at least one
+    // override. If every category now matches the base preset (a preset was picked,
+    // or the last override was reverted), clear the name so it can't linger.
     const basePreset = policyForPreset(user.callBasePreset || 'all_paid_biz') || policyForPreset('all_paid_biz');
     if (basePreset) {
-      const names = { ...(user.callRuleNames || {}) };
-      (['contacts', 'business', 'newCaller', 'unknown'] as const).forEach((cat) => {
-        if (policy[cat] === basePreset[cat]) delete names[cat];
-      });
-      user.callRuleNames = names;
+      const hasOverride = (['contacts', 'business', 'newCaller', 'unknown'] as const)
+        .some((cat) => policy[cat] !== basePreset[cat]);
+      if (!hasOverride) user.callRuleName = '';
     }
 
     if (dto.allowedCallWindows !== undefined) user.allowedCallWindows = dto.allowedCallWindows;
