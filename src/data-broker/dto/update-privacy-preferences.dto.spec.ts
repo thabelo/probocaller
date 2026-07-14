@@ -18,12 +18,37 @@ describe('UpdatePrivacyPreferencesDto — call-policy fields', () => {
     })).toHaveLength(0);
   });
 
-  it('accepts a single callRuleName string for the custom group', async () => {
-    expect(await errorsFor({ newCallPolicy: 'blocked', callRuleName: 'No strangers' })).toHaveLength(0);
+  it('accepts a list of named custom rules plus a selection id', async () => {
+    expect(await errorsFor({
+      customCallRules: [
+        { id: 'r1', name: 'Work hours', contacts: 'free', business: 'blocked', newCaller: 'free', unknown: 'free' },
+        { id: 'r2', name: 'Strict', contacts: 'paid', business: 'blocked', newCaller: 'blocked', unknown: 'blocked' },
+      ],
+      selectedCustomRuleId: 'r2',
+    })).toHaveLength(0);
   });
 
-  it('rejects a non-string callRuleName', async () => {
-    expect((await errorsFor({ callRuleName: { newCaller: 'x' } })).length).toBeGreaterThan(0);
+  it('accepts clearing the selection with an empty id', async () => {
+    expect(await errorsFor({ selectedCustomRuleId: '' })).toHaveLength(0);
+  });
+
+  it('rejects a non-array customCallRules', async () => {
+    expect((await errorsFor({ customCallRules: 'Work hours' })).length).toBeGreaterThan(0);
+  });
+
+  it('rejects a rule with an invalid category policy', async () => {
+    expect((await errorsFor({
+      customCallRules: [{ id: 'r1', name: 'Bad', contacts: 'sometimes', business: 'paid', newCaller: 'free', unknown: 'free' }],
+    })).length).toBeGreaterThan(0);
+  });
+
+  it('rejects a rule missing its id or name', async () => {
+    expect((await errorsFor({
+      customCallRules: [{ name: 'No id', contacts: 'free', business: 'paid', newCaller: 'free', unknown: 'free' }],
+    })).length).toBeGreaterThan(0);
+    expect((await errorsFor({
+      customCallRules: [{ id: 'r1', contacts: 'free', business: 'paid', newCaller: 'free', unknown: 'free' }],
+    })).length).toBeGreaterThan(0);
   });
 
   it('rejects an unknown category policy value', async () => {

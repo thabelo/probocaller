@@ -1,6 +1,34 @@
-import { IsString, IsIn, IsBoolean, IsArray, IsOptional, ValidateNested, IsInt, Min, Max, Matches } from 'class-validator';
+import { IsString, IsIn, IsBoolean, IsArray, IsOptional, IsNotEmpty, ValidateNested, IsInt, Min, Max, Matches } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiPropertyOptional } from '@nestjs/swagger';
+
+// One saved custom rule: a standalone named four-category policy that sits
+// beside the six preset tiers in the same radio group.
+export class CustomCallRuleDto {
+  @IsString()
+  @IsNotEmpty()
+  id: string;
+
+  @IsString()
+  @IsNotEmpty()
+  name: string;
+
+  @IsString()
+  @IsIn(['free', 'paid', 'blocked'])
+  contacts: string;
+
+  @IsString()
+  @IsIn(['free', 'paid', 'blocked'])
+  business: string;
+
+  @IsString()
+  @IsIn(['free', 'paid', 'blocked'])
+  newCaller: string;
+
+  @IsString()
+  @IsIn(['free', 'paid', 'blocked'])
+  unknown: string;
+}
 
 class CallWindowDto {
   @IsInt()
@@ -54,12 +82,20 @@ export class UpdatePrivacyPreferencesDto {
   @IsIn(['free', 'paid', 'blocked'])
   unknownCallPolicy?: string;
 
-  // One friendly name for the whole custom-rule group (the set of per-category
-  // overrides layered on the preset). e.g. 'Work hours policy'.
+  // Full replacement of the user's saved custom rules (create/rename/delete by
+  // resending the list). Uniqueness/emptiness of names is enforced in the service.
+  @ApiPropertyOptional({ type: [CustomCallRuleDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CustomCallRuleDto)
+  customCallRules?: CustomCallRuleDto[];
+
+  // Select a saved custom rule by id ('' reverts to the base preset tier).
   @ApiPropertyOptional({ type: 'string' })
   @IsOptional()
   @IsString()
-  callRuleName?: string;
+  selectedCustomRuleId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

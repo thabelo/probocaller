@@ -61,10 +61,14 @@ export class User {
   @Column({ default: 'free' })
   unknownCallPolicy: string; // no caller-ID (private/withheld/unregistered)
 
-  // One friendly name for the whole custom-rule group (the per-category overrides
-  // layered on callBasePreset). Empty when there are no overrides. e.g. 'Work hours'.
+  // Saved custom rules: standalone named four-category policies beside the six
+  // tiers in one radio group (driven by data-broker.service.spec custom-rules tests).
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  customCallRules: { id: string; name: string; contacts: string; business: string; newCaller: string; unknown: string }[];
+
+  // Which custom rule is active ('' = the callBasePreset tier is active).
   @Column({ default: '' })
-  callRuleName: string;
+  selectedCustomRuleId: string;
 
   // JSON array of { dayOfWeek: 0–6, startTime: "HH:mm", endTime: "HH:mm" }; empty = no restriction
   @Column({ type: 'simple-json', default: '[]' })

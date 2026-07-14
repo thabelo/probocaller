@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { User } from '../user/user.entity';
@@ -40,10 +40,12 @@ export class DataBrokerService {
     return {
       // Preset name is always derived from the four categories, so it never drifts.
       callPermissionMode: presetFor(policy),
-      // The base tier the user selected; custom rules are overrides on top of it.
+      // The base tier the user selected; reverting a custom rule falls back to it.
       callBasePreset: user.callBasePreset || 'all_paid_biz',
-      // One name for the whole custom-rule group (empty when there are no overrides).
-      callRuleName: user.callRuleName || '',
+      // Saved custom rules (standalone named policies) and which one is active
+      // ('' = the base preset tier is active).
+      customCallRules: user.customCallRules || [],
+      selectedCustomRuleId: user.selectedCustomRuleId || '',
       contactsCallPolicy: policy.contacts,
       businessCallPolicy: policy.business,
       newCallPolicy: policy.newCaller,
@@ -67,38 +69,69 @@ export class DataBrokerService {
       newCaller: (user.newCallPolicy || 'free') as any,
       unknown: (user.unknownCallPolicy || 'free') as any,
     };
+    // Replace the saved custom-rule list (create/rename/delete come in as the
+    // full new list). Names are required and must be unique.
+    if (dto.customCallRules !== undefined) {
+      const seen = new Set<string>();
+      for (const rule of dto.customCallRules) {
+        const name = (rule.name || '').trim();
+        if (!name) throw new BadRequestException('Every custom rule needs a name');
+        const key = name.toLowerCase();
+        if (seen.has(key)) throw new BadRequestException(`Duplicate custom rule name: ${name}`);
+        seen.add(key);
+      }
+      user.customCallRules = dto.customCallRules;
+      // If the active rule was just deleted, fall back to the base preset tier.
+      const selected = user.selectedCustomRuleId || '';
+      if (selected && !dto.customCallRules.some((r) => r.id === selected)) {
+        user.selectedCustomRuleId = '';
+        const base = policyForPreset(user.callBasePreset || 'all_paid_biz');
+        if (base) Object.assign(policy, base);
+      }
+    }
+
     if (dto.callPermissionMode !== undefined) {
       const presetName = LEGACY_MODE_ALIAS[dto.callPermissionMode] ?? dto.callPermissionMode;
       const preset = policyForPreset(presetName);
       if (preset) {
-        // Picking a preset resets all categories and becomes the new base (clears
-        // any custom override rules).
+        // Picking a preset tier resets all categories, becomes the new base, and
+        // deselects any active custom rule (the rule itself is kept).
         Object.assign(policy, preset);
         user.callBasePreset = presetName;
+        user.selectedCustomRuleId = '';
       } else if (dto.callPermissionMode === 'none') {
         policy.business = 'blocked';
       }
     }
+
+    // Select a custom rule ('' reverts to the base preset tier). The rules and the
+    // tiers form one radio group: selecting one deselects the other.
+    if (dto.selectedCustomRuleId !== undefined) {
+      if (dto.selectedCustomRuleId === '') {
+        user.selectedCustomRuleId = '';
+        const base = policyForPreset(user.callBasePreset || 'all_paid_biz');
+        if (base) Object.assign(policy, base);
+      } else {
+        const rules = user.customCallRules || [];
+        const rule = rules.find((r) => r.id === dto.selectedCustomRuleId);
+        if (!rule) throw new BadRequestException('Unknown custom rule');
+        user.selectedCustomRuleId = rule.id;
+        policy.contacts = rule.contacts as any;
+        policy.business = rule.business as any;
+        policy.newCaller = rule.newCaller as any;
+        policy.unknown = rule.unknown as any;
+      }
+    }
+
     if (dto.contactsCallPolicy !== undefined) policy.contacts = dto.contactsCallPolicy as any;
     if (dto.businessCallPolicy !== undefined) policy.business = dto.businessCallPolicy as any;
     if (dto.newCallPolicy !== undefined) policy.newCaller = dto.newCallPolicy as any;
     if (dto.unknownCallPolicy !== undefined) policy.unknown = dto.unknownCallPolicy as any;
-    if (dto.callRuleName !== undefined) user.callRuleName = dto.callRuleName;
     user.contactsCallPolicy = policy.contacts;
     user.businessCallPolicy = policy.business;
     user.newCallPolicy = policy.newCaller;
     user.unknownCallPolicy = policy.unknown;
     user.callPermissionMode = presetFor(policy);
-
-    // The group name only means something while the custom group has at least one
-    // override. If every category now matches the base preset (a preset was picked,
-    // or the last override was reverted), clear the name so it can't linger.
-    const basePreset = policyForPreset(user.callBasePreset || 'all_paid_biz') || policyForPreset('all_paid_biz');
-    if (basePreset) {
-      const hasOverride = (['contacts', 'business', 'newCaller', 'unknown'] as const)
-        .some((cat) => policy[cat] !== basePreset[cat]);
-      if (!hasOverride) user.callRuleName = '';
-    }
 
     if (dto.allowedCallWindows !== undefined) user.allowedCallWindows = dto.allowedCallWindows;
     if (dto.dataShareEnabled !== undefined) user.dataShareEnabled = dto.dataShareEnabled;

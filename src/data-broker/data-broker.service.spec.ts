@@ -116,57 +116,137 @@ describe('DataBrokerService', () => {
       expect(saved.callBasePreset).toBe('all_paid_biz'); // base unchanged by an override
     });
 
-    it('persists the custom-group name and returns it', async () => {
+  });
+
+  // Custom rules are standalone named policies that sit BESIDE the six preset
+  // tiers in one radio group: exactly one thing — a tier or a rule — is active.
+  describe('custom call rules — multiple, selectable, deletable', () => {
+    const workHours = {
+      id: 'r1', name: 'Work hours',
+      contacts: 'free', business: 'blocked', newCaller: 'free', unknown: 'free',
+    };
+    const strict = {
+      id: 'r2', name: 'Strict',
+      contacts: 'paid', business: 'blocked', newCaller: 'blocked', unknown: 'blocked',
+    };
+
+    it('getPreferences returns the rule list and the selection (defaults: empty)', async () => {
+      userRepo.findOne.mockResolvedValue(mockUser());
+      const result: any = await service.getPreferences(1);
+      expect(result.customCallRules).toEqual([]);
+      expect(result.selectedCustomRuleId).toBe('');
+    });
+
+    it('persists a replaced rule list and returns it', async () => {
       const user = mockUser();
       userRepo.findOne.mockResolvedValue(user);
       userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
-      const result = await service.updatePreferences(1, { newCallPolicy: 'blocked', callRuleName: 'No strangers' });
-      expect(userRepo.save.mock.calls[0][0].callRuleName).toBe('No strangers');
-      expect(result.callRuleName).toBe('No strangers');
+      const result: any = await service.updatePreferences(1, { customCallRules: [workHours] } as any);
+      expect(userRepo.save.mock.calls[0][0].customCallRules).toEqual([workHours]);
+      expect(result.customCallRules).toEqual([workHours]);
     });
 
-    it('clears the custom-group name when a preset is selected (no overrides left)', async () => {
-      // A named custom group overriding business…
+    it('selecting a rule applies its four policies and records the selection', async () => {
+      const user = mockUser({ callBasePreset: 'all_paid_biz', customCallRules: [workHours, strict] });
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
+      await service.updatePreferences(1, { selectedCustomRuleId: 'r2' } as any);
+      const saved = userRepo.save.mock.calls[0][0];
+      expect(saved.selectedCustomRuleId).toBe('r2');
+      expect(saved.contactsCallPolicy).toBe('paid');
+      expect(saved.businessCallPolicy).toBe('blocked');
+      expect(saved.newCallPolicy).toBe('blocked');
+      expect(saved.unknownCallPolicy).toBe('blocked');
+      expect(saved.callBasePreset).toBe('all_paid_biz'); // base tier remembered for revert
+    });
+
+    it('creating and selecting a rule in one PUT applies the new rule', async () => {
+      const user = mockUser({ callBasePreset: 'all_paid_biz' });
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
+      await service.updatePreferences(1, { customCallRules: [workHours], selectedCustomRuleId: 'r1' } as any);
+      const saved = userRepo.save.mock.calls[0][0];
+      expect(saved.selectedCustomRuleId).toBe('r1');
+      expect(saved.businessCallPolicy).toBe('blocked');
+    });
+
+    it('selecting a preset tier deselects the custom rule', async () => {
       const user = mockUser({
-        callBasePreset: 'all_paid_biz',
+        callBasePreset: 'all_paid_biz', customCallRules: [workHours], selectedCustomRuleId: 'r1',
         contactsCallPolicy: 'free', businessCallPolicy: 'blocked', newCallPolicy: 'free', unknownCallPolicy: 'free',
-        callRuleName: 'No cold callers',
       });
       userRepo.findOne.mockResolvedValue(user);
       userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
-      // …then the user picks a plain preset (without resending callRuleName).
-      const result = await service.updatePreferences(1, { callPermissionMode: 'all_paid_biz' });
-      // Every category now matches the base, so the group name may not linger.
-      expect(userRepo.save.mock.calls[0][0].callRuleName).toBe('');
-      expect(result.callRuleName).toBe('');
+      const result: any = await service.updatePreferences(1, { callPermissionMode: 'contacts_only' });
+      const saved = userRepo.save.mock.calls[0][0];
+      expect(saved.selectedCustomRuleId).toBe('');
+      expect(saved.callBasePreset).toBe('contacts_only');
+      expect(saved.businessCallPolicy).toBe('blocked');
+      expect(result.customCallRules).toEqual([workHours]); // the rule itself survives
     });
 
-    it('clears the name when the last override is reverted', async () => {
-      // Single override (business blocked) with a group name.
+    it('selectedCustomRuleId: "" reverts to the base tier policies', async () => {
       const user = mockUser({
-        callBasePreset: 'all_paid_biz',
+        callBasePreset: 'all_paid_biz', customCallRules: [workHours], selectedCustomRuleId: 'r1',
         contactsCallPolicy: 'free', businessCallPolicy: 'blocked', newCallPolicy: 'free', unknownCallPolicy: 'free',
-        callRuleName: 'No cold callers',
       });
       userRepo.findOne.mockResolvedValue(user);
       userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
-      // Revert business to base (paid); no overrides remain → name cleared.
-      await service.updatePreferences(1, { businessCallPolicy: 'paid' });
-      expect(userRepo.save.mock.calls[0][0].callRuleName).toBe('');
+      await service.updatePreferences(1, { selectedCustomRuleId: '' } as any);
+      const saved = userRepo.save.mock.calls[0][0];
+      expect(saved.selectedCustomRuleId).toBe('');
+      expect(saved.businessCallPolicy).toBe('paid'); // back to all_paid_biz
     });
 
-    it('keeps the custom-group name while any override remains', async () => {
-      // Two overrides (business + new blocked) named as one group.
+    it('deleting the selected rule reverts to the base tier', async () => {
       const user = mockUser({
-        callBasePreset: 'all_paid_biz',
-        contactsCallPolicy: 'free', businessCallPolicy: 'blocked', newCallPolicy: 'blocked', unknownCallPolicy: 'free',
-        callRuleName: 'Strict',
+        callBasePreset: 'all_paid_biz', customCallRules: [workHours, strict], selectedCustomRuleId: 'r1',
+        contactsCallPolicy: 'free', businessCallPolicy: 'blocked', newCallPolicy: 'free', unknownCallPolicy: 'free',
       });
       userRepo.findOne.mockResolvedValue(user);
       userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
-      // Revert business only; new is still blocked (override remains) → name kept.
-      await service.updatePreferences(1, { businessCallPolicy: 'paid' });
-      expect(userRepo.save.mock.calls[0][0].callRuleName).toBe('Strict');
+      // Delete = resend the list without r1.
+      await service.updatePreferences(1, { customCallRules: [strict] } as any);
+      const saved = userRepo.save.mock.calls[0][0];
+      expect(saved.selectedCustomRuleId).toBe('');
+      expect(saved.businessCallPolicy).toBe('paid'); // all_paid_biz restored
+      expect(saved.customCallRules).toEqual([strict]);
+    });
+
+    it('deleting an unselected rule leaves policies and selection alone', async () => {
+      const user = mockUser({
+        callBasePreset: 'all_paid_biz', customCallRules: [workHours, strict], selectedCustomRuleId: 'r1',
+        contactsCallPolicy: 'free', businessCallPolicy: 'blocked', newCallPolicy: 'free', unknownCallPolicy: 'free',
+      });
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
+      await service.updatePreferences(1, { customCallRules: [workHours] } as any);
+      const saved = userRepo.save.mock.calls[0][0];
+      expect(saved.selectedCustomRuleId).toBe('r1');
+      expect(saved.businessCallPolicy).toBe('blocked'); // untouched
+    });
+
+    it('rejects a rule with an empty name', async () => {
+      userRepo.findOne.mockResolvedValue(mockUser());
+      await expect(
+        service.updatePreferences(1, { customCallRules: [{ ...workHours, name: '  ' }] } as any),
+      ).rejects.toThrow(/name/i);
+    });
+
+    it('rejects duplicate rule names (case-insensitive)', async () => {
+      userRepo.findOne.mockResolvedValue(mockUser());
+      await expect(
+        service.updatePreferences(1, {
+          customCallRules: [workHours, { ...strict, name: 'work HOURS' }],
+        } as any),
+      ).rejects.toThrow(/name/i);
+    });
+
+    it('rejects selecting a rule id that does not exist', async () => {
+      userRepo.findOne.mockResolvedValue(mockUser({ customCallRules: [workHours] }));
+      await expect(
+        service.updatePreferences(1, { selectedCustomRuleId: 'nope' } as any),
+      ).rejects.toThrow(/rule/i);
     });
   });
 
