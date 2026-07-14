@@ -89,6 +89,19 @@ export class DataBrokerService {
     user.unknownCallPolicy = policy.unknown;
     user.callPermissionMode = presetFor(policy);
 
+    // Reconcile rule names against the base preset: a name only makes sense for a
+    // category that actually overrides the base. Drop names for categories that now
+    // match the base — so selecting a preset or reverting an override can never leave
+    // an orphaned name, regardless of whether the client resent callRuleNames.
+    const basePreset = policyForPreset(user.callBasePreset || 'all_paid_biz') || policyForPreset('all_paid_biz');
+    if (basePreset) {
+      const names = { ...(user.callRuleNames || {}) };
+      (['contacts', 'business', 'newCaller', 'unknown'] as const).forEach((cat) => {
+        if (policy[cat] === basePreset[cat]) delete names[cat];
+      });
+      user.callRuleNames = names;
+    }
+
     if (dto.allowedCallWindows !== undefined) user.allowedCallWindows = dto.allowedCallWindows;
     if (dto.dataShareEnabled !== undefined) user.dataShareEnabled = dto.dataShareEnabled;
     if (dto.dataCategories !== undefined) user.dataCategories = dto.dataCategories;

@@ -124,6 +124,38 @@ describe('DataBrokerService', () => {
       expect(userRepo.save.mock.calls[0][0].callRuleNames).toEqual({ newCaller: 'No strangers' });
       expect(result.callRuleNames).toEqual({ newCaller: 'No strangers' });
     });
+
+    it('drops all rule names when a clean preset is selected (no orphaned names)', async () => {
+      // A named override on the business category…
+      const user = mockUser({
+        callBasePreset: 'all_paid_biz',
+        contactsCallPolicy: 'free', businessCallPolicy: 'blocked', newCallPolicy: 'free', unknownCallPolicy: 'free',
+        callRuleNames: { business: 'No cold callers' },
+      });
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
+      // …then the user picks a plain preset (without resending callRuleNames).
+      const result = await service.updatePreferences(1, { callPermissionMode: 'all_paid_biz' });
+      // Every category now matches the base, so no name may linger.
+      expect(userRepo.save.mock.calls[0][0].callRuleNames).toEqual({});
+      expect(result.callRuleNames).toEqual({});
+    });
+
+    it('prunes only the name of a category reverted to its base value', async () => {
+      // Two named overrides on an all_paid_biz base (business/new blocked).
+      const user = mockUser({
+        callBasePreset: 'all_paid_biz',
+        contactsCallPolicy: 'free', businessCallPolicy: 'blocked', newCallPolicy: 'blocked', unknownCallPolicy: 'free',
+        callRuleNames: { business: 'No cold callers', newCaller: 'No strangers' },
+      });
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
+      // Revert ONLY business to its base (paid); do NOT resend callRuleNames.
+      await service.updatePreferences(1, { businessCallPolicy: 'paid' });
+      const saved = userRepo.save.mock.calls[0][0];
+      // business name pruned (now matches base); newCaller name kept (still an override).
+      expect(saved.callRuleNames).toEqual({ newCaller: 'No strangers' });
+    });
   });
 
   describe('respondToRequest — Pay-to-Contact settlement', () => {
