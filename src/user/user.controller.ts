@@ -6,6 +6,7 @@ import { LoginDto } from './dto/login.dto';
 import { SignupDto } from './dto/signup.dto';
 import { AddCreditDto } from './dto/add-credit.dto';
 import { AddContactsDto } from './dto/add-contacts.dto';
+import { UpdatePersonalInfoDto } from './dto/update-personal-info.dto';
 import { AuthGuard } from '@nestjs/passport';
 import { BusinessService } from '../business/business.service';
 import { TransactionService } from '../transaction/transaction.service';
@@ -53,6 +54,22 @@ export class UserController {
   @ApiOperation({ summary: 'Sign up user' })
   async signup(@Body() signupDto: SignupDto) {
     return this.userService.signup(signupDto);
+  }
+
+  @Get('me')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get the current user’s personal data (name, email, phone)' })
+  async getMe(@Request() req) {
+    return this.userService.getMe(req.user.userId);
+  }
+
+  @Put('me')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Update the current user’s personal data (name, email)' })
+  async updateMe(@Request() req, @Body() body: UpdatePersonalInfoDto) {
+    return this.userService.updateMe(req.user.userId, body);
   }
 
   @Delete('me')

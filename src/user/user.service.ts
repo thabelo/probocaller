@@ -322,4 +322,28 @@ export class UserService {
     }
     return user;
   }
+
+  // The safe personal-data projection returned to the account owner. Deliberately
+  // excludes wallet/role/spam and other privileged columns.
+  private personalView(user: User) {
+    return { id: user.id, name: user.name, email: user.email, phoneNumber: user.phoneNumber };
+  }
+
+  async getMe(userId: number) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    return this.personalView(user);
+  }
+
+  // Self-service edit of personal data. Only name + email are assignable — the
+  // phone number is the verified login identity and privileged columns (role,
+  // walletBalance, …) are never mass-assigned from the request body.
+  async updateMe(userId: number, dto: { name?: string; email?: string }) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    if (dto.name !== undefined) user.name = dto.name;
+    if (dto.email !== undefined) user.email = dto.email;
+    await this.userRepository.save(user);
+    return this.personalView(user);
+  }
 }

@@ -180,6 +180,61 @@ describe('UserService', () => {
     });
   });
 
+  // Self-service personal data: the user views and edits their own name + email.
+  // Phone number is the verified login identity and is never mutated here, and no
+  // other column may be mass-assigned (mirrors the addMultipleContacts hardening).
+  describe('getMe / updateMe — personal data', () => {
+    it('getMe returns only the safe personal fields', async () => {
+      repo.findOne.mockResolvedValue(mockUser({ walletBalance: 999, role: 'admin' }));
+      const me = await service.getMe(1);
+      expect(me).toEqual({ id: 1, name: 'Test', email: 'test@probo.local', phoneNumber: '+27821234567' });
+      expect(me).not.toHaveProperty('walletBalance');
+      expect(me).not.toHaveProperty('role');
+    });
+
+    it('getMe throws NotFound when the user is missing', async () => {
+      repo.findOne.mockResolvedValue(null);
+      const { NotFoundException } = require('@nestjs/common');
+      await expect(service.getMe(999)).rejects.toBeInstanceOf(NotFoundException);
+    });
+
+    it('updateMe persists name and email and returns the safe shape', async () => {
+      const user = mockUser();
+      repo.findOne.mockResolvedValue(user);
+      repo.save.mockImplementation(async (u: any) => u);
+      const res = await service.updateMe(1, { name: 'New Name', email: 'new@x.com' });
+      expect(repo.save.mock.calls[0][0]).toMatchObject({ id: 1, name: 'New Name', email: 'new@x.com' });
+      expect(res).toEqual({ id: 1, name: 'New Name', email: 'new@x.com', phoneNumber: '+27821234567' });
+    });
+
+    it('updateMe updates only the provided field (partial)', async () => {
+      const user = mockUser({ name: 'Old', email: 'keep@x.com' });
+      repo.findOne.mockResolvedValue(user);
+      repo.save.mockImplementation(async (u: any) => u);
+      await service.updateMe(1, { name: 'Only Name' });
+      const saved = repo.save.mock.calls[0][0];
+      expect(saved.name).toBe('Only Name');
+      expect(saved.email).toBe('keep@x.com'); // untouched
+    });
+
+    it('updateMe never mass-assigns privileged columns or the phone identity', async () => {
+      const user = mockUser({ role: 'user', walletBalance: 0, phoneNumber: '+27821234567' });
+      repo.findOne.mockResolvedValue(user);
+      repo.save.mockImplementation(async (u: any) => u);
+      await service.updateMe(1, { name: 'X', role: 'admin', walletBalance: 10_000, phoneNumber: '+270000000000' } as any);
+      const saved = repo.save.mock.calls[0][0];
+      expect(saved.role).toBe('user');
+      expect(Number(saved.walletBalance)).toBe(0);
+      expect(saved.phoneNumber).toBe('+27821234567');
+    });
+
+    it('updateMe throws NotFound when the user is missing', async () => {
+      repo.findOne.mockResolvedValue(null);
+      const { NotFoundException } = require('@nestjs/common');
+      await expect(service.updateMe(999, { name: 'X' })).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
+
   describe('getReferralCode', () => {
     // GET /user/referral-code now also surfaces the referrer's lifetime earned
     // referral commission — the SUM of their REFERRAL_COMMISSION transactions
