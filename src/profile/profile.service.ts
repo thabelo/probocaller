@@ -166,8 +166,11 @@ export class ProfileService {
    * `callable` using the same gate as the call flow (businessCallPolicy !==
    * 'blocked'). This is "the leads a business is allowed to call".
    */
-  async getBusinessLeads(businessUserId: number) {
-    const business = await this.businessRepo.findOne({ where: { userId: businessUserId } });
+  async getBusinessLeads(businessUserId: number, businessId?: number) {
+    // Scope to a specific owned business when one is given (leads are per business),
+    // else fall back to the caller's business.
+    const where = businessId ? { id: businessId, userId: businessUserId } : { userId: businessUserId };
+    const business = await this.businessRepo.findOne({ where });
     if (!business) throw new ForbiddenException('Business profile required');
 
     // Leads are viewable only while the business holds a data certificate — the
@@ -462,8 +465,9 @@ export class ProfileService {
   }
 
   /** The certificates a business has been issued (newest first). */
-  async getMyCertificates(businessUserId: number) {
-    const business = await this.businessRepo.findOne({ where: { userId: businessUserId } });
+  async getMyCertificates(businessUserId: number, businessId?: number) {
+    const where = businessId ? { id: businessId, userId: businessUserId } : { userId: businessUserId };
+    const business = await this.businessRepo.findOne({ where });
     if (!business) throw new ForbiddenException('Business profile required');
     return this.certRepo.find({ where: { businessId: business.id }, order: { issuedAt: 'DESC' } });
   }

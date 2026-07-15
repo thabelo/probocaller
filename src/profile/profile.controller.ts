@@ -57,14 +57,14 @@ export class ProfileController {
 
   @Get('business/leads')
   @ApiOperation({ summary: 'Business: the leads you have acquired via /leads and whether you may call each (requires a certificate)' })
-  getBusinessLeads(@Request() req) {
-    return this.profileService.getBusinessLeads(req.user.userId);
+  getBusinessLeads(@Request() req, @Query('businessId') businessId?: string) {
+    return this.profileService.getBusinessLeads(req.user.userId, businessId ? Number(businessId) : undefined);
   }
 
   @Get('certificates')
   @ApiOperation({ summary: 'Business: your issued data-usage certificates' })
-  getMyCertificates(@Request() req) {
-    return this.profileService.getMyCertificates(req.user.userId);
+  getMyCertificates(@Request() req, @Query('businessId') businessId?: string) {
+    return this.profileService.getMyCertificates(req.user.userId, businessId ? Number(businessId) : undefined);
   }
 
   @Get('certificates/:code/validate')

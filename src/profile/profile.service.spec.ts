@@ -173,6 +173,15 @@ describe('ProfileService', () => {
       accessLogRepo.find.mockResolvedValue([]);
       expect(await service.getBusinessLeads(9)).toEqual([]);
     });
+
+    it('scopes to a specific businessId the caller owns when one is given', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9 });
+      accessLogRepo.find.mockResolvedValue([]);
+      await service.getBusinessLeads(9, 5);
+      // ownership-checked lookup: both id AND userId
+      expect(businessRepo.findOne).toHaveBeenCalledWith({ where: { id: 5, userId: 9 } });
+      expect(accessLogRepo.find).toHaveBeenCalledWith(expect.objectContaining({ where: { businessId: 5 } }));
+    });
   });
 
   describe('certificates — list & public validation', () => {
