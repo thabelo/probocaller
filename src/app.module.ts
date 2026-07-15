@@ -44,6 +44,7 @@ import { PhoneReport } from './report/phone-report.entity';
 import { PhoneReportVote } from './report/phone-report-vote.entity';
 
 import { ProfileModule } from './profile/profile.module';
+import { FxModule } from './fx/fx.module';
 import { ProfileService } from './profile/profile.service';
 import { ProfileField } from './profile/profile-field.entity';
 import { UserProfile } from './profile/user-profile.entity';
@@ -173,6 +174,7 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
     ReportModule,
     DataBrokerModule,
     ProfileModule,
+    FxModule,
     KybModule,
     BlockedKeywordModule,
     SmsDeletionLogModule,
