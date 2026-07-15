@@ -347,6 +347,12 @@ export class ProfileService {
       ? new Date(Date.now() + dto.consentDays * 86400_000)
       : null;
 
+    // Pro-rata pricing: the R250 base fee covers a standard 30-day authorisation;
+    // the per-person leads cost scales linearly with the chosen window
+    // (days ÷ 30). A 60-day set costs ×2 on leads, a 15-day set ×0.5.
+    const periodDays = dto.consentDays && dto.consentDays > 0 ? dto.consentDays : 30;
+    const periodFactor = periodDays / 30;
+
     // H6 bugfix — wrap the wallet-mutating loop in a single transaction with
     // a pessimistic_write lock on the caller's wallet row, so two parallel
     // purchaseLeads calls from the same business can't both read the same
@@ -380,11 +386,12 @@ export class ProfileService {
         const sharableKeys = requestedKeys.filter((k) => (user.dataCategories || []).includes(k));
         if (sharableKeys.length === 0) continue;
 
-        const costForUser = sharableKeys.reduce((s, k) => {
+        const baseCostForUser = sharableKeys.reduce((s, k) => {
           const fieldCost = Number(fieldMap[k]?.creditCost || 0);
           const floor = Number(profile.floorPrices?.[k] || 0);
           return s + Math.max(fieldCost, floor);
         }, 0);
+        const costForUser = parseFloat((baseCostForUser * periodFactor).toFixed(6));
 
         if (Number(lockedCaller.walletBalance) < totalCost + costForUser) break;
 
@@ -453,8 +460,7 @@ export class ProfileService {
       let certificatePrice = 0;
       if (leads.length > 0) {
         const periodStart = new Date();
-        const days = dto.consentDays && dto.consentDays > 0 ? dto.consentDays : 30;
-        const periodEnd = new Date(periodStart.getTime() + days * 86400_000);
+        const periodEnd = new Date(periodStart.getTime() + periodDays * 86400_000);
         certificatePrice = parseFloat((CERTIFICATE_BASE_FEE + totalCost).toFixed(4));
         certificate = await manager.save(DataCertificate, manager.create(DataCertificate, {
           code: ProfileService.generateCertCode(),

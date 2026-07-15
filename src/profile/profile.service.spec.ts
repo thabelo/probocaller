@@ -474,6 +474,30 @@ describe('ProfileService', () => {
       expect(result.certificatePrice).toBe(252);
     });
 
+    it('scales the leads cost pro-rata by the authorisation window (days ÷ 30); base fee stays flat', async () => {
+      wireMatches(100, 1, 2); // 2 matches × per-person cost 1
+      const result = await service.purchaseLeads(7, {
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 60,
+      });
+      // 60-day window → ×2 on the per-person leads cost; base fee unchanged.
+      expect(result.purchased).toBe(2);
+      expect(result.totalCost).toBe(4);          // 2 × 1 × (60/30)
+      expect(result.certificatePrice).toBe(254); // 250 base + 4 leads
+      const cert = managerSpy.save.mock.calls.find((c: any[]) => c[0] === DataCertificate)![1];
+      expect(cert.basePrice).toBe(250);
+      expect(cert.leadsCost).toBe(4);
+      expect(cert.totalPrice).toBe(254);
+    });
+
+    it('pro-rates DOWN for a short window (leads cost × days/30 for days < 30)', async () => {
+      wireMatches(100, 2, 1); // 1 match × per-person cost 2
+      const result = await service.purchaseLeads(7, {
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 15,
+      });
+      // 15-day window → ×0.5.
+      expect(result.totalCost).toBe(1); // 2 × (15/30)
+    });
+
     it('does NOT buy leads or issue a certificate when the business cannot afford the R250 base fee', async () => {
       wireMatches(100, 1, 2, /* callerBalance */ 100); // < 250 base fee
       const result = await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100 });
