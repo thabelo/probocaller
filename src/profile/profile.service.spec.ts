@@ -54,6 +54,68 @@ describe('ProfileService', () => {
     profileRepo = module.get(getRepositoryToken(UserProfile));
   });
 
+  // "Share all filled fields" model: sharing keys off the filled profile fields.
+  describe('sharableCandidateKeys — the filled, enabled fields eligible to share', () => {
+    it('returns enabled field keys that have a non-empty value', async () => {
+      fieldRepo.find.mockResolvedValue([
+        mockField({ key: 'income_range' }),
+        mockField({ key: 'marital_status' }),
+        mockField({ key: 'household_size' }),
+      ]);
+      profileRepo.findOne.mockResolvedValue(mockProfile({ data: { income_range: '5k_10k', marital_status: 'married', household_size: '' } }));
+      const keys = await service.sharableCandidateKeys(1);
+      expect(keys.sort()).toEqual(['income_range', 'marital_status']); // household_size empty → excluded
+    });
+
+    it('returns [] when the profile has no data', async () => {
+      fieldRepo.find.mockResolvedValue([mockField({ key: 'income_range' })]);
+      profileRepo.findOne.mockResolvedValue(mockProfile({ data: {} }));
+      expect(await service.sharableCandidateKeys(1)).toEqual([]);
+    });
+  });
+
+  describe('updateMyProfile — auto-opts newly-filled fields into sharing when sharing is on', () => {
+    it('adds a field that went empty→filled to dataCategories (sharing on)', async () => {
+      const profile = mockProfile({ data: { income_range: '5k_10k' } }); // marital_status not yet filled
+      profileRepo.findOne.mockResolvedValue(profile);
+      profileRepo.save.mockImplementation(async (p: any) => p);
+      fieldRepo.find.mockResolvedValue([mockField({ key: 'income_range' }), mockField({ key: 'marital_status' })]);
+      const userRepo = (service as any).userRepo;
+      const user = { id: 1, dataShareEnabled: true, dataCategories: ['income_range'] };
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation(async (u: any) => u);
+
+      await service.updateMyProfile(1, { data: { income_range: '5k_10k', marital_status: 'married' } });
+
+      expect(userRepo.save).toHaveBeenCalled();
+      expect(userRepo.save.mock.calls[0][0].dataCategories.sort()).toEqual(['income_range', 'marital_status']);
+    });
+
+    it('does NOT touch dataCategories when sharing is off', async () => {
+      profileRepo.findOne.mockResolvedValue(mockProfile({ data: {} }));
+      profileRepo.save.mockImplementation(async (p: any) => p);
+      fieldRepo.find.mockResolvedValue([mockField({ key: 'marital_status' })]);
+      const userRepo = (service as any).userRepo;
+      userRepo.findOne.mockResolvedValue({ id: 1, dataShareEnabled: false, dataCategories: [] });
+      userRepo.save.mockImplementation(async (u: any) => u);
+      await service.updateMyProfile(1, { data: { marital_status: 'married' } });
+      expect(userRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('does not re-add an already-filled field the user had deselected', async () => {
+      // marital_status was already filled before AND deselected → stays deselected.
+      const profile = mockProfile({ data: { marital_status: 'single' } });
+      profileRepo.findOne.mockResolvedValue(profile);
+      profileRepo.save.mockImplementation(async (p: any) => p);
+      fieldRepo.find.mockResolvedValue([mockField({ key: 'marital_status' })]);
+      const userRepo = (service as any).userRepo;
+      userRepo.findOne.mockResolvedValue({ id: 1, dataShareEnabled: true, dataCategories: [] });
+      userRepo.save.mockImplementation(async (u: any) => u);
+      await service.updateMyProfile(1, { data: { marital_status: 'married' } }); // value changed, not newly filled
+      expect(userRepo.save).not.toHaveBeenCalled();
+    });
+  });
+
   describe('getEnabledFields', () => {
     it('returns only enabled fields ordered by sortOrder', async () => {
       const fields = [mockField()];

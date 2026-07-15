@@ -103,11 +103,51 @@ export class ProfileService {
     return { ...profile, completionScore: score, tier, fields };
   }
 
+  private static isFilled(data: Record<string, any>, key: string): boolean {
+    const v = data?.[key];
+    return v !== undefined && v !== null && v !== '';
+  }
+
+  /**
+   * The enabled profile fields the user has actually filled in — the candidate
+   * set for data sharing under the "share all filled fields" model. Turning data
+   * sharing on selects exactly these.
+   */
+  async sharableCandidateKeys(userId: number): Promise<string[]> {
+    const [profile, fields] = await Promise.all([
+      this.profileRepo.findOne({ where: { userId } }),
+      this.getEnabledFields(),
+    ]);
+    const data = profile?.data || {};
+    return fields.map((f) => f.key).filter((k) => ProfileService.isFilled(data, k));
+  }
+
   async updateMyProfile(userId: number, dto: UpdateProfileDto) {
     const profile = await this.getOrCreateProfile(userId);
+    const oldData = profile.data || {};
     if (dto.data !== undefined) profile.data = { ...dto.data };
     if (dto.floorPrices !== undefined) profile.floorPrices = { ...profile.floorPrices, ...dto.floorPrices };
     await this.profileRepo.save(profile);
+
+    // "Share all filled fields": while sharing is on, a field that just went
+    // empty→filled opts into sharing automatically. Only NEWLY-filled fields are
+    // added, so a field the user explicitly deselected (but already had a value)
+    // is never silently re-shared.
+    if (dto.data !== undefined) {
+      const user = await this.userRepo.findOne({ where: { id: userId } });
+      if (user?.dataShareEnabled) {
+        const fields = await this.getEnabledFields();
+        const newlyFilled = fields
+          .map((f) => f.key)
+          .filter((k) => ProfileService.isFilled(profile.data, k) && !ProfileService.isFilled(oldData, k));
+        if (newlyFilled.length) {
+          const cats = new Set(user.dataCategories || []);
+          newlyFilled.forEach((k) => cats.add(k));
+          user.dataCategories = [...cats];
+          await this.userRepo.save(user);
+        }
+      }
+    }
     return this.getMyProfile(userId);
   }
 

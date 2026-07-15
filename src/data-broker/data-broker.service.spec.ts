@@ -5,6 +5,7 @@ import { User } from '../user/user.entity';
 import { CallPermissionRequest } from './call-permission-request.entity';
 import { Business } from '../business/business.entity';
 import { PayToContactService } from '../pay-to-contact/pay-to-contact.service';
+import { ProfileService } from '../profile/profile.service';
 
 const mockRepo = () => ({
   findOne: jest.fn(),
@@ -30,12 +31,15 @@ describe('DataBrokerService', () => {
   let businessRepo: ReturnType<typeof mockRepo>;
   let payToContact: { stake: jest.Mock; settle: jest.Mock; refund: jest.Mock };
 
+  let profileService: { sharableCandidateKeys: jest.Mock };
+
   beforeEach(async () => {
     payToContact = {
       stake: jest.fn().mockResolvedValue(undefined),
       settle: jest.fn().mockResolvedValue(undefined),
       refund: jest.fn().mockResolvedValue(undefined),
     };
+    profileService = { sharableCandidateKeys: jest.fn().mockResolvedValue([]) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         DataBrokerService,
@@ -43,6 +47,7 @@ describe('DataBrokerService', () => {
         { provide: getRepositoryToken(CallPermissionRequest), useFactory: mockRepo },
         { provide: getRepositoryToken(Business), useFactory: mockRepo },
         { provide: PayToContactService, useValue: payToContact },
+        { provide: ProfileService, useValue: profileService },
       ],
     }).compile();
 
@@ -79,6 +84,26 @@ describe('DataBrokerService', () => {
       await service.updatePreferences(1, { dataShareEnabled: true });
 
       expect(userRepo.save.mock.calls[0][0].dataShareEnabled).toBe(true);
+    });
+
+    it('turning data sharing ON selects every filled profile field (share-all-filled)', async () => {
+      const user = mockUser({ dataShareEnabled: false, dataCategories: [] });
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
+      profileService.sharableCandidateKeys.mockResolvedValue(['income_range', 'marital_status']);
+      const result = await service.updatePreferences(1, { dataShareEnabled: true });
+      expect(profileService.sharableCandidateKeys).toHaveBeenCalledWith(1);
+      expect(userRepo.save.mock.calls[0][0].dataCategories).toEqual(['income_range', 'marital_status']);
+      expect(result.dataCategories).toEqual(['income_range', 'marital_status']);
+    });
+
+    it('an explicit dataCategories wins over the auto-select on enable (deselect respected)', async () => {
+      const user = mockUser({ dataShareEnabled: false, dataCategories: [] });
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
+      await service.updatePreferences(1, { dataShareEnabled: true, dataCategories: ['income_range'] });
+      expect(profileService.sharableCandidateKeys).not.toHaveBeenCalled();
+      expect(userRepo.save.mock.calls[0][0].dataCategories).toEqual(['income_range']);
     });
 
     it('persists incognitoEnabled (premium incognito toggle)', async () => {

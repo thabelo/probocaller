@@ -7,6 +7,7 @@ import { CallPermissionRequest } from './call-permission-request.entity';
 import { UpdatePrivacyPreferencesDto } from './dto/update-privacy-preferences.dto';
 import { RequestCallPermissionDto } from './dto/request-call-permission.dto';
 import { PayToContactService } from '../pay-to-contact/pay-to-contact.service';
+import { ProfileService } from '../profile/profile.service';
 import { presetFor, policyForPreset, CallPolicy } from '../call/call-policy';
 
 // Legacy callPermissionMode values → new preset names (mapped on save).
@@ -26,6 +27,7 @@ export class DataBrokerService {
     @InjectRepository(CallPermissionRequest)
     private permissionRepo: Repository<CallPermissionRequest>,
     private payToContact: PayToContactService,
+    private profileService: ProfileService,
   ) {}
 
   async getPreferences(userId: number) {
@@ -135,7 +137,14 @@ export class DataBrokerService {
 
     if (dto.allowedCallWindows !== undefined) user.allowedCallWindows = dto.allowedCallWindows;
     if (dto.dataShareEnabled !== undefined) user.dataShareEnabled = dto.dataShareEnabled;
-    if (dto.dataCategories !== undefined) user.dataCategories = dto.dataCategories;
+    if (dto.dataCategories !== undefined) {
+      // Explicit selection (incl. deselections) always wins.
+      user.dataCategories = dto.dataCategories;
+    } else if (dto.dataShareEnabled === true) {
+      // "Share all filled fields": turning sharing on with no explicit selection
+      // opts in every profile field the user has filled.
+      user.dataCategories = await this.profileService.sharableCandidateKeys(userId);
+    }
     if (dto.incognitoEnabled !== undefined) user.incognitoEnabled = dto.incognitoEnabled;
     await this.userRepo.save(user);
     return this.getPreferences(userId);
