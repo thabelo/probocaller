@@ -10,6 +10,7 @@ import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
 import { Transaction } from '../transaction/transaction.entity';
 import { DataCertificate } from './data-certificate.entity';
+import { Setting } from '../config/setting.entity';
 import { ReferralService } from '../referral/referral.service';
 import { DataSource } from 'typeorm';
 
@@ -45,6 +46,7 @@ describe('ProfileService', () => {
         { provide: getRepositoryToken(Business), useFactory: mockRepo },
         { provide: getRepositoryToken(Transaction), useFactory: mockRepo },
         { provide: getRepositoryToken(DataCertificate), useFactory: mockRepo },
+        { provide: getRepositoryToken(Setting), useFactory: mockRepo },
         { provide: ReferralService, useValue: { payCommission: jest.fn().mockResolvedValue(undefined) } },
         // DataSource is required by purchaseLeads' transaction wrapper. Other
         // tests don't exercise it; a no-op stub keeps DI satisfied.
@@ -228,6 +230,30 @@ describe('ProfileService', () => {
     });
   });
 
+  describe('getLeadsPricing — admin-configurable leads costs', () => {
+    let settingRepo: ReturnType<typeof mockRepo>;
+    beforeEach(() => { settingRepo = (service as any).settingRepo; });
+
+    it('falls back to the defaults (R250 base, 30-day baseline) when unset', async () => {
+      settingRepo.findOne.mockResolvedValue(null);
+      expect(await service.getLeadsPricing()).toEqual({ baseFee: 250, baselineDays: 30 });
+    });
+
+    it('returns the configured values from settings', async () => {
+      settingRepo.findOne.mockImplementation(async ({ where }: any) =>
+        where.key === 'LEADS_BASE_FEE' ? { value: '400' }
+          : where.key === 'LEADS_BASELINE_DAYS' ? { value: '60' } : null);
+      expect(await service.getLeadsPricing()).toEqual({ baseFee: 400, baselineDays: 60 });
+    });
+
+    it('ignores non-positive / non-numeric config and uses the defaults', async () => {
+      settingRepo.findOne.mockImplementation(async ({ where }: any) =>
+        where.key === 'LEADS_BASE_FEE' ? { value: 'abc' }
+          : where.key === 'LEADS_BASELINE_DAYS' ? { value: '0' } : null);
+      expect(await service.getLeadsPricing()).toEqual({ baseFee: 250, baselineDays: 30 });
+    });
+  });
+
   describe('certificates — list & public validation', () => {
     it('getMyCertificates returns the business own certs (newest first)', async () => {
       const businessRepo = (service as any).businessRepo;
@@ -388,6 +414,7 @@ describe('ProfileService', () => {
           { provide: getRepositoryToken(Business),        useFactory: mockRepo },
           { provide: getRepositoryToken(Transaction),     useFactory: mockRepo },
           { provide: getRepositoryToken(DataCertificate), useFactory: mockRepo },
+          { provide: getRepositoryToken(Setting),         useFactory: mockRepo },
           { provide: ReferralService,                     useValue: referral },
           { provide: DataSource,                          useValue: dsMock },
         ],
@@ -496,6 +523,31 @@ describe('ProfileService', () => {
       });
       // 15-day window → ×0.5.
       expect(result.totalCost).toBe(1); // 2 × (15/30)
+    });
+
+    it('charges the admin-configured base fee (not the hardcoded R250)', async () => {
+      wireMatches(100, 1, 2); // 2 matches × per-person cost 1
+      (service as any).settingRepo.findOne.mockImplementation(async ({ where }: any) =>
+        where.key === 'LEADS_BASE_FEE' ? { value: '100' } : null); // baseline unset → 30
+      const result = await service.purchaseLeads(7, {
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 30,
+      });
+      const cert = managerSpy.save.mock.calls.find((c: any[]) => c[0] === DataCertificate)![1];
+      expect(cert.basePrice).toBe(100);
+      expect(cert.leadsCost).toBe(2);
+      expect(cert.totalPrice).toBe(102);
+      expect(result.certificatePrice).toBe(102);
+    });
+
+    it('uses the admin-configured baseline days as the pro-rata divisor', async () => {
+      wireMatches(100, 1, 2); // 2 matches × per-person cost 1
+      (service as any).settingRepo.findOne.mockImplementation(async ({ where }: any) =>
+        where.key === 'LEADS_BASELINE_DAYS' ? { value: '60' } : null); // base fee unset → 250
+      const result = await service.purchaseLeads(7, {
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 60,
+      });
+      // 60-day window ÷ 60-day baseline → ×1 (not ×2). Leads cost unchanged.
+      expect(result.totalCost).toBe(2);
     });
 
     it('does NOT buy leads or issue a certificate when the business cannot afford the R250 base fee', async () => {

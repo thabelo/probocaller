@@ -61,6 +61,12 @@ export class ProfileController {
     return this.profileService.getBusinessLeads(req.user.userId, businessId ? Number(businessId) : undefined);
   }
 
+  @Get('leads-pricing')
+  @ApiOperation({ summary: 'Current leads pricing (certificate base fee + pro-rata baseline days)' })
+  getLeadsPricing() {
+    return this.profileService.getLeadsPricing();
+  }
+
   @Get('certificates')
   @ApiOperation({ summary: 'Business: your issued data-usage certificates' })
   getMyCertificates(@Request() req, @Query('businessId') businessId?: string) {

@@ -9,12 +9,16 @@ import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
 import { Transaction } from '../transaction/transaction.entity';
 import { DataCertificate } from './data-certificate.entity';
+import { Setting } from '../config/setting.entity';
 import { randomBytes } from 'crypto';
 
 // A data-usage certificate costs a fixed base fee plus the cost of the leads it
 // generates. Buying leads always mints a new certificate; the leads on an issued
-// certificate are frozen.
-const CERTIFICATE_BASE_FEE = 250;
+// certificate are frozen. The base fee and the pro-rata baseline period are
+// admin-configurable (settings LEADS_BASE_FEE / LEADS_BASELINE_DAYS); these are
+// the fallbacks when unset.
+const DEFAULT_LEADS_BASE_FEE = 250;
+const DEFAULT_LEADS_BASELINE_DAYS = 30;
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpsertProfileFieldDto } from './dto/upsert-profile-field.dto';
 import { QueryAudienceDto, SaveAudienceDto } from './dto/query-audience.dto';
@@ -49,9 +53,27 @@ export class ProfileService {
     private txRepo: Repository<Transaction>,
     @InjectRepository(DataCertificate)
     private certRepo: Repository<DataCertificate>,
+    @InjectRepository(Setting)
+    private settingRepo: Repository<Setting>,
     private readonly referralService: ReferralService,
     private readonly dataSource: DataSource,
   ) {}
+
+  // Admin-configurable leads pricing: the certificate base fee and the pro-rata
+  // baseline (the window the base fee covers, and the divisor for scaling the
+  // leads cost). Invalid/unset config falls back to the defaults.
+  async getLeadsPricing(): Promise<{ baseFee: number; baselineDays: number }> {
+    const [feeRow, daysRow] = await Promise.all([
+      this.settingRepo.findOne({ where: { key: 'LEADS_BASE_FEE' } }),
+      this.settingRepo.findOne({ where: { key: 'LEADS_BASELINE_DAYS' } }),
+    ]);
+    const fee = feeRow ? parseFloat(feeRow.value) : NaN;
+    const days = daysRow ? parseFloat(daysRow.value) : NaN;
+    return {
+      baseFee: Number.isFinite(fee) && fee >= 0 ? fee : DEFAULT_LEADS_BASE_FEE,
+      baselineDays: Number.isFinite(days) && days > 0 ? days : DEFAULT_LEADS_BASELINE_DAYS,
+    };
+  }
 
   // ─── Profile fields (public + admin) ─────────────────────────────────────
 
@@ -347,11 +369,14 @@ export class ProfileService {
       ? new Date(Date.now() + dto.consentDays * 86400_000)
       : null;
 
-    // Pro-rata pricing: the R250 base fee covers a standard 30-day authorisation;
-    // the per-person leads cost scales linearly with the chosen window
-    // (days ÷ 30). A 60-day set costs ×2 on leads, a 15-day set ×0.5.
-    const periodDays = dto.consentDays && dto.consentDays > 0 ? dto.consentDays : 30;
-    const periodFactor = periodDays / 30;
+    // Admin-configurable pricing (base fee + pro-rata baseline).
+    const { baseFee, baselineDays } = await this.getLeadsPricing();
+
+    // Pro-rata pricing: the base fee covers a standard `baselineDays` window; the
+    // per-person leads cost scales linearly with the chosen window
+    // (days ÷ baselineDays). A double-length set costs ×2 on leads, etc.
+    const periodDays = dto.consentDays && dto.consentDays > 0 ? dto.consentDays : baselineDays;
+    const periodFactor = periodDays / baselineDays;
 
     // H6 bugfix — wrap the wallet-mutating loop in a single transaction with
     // a pessimistic_write lock on the caller's wallet row, so two parallel
@@ -370,10 +395,10 @@ export class ProfileService {
       // that can't cover the base fee can't buy leads at all. Reserve it up front
       // so the per-lead loop only spends the remaining balance; refund it if no
       // lead ends up being bought (no certificate is issued for zero leads).
-      if (Number(lockedCaller.walletBalance) < CERTIFICATE_BASE_FEE) {
+      if (Number(lockedCaller.walletBalance) < baseFee) {
         return { purchased: 0, leads: [] as any[], totalCost: 0, totalEarnedByUsers: 0, certificate: undefined as DataCertificate | undefined, certificatePrice: 0 };
       }
-      lockedCaller.walletBalance = parseFloat((Number(lockedCaller.walletBalance) - CERTIFICATE_BASE_FEE).toFixed(6));
+      lockedCaller.walletBalance = parseFloat((Number(lockedCaller.walletBalance) - baseFee).toFixed(6));
 
       const leads: any[] = [];
       let totalCost = 0;
@@ -461,7 +486,7 @@ export class ProfileService {
       if (leads.length > 0) {
         const periodStart = new Date();
         const periodEnd = new Date(periodStart.getTime() + periodDays * 86400_000);
-        certificatePrice = parseFloat((CERTIFICATE_BASE_FEE + totalCost).toFixed(4));
+        certificatePrice = parseFloat((baseFee + totalCost).toFixed(4));
         certificate = await manager.save(DataCertificate, manager.create(DataCertificate, {
           code: ProfileService.generateCertCode(),
           name: (dto.name || '').trim() || `Leads ${new Date().toISOString().slice(0, 10)}`,
@@ -472,17 +497,17 @@ export class ProfileService {
           leadCount: leads.length,
           userIds: leads.map((l) => l.userId),
           purpose: dto.purpose || null,
-          basePrice: CERTIFICATE_BASE_FEE,
+          basePrice: baseFee,
           leadsCost: totalCost,
           totalPrice: certificatePrice,
         }));
         await manager.save(Transaction, manager.create(Transaction, {
-          userId: businessUserId, type: 'CERTIFICATE_FEE', amount: -CERTIFICATE_BASE_FEE,
+          userId: businessUserId, type: 'CERTIFICATE_FEE', amount: -baseFee,
           description: `Data certificate ${certificate.code} — base fee`,
         }));
       } else {
         // No lead bought → refund the reserved base fee.
-        lockedCaller.walletBalance = parseFloat((Number(lockedCaller.walletBalance) + CERTIFICATE_BASE_FEE).toFixed(6));
+        lockedCaller.walletBalance = parseFloat((Number(lockedCaller.walletBalance) + baseFee).toFixed(6));
       }
 
       await manager.save(User, lockedCaller);
