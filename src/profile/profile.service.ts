@@ -180,8 +180,27 @@ export class ProfileService {
       throw new ForbiddenException('A data certificate is required to view leads. Purchase audience data to be issued one.');
     }
 
+    return this.buildLeadEntries(business.id);
+  }
+
+  // A lead set = one certificate. Selecting it lists exactly the users it froze
+  // (cert.userIds), with the same lead detail as the full leads view.
+  async getCertificateLeads(businessUserId: number, code: string, businessId?: number) {
+    const where = businessId ? { id: businessId, userId: businessUserId } : { userId: businessUserId };
+    const business = await this.businessRepo.findOne({ where });
+    if (!business) throw new ForbiddenException('Business profile required');
+
+    const cert = await this.certRepo.findOne({ where: { code, businessId: business.id } });
+    if (!cert) throw new NotFoundException('Certificate not found');
+
+    return this.buildLeadEntries(business.id, new Set(cert.userIds || []));
+  }
+
+  // Deduped per-user lead entries from the business's access logs. When
+  // `userIds` is given, restrict to that frozen set (one certificate's people).
+  private async buildLeadEntries(businessId: number, userIds?: Set<number>) {
     const logs = await this.accessLogRepo.find({
-      where: { businessId: business.id },
+      where: { businessId },
       relations: ['user'],
       order: { accessedAt: 'DESC' },
     });
@@ -190,6 +209,7 @@ export class ProfileService {
     for (const log of logs) {
       const u: any = (log as any).user;
       if (!u) continue;
+      if (userIds && !userIds.has(u.id)) continue;
       let entry = byUser.get(u.id);
       if (!entry) {
         const policy = u.businessCallPolicy || 'paid';

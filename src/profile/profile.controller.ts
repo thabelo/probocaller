@@ -67,6 +67,12 @@ export class ProfileController {
     return this.profileService.getMyCertificates(req.user.userId, businessId ? Number(businessId) : undefined);
   }
 
+  @Get('certificates/:code/leads')
+  @ApiOperation({ summary: 'Business: the people covered by one certificate (its lead set)' })
+  getCertificateLeads(@Request() req, @Param('code') code: string, @Query('businessId') businessId?: string) {
+    return this.profileService.getCertificateLeads(req.user.userId, code, businessId ? Number(businessId) : undefined);
+  }
+
   @Get('certificates/:code/validate')
   @ApiOperation({ summary: 'Validate a data-usage certificate by its public code — confirms the authorisation window' })
   validateCertificate(@Param('code') code: string) {

@@ -184,6 +184,50 @@ describe('ProfileService', () => {
     });
   });
 
+  // A lead set = one certificate. Selecting it lists exactly the people it
+  // froze (cert.userIds), with the same lead detail as the full leads view.
+  describe('getCertificateLeads — the people covered by one certificate', () => {
+    let accessLogRepo: ReturnType<typeof mockRepo>;
+    let businessRepo: ReturnType<typeof mockRepo>;
+    let certRepo: ReturnType<typeof mockRepo>;
+    beforeEach(() => {
+      accessLogRepo = (service as any).accessLogRepo;
+      businessRepo = (service as any).businessRepo;
+      certRepo = (service as any).certRepo;
+    });
+
+    it('throws Forbidden when the caller has no business profile', async () => {
+      businessRepo.findOne.mockResolvedValue(null);
+      const { ForbiddenException } = require('@nestjs/common');
+      await expect(service.getCertificateLeads(9, 'PC-A')).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('throws NotFound when the cert is not one of the business own certs', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 7, userId: 9 });
+      certRepo.findOne.mockResolvedValue(null);
+      const { NotFoundException } = require('@nestjs/common');
+      await expect(service.getCertificateLeads(9, 'PC-NOPE')).rejects.toBeInstanceOf(NotFoundException);
+      // ownership-scoped lookup: by code AND the resolved business
+      expect(certRepo.findOne).toHaveBeenCalledWith({ where: { code: 'PC-NOPE', businessId: 7 } });
+    });
+
+    it('returns only the leads whose userId is frozen on the certificate', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 7, userId: 9 });
+      certRepo.findOne.mockResolvedValue({ id: 1, code: 'PC-A', businessId: 7, userIds: [100] });
+      accessLogRepo.find.mockResolvedValue([
+        { userId: 100, fieldsAccessed: ['income_range'], creditsCost: '0.05', accessedAt: new Date('2026-02-02'),
+          user: { id: 100, name: 'Alice', phoneNumber: '+27820000001', businessCallPolicy: 'paid' } },
+        { userId: 200, fieldsAccessed: ['age_range'], creditsCost: '0.02', accessedAt: new Date('2026-03-03'),
+          user: { id: 200, name: 'Bob', phoneNumber: '+27820000002', businessCallPolicy: 'blocked' } },
+      ]);
+      const leads = await service.getCertificateLeads(9, 'PC-A');
+      expect(leads).toHaveLength(1);
+      expect(leads[0].userId).toBe(100);
+      expect(leads[0].name).toBe('Alice');
+      expect(leads[0].callable).toBe(true);
+    });
+  });
+
   describe('certificates — list & public validation', () => {
     it('getMyCertificates returns the business own certs (newest first)', async () => {
       const businessRepo = (service as any).businessRepo;
