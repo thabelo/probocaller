@@ -40,6 +40,11 @@ export class QueryAudienceDto {
   @IsOptional()
   @IsBoolean()
   dryRun?: boolean;
+
+  @ApiPropertyOptional({ description: 'Purchase on behalf of this owned business (else the caller’s default business).' })
+  @IsOptional()
+  @IsNumber()
+  businessId?: number;
 }
 
 export class SaveAudienceDto {

@@ -266,7 +266,9 @@ export class ProfileService {
   }
 
   async queryAudience(businessUserId: number, dto: QueryAudienceDto, allowedFields: string[] = []) {
-    const business = await this.businessRepo.findOne({ where: { userId: businessUserId } });
+    const business = await this.businessRepo.findOne({
+      where: dto.businessId ? { id: dto.businessId, userId: businessUserId } : { userId: businessUserId },
+    });
     if (!business) throw new ForbiddenException('Business profile required');
     const fields = await this.getEnabledFields();
     const fieldMap = Object.fromEntries(fields.map((f) => [f.key, f]));
@@ -288,7 +290,11 @@ export class ProfileService {
   }
 
   async purchaseLeads(businessUserId: number, dto: QueryAudienceDto, allowedFields: string[] = []) {
-    const business = await this.businessRepo.findOne({ where: { userId: businessUserId } });
+    // Purchase on behalf of a specific owned business when one is given (leads are
+    // per business), else the caller's default business.
+    const business = await this.businessRepo.findOne({
+      where: dto.businessId ? { id: dto.businessId, userId: businessUserId } : { userId: businessUserId },
+    });
     if (!business) throw new ForbiddenException('Business profile required');
 
     const caller = await this.userRepo.findOne({ where: { id: businessUserId } });
