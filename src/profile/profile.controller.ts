@@ -55,6 +55,12 @@ export class ProfileController {
 
   // ─── Business: audience + leads ───────────────────────────────────────────
 
+  @Get('business/leads')
+  @ApiOperation({ summary: 'Business: the leads you have acquired via /leads and whether you may call each' })
+  getBusinessLeads(@Request() req) {
+    return this.profileService.getBusinessLeads(req.user.userId);
+  }
+
   @Post('audience/query')
   @ApiOperation({ summary: 'Business: estimate reach and cost for audience filters' })
   queryAudience(@Request() req, @Body() dto: QueryAudienceDto) {

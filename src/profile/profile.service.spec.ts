@@ -116,6 +116,52 @@ describe('ProfileService', () => {
     });
   });
 
+  // A business's "Leads" = the users it has acquired via /leads (DataAccessLog),
+  // de-duplicated per user, with a callable flag (same gate as the call flow).
+  describe('getBusinessLeads — the leads a business acquired + whether callable', () => {
+    let accessLogRepo: ReturnType<typeof mockRepo>;
+    let businessRepo: ReturnType<typeof mockRepo>;
+    beforeEach(() => {
+      accessLogRepo = (service as any).accessLogRepo;
+      businessRepo = (service as any).businessRepo;
+    });
+
+    it('throws Forbidden when the caller has no business profile', async () => {
+      businessRepo.findOne.mockResolvedValue(null);
+      const { ForbiddenException } = require('@nestjs/common');
+      await expect(service.getBusinessLeads(9)).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('dedupes per user, unions fields, sums spend, and flags callability', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 7, userId: 9 });
+      accessLogRepo.find.mockResolvedValue([
+        { userId: 100, fieldsAccessed: ['income_range'], creditsCost: '0.05', accessedAt: new Date('2026-02-02'),
+          user: { id: 100, name: 'Alice', phoneNumber: '+27820000001', businessCallPolicy: 'paid' } },
+        { userId: 100, fieldsAccessed: ['marital_status'], creditsCost: '0.02', accessedAt: new Date('2026-01-01'),
+          user: { id: 100, name: 'Alice', phoneNumber: '+27820000001', businessCallPolicy: 'paid' } },
+        { userId: 200, fieldsAccessed: ['age_range'], creditsCost: '0.02', accessedAt: new Date('2026-03-03'),
+          user: { id: 200, name: 'Bob', phoneNumber: '+27820000002', businessCallPolicy: 'blocked' } },
+      ]);
+      const leads = await service.getBusinessLeads(9);
+      expect(leads).toHaveLength(2);
+      const alice = leads.find((l: any) => l.userId === 100);
+      expect(alice.name).toBe('Alice');
+      expect(alice.phone).toBe('+27820000001');
+      expect(alice.fields.sort()).toEqual(['income_range', 'marital_status']);
+      expect(Number(alice.totalSpent)).toBeCloseTo(0.07);
+      expect(alice.callable).toBe(true);           // paid → callable
+      const bob = leads.find((l: any) => l.userId === 200);
+      expect(bob.callable).toBe(false);            // blocked → not callable
+      expect(bob.callPolicy).toBe('blocked');
+    });
+
+    it('returns [] when the business has purchased nothing', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 7, userId: 9 });
+      accessLogRepo.find.mockResolvedValue([]);
+      expect(await service.getBusinessLeads(9)).toEqual([]);
+    });
+  });
+
   describe('getEnabledFields', () => {
     it('returns only enabled fields ordered by sortOrder', async () => {
       const fields = [mockField()];

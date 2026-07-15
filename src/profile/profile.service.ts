@@ -151,6 +151,47 @@ export class ProfileService {
     return this.getMyProfile(userId);
   }
 
+  /**
+   * The leads a business has ACQUIRED via the /leads API — de-duplicated per
+   * user (union of fields bought, total spent, latest purchase), each flagged
+   * `callable` using the same gate as the call flow (businessCallPolicy !==
+   * 'blocked'). This is "the leads a business is allowed to call".
+   */
+  async getBusinessLeads(businessUserId: number) {
+    const business = await this.businessRepo.findOne({ where: { userId: businessUserId } });
+    if (!business) throw new ForbiddenException('Business profile required');
+
+    const logs = await this.accessLogRepo.find({
+      where: { businessId: business.id },
+      relations: ['user'],
+      order: { accessedAt: 'DESC' },
+    });
+
+    const byUser = new Map<number, any>();
+    for (const log of logs) {
+      const u: any = (log as any).user;
+      if (!u) continue;
+      let entry = byUser.get(u.id);
+      if (!entry) {
+        const policy = u.businessCallPolicy || 'paid';
+        entry = {
+          userId: u.id,
+          name: u.name,
+          phone: u.phoneNumber,
+          fields: new Set<string>(),
+          totalSpent: 0,
+          lastPurchasedAt: log.accessedAt, // logs are DESC → first seen is latest
+          callPolicy: policy,
+          callable: policy !== 'blocked',
+        };
+        byUser.set(u.id, entry);
+      }
+      (log.fieldsAccessed || []).forEach((f) => entry.fields.add(f));
+      entry.totalSpent = parseFloat((entry.totalSpent + Number(log.creditsCost || 0)).toFixed(4));
+    }
+    return [...byUser.values()].map((e) => ({ ...e, fields: [...e.fields] }));
+  }
+
   // ─── Admin: view & control any user's data profile ──────────────────────────
 
   async adminGetUserDataProfile(userId: number) {
