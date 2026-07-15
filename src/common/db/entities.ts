@@ -13,6 +13,7 @@ import { CallPermissionRequest } from '../../data-broker/call-permission-request
 import { ProfileField } from '../../profile/profile-field.entity';
 import { UserProfile } from '../../profile/user-profile.entity';
 import { DataAccessLog } from '../../profile/data-access-log.entity';
+import { DataCertificate } from '../../profile/data-certificate.entity';
 import { BusinessAudience } from '../../profile/business-audience.entity';
 import { KybSubmission } from '../../kyb/entities/kyb-submission.entity';
 import { KybDocument } from '../../kyb/entities/kyb-document.entity';
@@ -61,6 +62,7 @@ export const ENTITIES = [
   ProfileField,
   UserProfile,
   DataAccessLog,
+  DataCertificate,
   BusinessAudience,
   KybSubmission,
   KybDocument,

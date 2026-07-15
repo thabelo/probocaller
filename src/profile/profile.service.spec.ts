@@ -9,6 +9,7 @@ import { BusinessAudience } from './business-audience.entity';
 import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
 import { Transaction } from '../transaction/transaction.entity';
+import { DataCertificate } from './data-certificate.entity';
 import { ReferralService } from '../referral/referral.service';
 import { DataSource } from 'typeorm';
 
@@ -18,6 +19,7 @@ const mockRepo = () => ({
   create: jest.fn(),
   save: jest.fn(),
   update: jest.fn(),
+  count: jest.fn().mockResolvedValue(0),
 });
 
 const mockField = (overrides = {}): ProfileField =>
@@ -42,6 +44,7 @@ describe('ProfileService', () => {
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: getRepositoryToken(Business), useFactory: mockRepo },
         { provide: getRepositoryToken(Transaction), useFactory: mockRepo },
+        { provide: getRepositoryToken(DataCertificate), useFactory: mockRepo },
         { provide: ReferralService, useValue: { payCommission: jest.fn().mockResolvedValue(undefined) } },
         // DataSource is required by purchaseLeads' transaction wrapper. Other
         // tests don't exercise it; a no-op stub keeps DI satisfied.
@@ -121,15 +124,25 @@ describe('ProfileService', () => {
   describe('getBusinessLeads — the leads a business acquired + whether callable', () => {
     let accessLogRepo: ReturnType<typeof mockRepo>;
     let businessRepo: ReturnType<typeof mockRepo>;
+    let certRepo: ReturnType<typeof mockRepo>;
     beforeEach(() => {
       accessLogRepo = (service as any).accessLogRepo;
       businessRepo = (service as any).businessRepo;
+      certRepo = (service as any).certRepo;
+      certRepo.count.mockResolvedValue(1); // has a certificate → leads unlocked by default
     });
 
     it('throws Forbidden when the caller has no business profile', async () => {
       businessRepo.findOne.mockResolvedValue(null);
       const { ForbiddenException } = require('@nestjs/common');
       await expect(service.getBusinessLeads(9)).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    it('throws Forbidden when the business holds NO certificate (leads gated on a cert)', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 7, userId: 9 });
+      certRepo.count.mockResolvedValue(0);
+      const { ForbiddenException } = require('@nestjs/common');
+      await expect(service.getBusinessLeads(9)).rejects.toThrow(/certificate/i);
     });
 
     it('dedupes per user, unions fields, sums spend, and flags callability', async () => {
@@ -159,6 +172,47 @@ describe('ProfileService', () => {
       businessRepo.findOne.mockResolvedValue({ id: 7, userId: 9 });
       accessLogRepo.find.mockResolvedValue([]);
       expect(await service.getBusinessLeads(9)).toEqual([]);
+    });
+  });
+
+  describe('certificates — list & public validation', () => {
+    it('getMyCertificates returns the business own certs (newest first)', async () => {
+      const businessRepo = (service as any).businessRepo;
+      const certRepo = (service as any).certRepo;
+      businessRepo.findOne.mockResolvedValue({ id: 7, userId: 9 });
+      certRepo.find.mockResolvedValue([{ id: 2, code: 'PC-2' }, { id: 1, code: 'PC-1' }]);
+      const certs = await service.getMyCertificates(9);
+      expect(certRepo.find).toHaveBeenCalledWith(expect.objectContaining({ where: { businessId: 7 } }));
+      expect(certs.map((c: any) => c.code)).toEqual(['PC-2', 'PC-1']);
+    });
+
+    it('validateCertificate reports ACTIVE within the period and EXPIRED after', async () => {
+      const certRepo = (service as any).certRepo;
+      const now = Date.now();
+      certRepo.findOne.mockResolvedValueOnce({
+        code: 'PC-OK', businessName: 'MTN HO', leadCount: 3,
+        periodStart: new Date(now - 86400_000), periodEnd: new Date(now + 86400_000), issuedAt: new Date(now),
+      });
+      const active = await service.validateCertificate('PC-OK');
+      expect(active.valid).toBe(true);
+      expect(active.active).toBe(true);
+      expect(active.businessName).toBe('MTN HO');
+
+      certRepo.findOne.mockResolvedValueOnce({
+        code: 'PC-OLD', businessName: 'MTN HO', leadCount: 3,
+        periodStart: new Date(now - 3 * 86400_000), periodEnd: new Date(now - 86400_000), issuedAt: new Date(now),
+      });
+      const expired = await service.validateCertificate('PC-OLD');
+      expect(expired.valid).toBe(true);   // it existed / was issued
+      expect(expired.active).toBe(false); // but the window has passed
+    });
+
+    it('validateCertificate reports not-found for an unknown code', async () => {
+      const certRepo = (service as any).certRepo;
+      certRepo.findOne.mockResolvedValue(null);
+      const res = await service.validateCertificate('NOPE');
+      expect(res.valid).toBe(false);
+      expect(res.active).toBe(false);
     });
   });
 
@@ -280,6 +334,7 @@ describe('ProfileService', () => {
           { provide: getRepositoryToken(User),            useFactory: mockRepo },
           { provide: getRepositoryToken(Business),        useFactory: mockRepo },
           { provide: getRepositoryToken(Transaction),     useFactory: mockRepo },
+          { provide: getRepositoryToken(DataCertificate), useFactory: mockRepo },
           { provide: ReferralService,                     useValue: referral },
           { provide: DataSource,                          useValue: dsMock },
         ],
@@ -339,6 +394,32 @@ describe('ProfileService', () => {
       wireMatches(undefined, 1, 3);
       const result = await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } } });
       expect(result.purchased).toBe(3);
+    });
+
+    it('issues a data certificate covering the purchased leads for a period', async () => {
+      wireMatches(100, 1, 2);
+      const result = await service.purchaseLeads(7, {
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 30, purpose: 'CRM',
+      });
+      expect(result.purchased).toBe(2);
+      const certSave = managerSpy.save.mock.calls.find((c: any[]) => c[0] === DataCertificate);
+      expect(certSave).toBeDefined();
+      const cert = certSave[1];
+      expect(cert.businessId).toBe(1);
+      expect(cert.leadCount).toBe(2);
+      expect(cert.userIds.sort()).toEqual([100, 101]);
+      expect(typeof cert.code).toBe('string');
+      expect(cert.code.length).toBeGreaterThan(4);
+      expect(new Date(cert.periodEnd).getTime()).toBeGreaterThan(new Date(cert.periodStart).getTime());
+      // returned so the client can show it immediately
+      expect(result.certificate?.code).toBe(cert.code);
+    });
+
+    it('issues NO certificate when nothing was purchased', async () => {
+      wireMatches(0, 0.05, 5); // budget 0 → 0 purchased
+      await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 0 });
+      const certSaves = managerSpy.save.mock.calls.filter((c: any[]) => c[0] === DataCertificate);
+      expect(certSaves).toHaveLength(0);
     });
 
     it('incognito caller: writes no DataAccessLog, but the user still earns', async () => {

@@ -56,9 +56,21 @@ export class ProfileController {
   // ─── Business: audience + leads ───────────────────────────────────────────
 
   @Get('business/leads')
-  @ApiOperation({ summary: 'Business: the leads you have acquired via /leads and whether you may call each' })
+  @ApiOperation({ summary: 'Business: the leads you have acquired via /leads and whether you may call each (requires a certificate)' })
   getBusinessLeads(@Request() req) {
     return this.profileService.getBusinessLeads(req.user.userId);
+  }
+
+  @Get('certificates')
+  @ApiOperation({ summary: 'Business: your issued data-usage certificates' })
+  getMyCertificates(@Request() req) {
+    return this.profileService.getMyCertificates(req.user.userId);
+  }
+
+  @Get('certificates/:code/validate')
+  @ApiOperation({ summary: 'Validate a data-usage certificate by its public code — confirms the authorisation window' })
+  validateCertificate(@Param('code') code: string) {
+    return this.profileService.validateCertificate(code);
   }
 
   @Post('audience/query')

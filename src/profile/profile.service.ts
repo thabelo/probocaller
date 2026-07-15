@@ -8,6 +8,8 @@ import { BusinessAudience } from './business-audience.entity';
 import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
 import { Transaction } from '../transaction/transaction.entity';
+import { DataCertificate } from './data-certificate.entity';
+import { randomBytes } from 'crypto';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpsertProfileFieldDto } from './dto/upsert-profile-field.dto';
 import { QueryAudienceDto, SaveAudienceDto } from './dto/query-audience.dto';
@@ -40,6 +42,8 @@ export class ProfileService {
     private businessRepo: Repository<Business>,
     @InjectRepository(Transaction)
     private txRepo: Repository<Transaction>,
+    @InjectRepository(DataCertificate)
+    private certRepo: Repository<DataCertificate>,
     private readonly referralService: ReferralService,
     private readonly dataSource: DataSource,
   ) {}
@@ -161,6 +165,13 @@ export class ProfileService {
     const business = await this.businessRepo.findOne({ where: { userId: businessUserId } });
     if (!business) throw new ForbiddenException('Business profile required');
 
+    // Leads are viewable only while the business holds a data certificate — the
+    // record of its authorisation to use those numbers.
+    const certCount = await this.certRepo.count({ where: { businessId: business.id } });
+    if (certCount === 0) {
+      throw new ForbiddenException('A data certificate is required to view leads. Purchase audience data to be issued one.');
+    }
+
     const logs = await this.accessLogRepo.find({
       where: { businessId: business.id },
       relations: ['user'],
@@ -278,7 +289,7 @@ export class ProfileService {
     const fields = await this.getEnabledFields();
     const fieldMap = Object.fromEntries(fields.map((f) => [f.key, f]));
     const matches = await this.matchingProfiles(dto.filters, { from: dto.fromDate, to: dto.toDate });
-    if (matches.length === 0) return { purchased: 0, leads: [], totalCost: 0 };
+    if (matches.length === 0) return { purchased: 0, leads: [] as any[], totalCost: 0, totalEarnedByUsers: 0, certificate: undefined as DataCertificate | undefined };
 
     // An API key's scopes (allowedFields) cap which fields it may buy.
     let requestedKeys = dto.filters ? Object.keys(dto.filters) : fields.map((f) => f.key);
@@ -391,8 +402,64 @@ export class ProfileService {
 
       await manager.save(User, lockedCaller);
 
-      return { purchased: leads.length, leads, totalCost, totalEarnedByUsers: totalEarned };
+      // Issue a data-usage certificate for this purchase. It attests the business
+      // was authorised to use the purchased numbers over [now, now + consentDays]
+      // (30-day default), and its code can be validated by anyone. Holding a
+      // certificate is what unlocks the business's Leads view.
+      let certificate: DataCertificate | undefined;
+      if (leads.length > 0) {
+        const periodStart = new Date();
+        const days = dto.consentDays && dto.consentDays > 0 ? dto.consentDays : 30;
+        const periodEnd = new Date(periodStart.getTime() + days * 86400_000);
+        certificate = await manager.save(DataCertificate, manager.create(DataCertificate, {
+          code: ProfileService.generateCertCode(),
+          businessId: business.id,
+          businessName: business.companyName,
+          periodStart,
+          periodEnd,
+          leadCount: leads.length,
+          userIds: leads.map((l) => l.userId),
+          purpose: dto.purpose || null,
+        }));
+      }
+
+      return { purchased: leads.length, leads, totalCost, totalEarnedByUsers: totalEarned, certificate };
     });
+  }
+
+  // A short, human-shareable certificate code, e.g. 'PC-3F9K-27A1'.
+  private static generateCertCode(): string {
+    const raw = randomBytes(4).toString('hex').toUpperCase(); // 8 hex chars
+    return `PC-${raw.slice(0, 4)}-${raw.slice(4, 8)}`;
+  }
+
+  /** The certificates a business has been issued (newest first). */
+  async getMyCertificates(businessUserId: number) {
+    const business = await this.businessRepo.findOne({ where: { userId: businessUserId } });
+    if (!business) throw new ForbiddenException('Business profile required');
+    return this.certRepo.find({ where: { businessId: business.id }, order: { issuedAt: 'DESC' } });
+  }
+
+  /**
+   * Validate a certificate by its public code — anyone can confirm a business's
+   * authorisation window. `valid` = the certificate exists; `active` = now falls
+   * within [periodStart, periodEnd].
+   */
+  async validateCertificate(code: string) {
+    const cert = await this.certRepo.findOne({ where: { code } });
+    if (!cert) return { valid: false, active: false, code };
+    const now = Date.now();
+    const active = now >= new Date(cert.periodStart).getTime() && now <= new Date(cert.periodEnd).getTime();
+    return {
+      valid: true,
+      active,
+      code: cert.code,
+      businessName: cert.businessName,
+      periodStart: cert.periodStart,
+      periodEnd: cert.periodEnd,
+      leadCount: cert.leadCount,
+      issuedAt: cert.issuedAt,
+    };
   }
 
   // ─── Aggregate reports (anonymised) ───────────────────────────────────────
