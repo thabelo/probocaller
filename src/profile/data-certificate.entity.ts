@@ -35,6 +35,18 @@ export class DataCertificate {
   @Column({ type: 'int', default: 0 })
   leadCount: number;
 
+  // Price of the certificate: a fixed base fee plus the cost of the leads
+  // generated at issue time. Frozen — leads on an issued cert can't be changed;
+  // new leads require buying a new certificate.
+  @Column({ type: 'decimal', precision: 12, scale: 4, default: 0 })
+  basePrice: number;
+
+  @Column({ type: 'decimal', precision: 12, scale: 4, default: 0 })
+  leadsCost: number;
+
+  @Column({ type: 'decimal', precision: 12, scale: 4, default: 0 })
+  totalPrice: number;
+
   // The user ids covered by this certificate (the purchased leads).
   @Column({ type: 'jsonb', default: () => "'[]'" })
   userIds: number[];

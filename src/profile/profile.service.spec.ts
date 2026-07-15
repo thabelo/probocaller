@@ -396,8 +396,8 @@ describe('ProfileService', () => {
       expect(result.purchased).toBe(3);
     });
 
-    it('issues a data certificate covering the purchased leads for a period', async () => {
-      wireMatches(100, 1, 2);
+    it('issues a certificate priced R250 base + leads, freezing the purchased leads', async () => {
+      wireMatches(100, 1, 2); // 2 matches × cost 1 → leadsCost 2
       const result = await service.purchaseLeads(7, {
         filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 30, purpose: 'CRM',
       });
@@ -409,14 +409,27 @@ describe('ProfileService', () => {
       expect(cert.leadCount).toBe(2);
       expect(cert.userIds.sort()).toEqual([100, 101]);
       expect(typeof cert.code).toBe('string');
-      expect(cert.code.length).toBeGreaterThan(4);
+      // Price = R250 base + the leads generated at that time.
+      expect(cert.basePrice).toBe(250);
+      expect(cert.leadsCost).toBe(2);
+      expect(cert.totalPrice).toBe(252);
       expect(new Date(cert.periodEnd).getTime()).toBeGreaterThan(new Date(cert.periodStart).getTime());
-      // returned so the client can show it immediately
       expect(result.certificate?.code).toBe(cert.code);
+      // The business wallet paid the R250 base fee on top of the lead cost.
+      expect(result.totalCost).toBe(2);        // lead cost only
+      expect(result.certificatePrice).toBe(252);
     });
 
-    it('issues NO certificate when nothing was purchased', async () => {
-      wireMatches(0, 0.05, 5); // budget 0 → 0 purchased
+    it('does NOT buy leads or issue a certificate when the business cannot afford the R250 base fee', async () => {
+      wireMatches(100, 1, 2, /* callerBalance */ 100); // < 250 base fee
+      const result = await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100 });
+      expect(result.purchased).toBe(0);
+      const certSaves = managerSpy.save.mock.calls.filter((c: any[]) => c[0] === DataCertificate);
+      expect(certSaves).toHaveLength(0);
+    });
+
+    it('issues NO certificate when nothing was purchased (refunds the base fee)', async () => {
+      wireMatches(0, 0.05, 5); // budget 0 → 0 leads
       await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 0 });
       const certSaves = managerSpy.save.mock.calls.filter((c: any[]) => c[0] === DataCertificate);
       expect(certSaves).toHaveLength(0);

@@ -10,6 +10,11 @@ import { Business } from '../business/business.entity';
 import { Transaction } from '../transaction/transaction.entity';
 import { DataCertificate } from './data-certificate.entity';
 import { randomBytes } from 'crypto';
+
+// A data-usage certificate costs a fixed base fee plus the cost of the leads it
+// generates. Buying leads always mints a new certificate; the leads on an issued
+// certificate are frozen.
+const CERTIFICATE_BASE_FEE = 250;
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpsertProfileFieldDto } from './dto/upsert-profile-field.dto';
 import { QueryAudienceDto, SaveAudienceDto } from './dto/query-audience.dto';
@@ -289,7 +294,7 @@ export class ProfileService {
     const fields = await this.getEnabledFields();
     const fieldMap = Object.fromEntries(fields.map((f) => [f.key, f]));
     const matches = await this.matchingProfiles(dto.filters, { from: dto.fromDate, to: dto.toDate });
-    if (matches.length === 0) return { purchased: 0, leads: [] as any[], totalCost: 0, totalEarnedByUsers: 0, certificate: undefined as DataCertificate | undefined };
+    if (matches.length === 0) return { purchased: 0, leads: [] as any[], totalCost: 0, totalEarnedByUsers: 0, certificate: undefined as DataCertificate | undefined, certificatePrice: 0 };
 
     // An API key's scopes (allowedFields) cap which fields it may buy.
     let requestedKeys = dto.filters ? Object.keys(dto.filters) : fields.map((f) => f.key);
@@ -325,6 +330,15 @@ export class ProfileService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!lockedCaller) throw new NotFoundException('Business user not found');
+
+      // A purchase mints a certificate, which carries a fixed base fee. A business
+      // that can't cover the base fee can't buy leads at all. Reserve it up front
+      // so the per-lead loop only spends the remaining balance; refund it if no
+      // lead ends up being bought (no certificate is issued for zero leads).
+      if (Number(lockedCaller.walletBalance) < CERTIFICATE_BASE_FEE) {
+        return { purchased: 0, leads: [] as any[], totalCost: 0, totalEarnedByUsers: 0, certificate: undefined as DataCertificate | undefined, certificatePrice: 0 };
+      }
+      lockedCaller.walletBalance = parseFloat((Number(lockedCaller.walletBalance) - CERTIFICATE_BASE_FEE).toFixed(6));
 
       const leads: any[] = [];
       let totalCost = 0;
@@ -400,17 +414,19 @@ export class ProfileService {
         totalEarned = parseFloat((totalEarned + userEarning).toFixed(6));
       }
 
-      await manager.save(User, lockedCaller);
-
-      // Issue a data-usage certificate for this purchase. It attests the business
-      // was authorised to use the purchased numbers over [now, now + consentDays]
-      // (30-day default), and its code can be validated by anyone. Holding a
-      // certificate is what unlocks the business's Leads view.
+      // Issue a data-usage certificate for this purchase — priced at the base fee
+      // plus the leads generated now (frozen). It attests the business was
+      // authorised to use those numbers over [now, now + consentDays] (30-day
+      // default), and its code can be validated by anyone. Holding a certificate
+      // is what unlocks the business's Leads view. If no lead was bought, refund
+      // the reserved base fee and issue nothing.
       let certificate: DataCertificate | undefined;
+      let certificatePrice = 0;
       if (leads.length > 0) {
         const periodStart = new Date();
         const days = dto.consentDays && dto.consentDays > 0 ? dto.consentDays : 30;
         const periodEnd = new Date(periodStart.getTime() + days * 86400_000);
+        certificatePrice = parseFloat((CERTIFICATE_BASE_FEE + totalCost).toFixed(4));
         certificate = await manager.save(DataCertificate, manager.create(DataCertificate, {
           code: ProfileService.generateCertCode(),
           businessId: business.id,
@@ -420,10 +436,22 @@ export class ProfileService {
           leadCount: leads.length,
           userIds: leads.map((l) => l.userId),
           purpose: dto.purpose || null,
+          basePrice: CERTIFICATE_BASE_FEE,
+          leadsCost: totalCost,
+          totalPrice: certificatePrice,
         }));
+        await manager.save(Transaction, manager.create(Transaction, {
+          userId: businessUserId, type: 'CERTIFICATE_FEE', amount: -CERTIFICATE_BASE_FEE,
+          description: `Data certificate ${certificate.code} — base fee`,
+        }));
+      } else {
+        // No lead bought → refund the reserved base fee.
+        lockedCaller.walletBalance = parseFloat((Number(lockedCaller.walletBalance) + CERTIFICATE_BASE_FEE).toFixed(6));
       }
 
-      return { purchased: leads.length, leads, totalCost, totalEarnedByUsers: totalEarned, certificate };
+      await manager.save(User, lockedCaller);
+
+      return { purchased: leads.length, leads, totalCost, totalEarnedByUsers: totalEarned, certificate, certificatePrice };
     });
   }
 
@@ -458,6 +486,7 @@ export class ProfileService {
       periodStart: cert.periodStart,
       periodEnd: cert.periodEnd,
       leadCount: cert.leadCount,
+      totalPrice: cert.totalPrice,
       issuedAt: cert.issuedAt,
     };
   }

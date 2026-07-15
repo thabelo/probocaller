@@ -11,10 +11,16 @@ describe('DataCertificate entity', () => {
     cert.leadCount = 2;
     cert.userIds = [100, 200];
     cert.purpose = 'CRM';
+    cert.basePrice = 250;
+    cert.leadsCost = 0.06;
+    cert.totalPrice = 250.06;
 
     expect(cert.code).toBe('PC-3F9K-27A1');
     expect(cert.businessId).toBe(4);
     expect(cert.userIds).toEqual([100, 200]);
     expect(cert.periodEnd.getTime()).toBeGreaterThan(cert.periodStart.getTime());
+    // Price = fixed base + the leads generated at that time (frozen).
+    expect(cert.basePrice).toBe(250);
+    expect(cert.totalPrice).toBe(cert.basePrice + cert.leadsCost);
   });
 });
