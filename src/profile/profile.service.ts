@@ -438,6 +438,7 @@ export class ProfileService {
         certificatePrice = parseFloat((CERTIFICATE_BASE_FEE + totalCost).toFixed(4));
         certificate = await manager.save(DataCertificate, manager.create(DataCertificate, {
           code: ProfileService.generateCertCode(),
+          name: (dto.name || '').trim() || `Leads ${new Date().toISOString().slice(0, 10)}`,
           businessId: business.id,
           businessName: business.companyName,
           periodStart,

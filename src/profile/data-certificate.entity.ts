@@ -17,6 +17,10 @@ export class DataCertificate {
   @Column()
   code: string;
 
+  // Business-given name for this lead set, e.g. 'Q3 high-income prospects'.
+  @Column({ default: '' })
+  name: string;
+
   @Column()
   businessId: number;
 

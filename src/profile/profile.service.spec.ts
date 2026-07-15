@@ -408,13 +408,14 @@ describe('ProfileService', () => {
     it('issues a certificate priced R250 base + leads, freezing the purchased leads', async () => {
       wireMatches(100, 1, 2); // 2 matches × cost 1 → leadsCost 2
       const result = await service.purchaseLeads(7, {
-        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 30, purpose: 'CRM',
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 30, purpose: 'CRM', name: 'Q3 prospects',
       });
       expect(result.purchased).toBe(2);
       const certSave = managerSpy.save.mock.calls.find((c: any[]) => c[0] === DataCertificate);
       expect(certSave).toBeDefined();
       const cert = certSave[1];
       expect(cert.businessId).toBe(1);
+      expect(cert.name).toBe('Q3 prospects');
       expect(cert.leadCount).toBe(2);
       expect(cert.userIds.sort()).toEqual([100, 101]);
       expect(typeof cert.code).toBe('string');

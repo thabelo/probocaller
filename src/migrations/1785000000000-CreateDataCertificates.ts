@@ -13,6 +13,7 @@ export class CreateDataCertificates1785000000000 implements MigrationInterface {
       CREATE TABLE "data_certificates" (
         "id" SERIAL NOT NULL,
         "code" character varying NOT NULL,
+        "name" character varying NOT NULL DEFAULT '',
         "businessId" integer NOT NULL,
         "businessName" character varying NOT NULL DEFAULT '',
         "periodStart" TIMESTAMP WITH TIME ZONE NOT NULL,

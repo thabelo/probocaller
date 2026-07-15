@@ -45,6 +45,11 @@ export class QueryAudienceDto {
   @IsOptional()
   @IsNumber()
   businessId?: number;
+
+  @ApiPropertyOptional({ description: 'A name for the lead set / certificate this purchase issues.' })
+  @IsOptional()
+  @IsString()
+  name?: string;
 }
 
 export class SaveAudienceDto {
