@@ -439,8 +439,9 @@ export class AdminService {
     const defaults = [
       { key: 'RATE_PER_SECOND', value: '0.002', description: 'Charge per second for business calls (USD)' },
       { key: 'PLATFORM_CUT_RATE', value: '0.24', description: 'Platform revenue share (0.24 = 24%)' },
-      { key: 'LEADS_BASE_FEE', value: '250', description: 'Data-certificate base fee (ZAR), covers the baseline authorisation window' },
-      { key: 'LEADS_BASELINE_DAYS', value: '30', description: 'Baseline authorisation window (days) the base fee covers; pro-rata divisor for leads cost' },
+      { key: 'LEADS_BASE_FEE', value: '250', description: 'Data-certificate base fee (ZAR) charged per user (per lead)' },
+      { key: 'LEADS_FREE_DAYS', value: '7', description: 'Authorisation days the per-user base fee covers before interest applies' },
+      { key: 'LEADS_DAILY_RATE', value: '0.018', description: 'Compounding interest per day on the base fee beyond the free window (0.018 = 1.8%/day)' },
     ];
     for (const def of defaults) {
       const existing = await this.settingRepository.findOne({ where: { key: def.key } });

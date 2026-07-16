@@ -234,23 +234,25 @@ describe('ProfileService', () => {
     let settingRepo: ReturnType<typeof mockRepo>;
     beforeEach(() => { settingRepo = (service as any).settingRepo; });
 
-    it('falls back to the defaults (R250 base, 30-day baseline) when unset', async () => {
+    it('falls back to the defaults (R250 base, 7 free days, 1.8%/day) when unset', async () => {
       settingRepo.findOne.mockResolvedValue(null);
-      expect(await service.getLeadsPricing()).toEqual({ baseFee: 250, baselineDays: 30 });
+      expect(await service.getLeadsPricing()).toEqual({ baseFee: 250, freeDays: 7, dailyRate: 0.018 });
     });
 
     it('returns the configured values from settings', async () => {
       settingRepo.findOne.mockImplementation(async ({ where }: any) =>
         where.key === 'LEADS_BASE_FEE' ? { value: '400' }
-          : where.key === 'LEADS_BASELINE_DAYS' ? { value: '60' } : null);
-      expect(await service.getLeadsPricing()).toEqual({ baseFee: 400, baselineDays: 60 });
+          : where.key === 'LEADS_FREE_DAYS' ? { value: '14' }
+          : where.key === 'LEADS_DAILY_RATE' ? { value: '0.025' } : null);
+      expect(await service.getLeadsPricing()).toEqual({ baseFee: 400, freeDays: 14, dailyRate: 0.025 });
     });
 
     it('ignores non-positive / non-numeric config and uses the defaults', async () => {
       settingRepo.findOne.mockImplementation(async ({ where }: any) =>
         where.key === 'LEADS_BASE_FEE' ? { value: 'abc' }
-          : where.key === 'LEADS_BASELINE_DAYS' ? { value: '0' } : null);
-      expect(await service.getLeadsPricing()).toEqual({ baseFee: 250, baselineDays: 30 });
+          : where.key === 'LEADS_FREE_DAYS' ? { value: '0' }
+          : where.key === 'LEADS_DAILY_RATE' ? { value: 'x' } : null);
+      expect(await service.getLeadsPricing()).toEqual({ baseFee: 250, freeDays: 7, dailyRate: 0.018 });
     });
   });
 
@@ -476,10 +478,10 @@ describe('ProfileService', () => {
       expect(result.purchased).toBe(3);
     });
 
-    it('prices the certificate at a PER-USER base fee (R250 × leads) + leads cost', async () => {
+    it('within the free window: base fee is R250 PER USER (no interest) + flat leads cost', async () => {
       wireMatches(100, 1, 2); // 2 matches × cost 1 → leadsCost 2
       const result = await service.purchaseLeads(7, {
-        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 30, purpose: 'CRM', name: 'Q3 prospects',
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 7, purpose: 'CRM', name: 'Q3 prospects',
       });
       expect(result.purchased).toBe(2);
       const certSave = managerSpy.save.mock.calls.find((c: any[]) => c[0] === DataCertificate);
@@ -489,48 +491,44 @@ describe('ProfileService', () => {
       expect(cert.name).toBe('Q3 prospects');
       expect(cert.leadCount).toBe(2);
       expect(cert.userIds.sort()).toEqual([100, 101]);
-      expect(typeof cert.code).toBe('string');
-      // Base fee is charged PER USER: R250 × 2 leads = R500, plus the leads cost.
+      // 7-day window = the free period → no interest. Base fee R250 × 2 leads = R500.
       expect(cert.basePrice).toBe(500);
       expect(cert.leadsCost).toBe(2);
       expect(cert.totalPrice).toBe(502);
       expect(new Date(cert.periodEnd).getTime()).toBeGreaterThan(new Date(cert.periodStart).getTime());
       expect(result.certificate?.code).toBe(cert.code);
-      // The business wallet paid the per-user base fee on top of the lead cost.
       expect(result.totalCost).toBe(2);        // lead (data) cost only
       expect(result.certificatePrice).toBe(502);
     });
 
-    it('scales the leads cost pro-rata by the authorisation window (days ÷ 30); base fee is per user', async () => {
+    it('compounds the base fee 1.8%/day for each day beyond the free 7 days', async () => {
       wireMatches(100, 1, 2); // 2 matches × per-person cost 1
+      const result = await service.purchaseLeads(7, {
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 8,
+      });
+      // 8 days = 1 day past the free window → base fee × 1.018¹ = R254.50/user.
+      expect(result.purchased).toBe(2);
+      const cert = managerSpy.save.mock.calls.find((c: any[]) => c[0] === DataCertificate)![1];
+      expect(cert.basePrice).toBe(509);   // 254.5 × 2
+      expect(cert.leadsCost).toBe(2);     // data cost is flat (not period-scaled)
+      expect(cert.totalPrice).toBe(511);
+      expect(result.totalCost).toBe(2);
+    });
+
+    it('the leads (data) cost is flat — it does NOT scale with the authorisation window', async () => {
+      wireMatches(100, 2, 1); // 1 match × per-person cost 2
       const result = await service.purchaseLeads(7, {
         filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 60,
       });
-      // 60-day window → ×2 on the per-person leads cost; base fee is R250 × 2 users.
-      expect(result.purchased).toBe(2);
-      expect(result.totalCost).toBe(4);          // 2 × 1 × (60/30)
-      expect(result.certificatePrice).toBe(504); // 250×2 base + 4 leads
-      const cert = managerSpy.save.mock.calls.find((c: any[]) => c[0] === DataCertificate)![1];
-      expect(cert.basePrice).toBe(500);
-      expect(cert.leadsCost).toBe(4);
-      expect(cert.totalPrice).toBe(504);
-    });
-
-    it('pro-rates DOWN for a short window (leads cost × days/30 for days < 30)', async () => {
-      wireMatches(100, 2, 1); // 1 match × per-person cost 2
-      const result = await service.purchaseLeads(7, {
-        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 15,
-      });
-      // 15-day window → ×0.5.
-      expect(result.totalCost).toBe(1); // 2 × (15/30)
+      expect(result.totalCost).toBe(2); // flat R2 regardless of the 60-day window
     });
 
     it('charges the admin-configured base fee per user (not the hardcoded R250)', async () => {
       wireMatches(100, 1, 2); // 2 matches × per-person cost 1
       (service as any).settingRepo.findOne.mockImplementation(async ({ where }: any) =>
-        where.key === 'LEADS_BASE_FEE' ? { value: '100' } : null); // baseline unset → 30
+        where.key === 'LEADS_BASE_FEE' ? { value: '100' } : null);
       const result = await service.purchaseLeads(7, {
-        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 30,
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 7, // free window → no interest
       });
       const cert = managerSpy.save.mock.calls.find((c: any[]) => c[0] === DataCertificate)![1];
       expect(cert.basePrice).toBe(200); // R100 × 2 users
@@ -539,15 +537,18 @@ describe('ProfileService', () => {
       expect(result.certificatePrice).toBe(202);
     });
 
-    it('uses the admin-configured baseline days as the pro-rata divisor', async () => {
+    it('uses the admin-configured free days and daily rate', async () => {
       wireMatches(100, 1, 2); // 2 matches × per-person cost 1
       (service as any).settingRepo.findOne.mockImplementation(async ({ where }: any) =>
-        where.key === 'LEADS_BASELINE_DAYS' ? { value: '60' } : null); // base fee unset → 250
+        where.key === 'LEADS_FREE_DAYS' ? { value: '14' }
+          : where.key === 'LEADS_DAILY_RATE' ? { value: '0.02' } : null); // base fee → 250
       const result = await service.purchaseLeads(7, {
-        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 60,
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 15,
       });
-      // 60-day window ÷ 60-day baseline → ×1 (not ×2). Leads cost unchanged.
-      expect(result.totalCost).toBe(2);
+      // 15 days, free 14 → 1 day of interest at 2% → R250 × 1.02 = R255/user.
+      const cert = managerSpy.save.mock.calls.find((c: any[]) => c[0] === DataCertificate)![1];
+      expect(cert.basePrice).toBe(510); // 255 × 2
+      expect(result.certificatePrice).toBe(512);
     });
 
     it('does NOT buy leads or issue a certificate when the business cannot afford the R250 base fee', async () => {

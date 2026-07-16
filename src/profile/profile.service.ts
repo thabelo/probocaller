@@ -18,7 +18,8 @@ import { randomBytes } from 'crypto';
 // admin-configurable (settings LEADS_BASE_FEE / LEADS_BASELINE_DAYS); these are
 // the fallbacks when unset.
 const DEFAULT_LEADS_BASE_FEE = 250;
-const DEFAULT_LEADS_BASELINE_DAYS = 30;
+const DEFAULT_LEADS_FREE_DAYS = 7;      // the base fee covers this authorisation window
+const DEFAULT_LEADS_DAILY_RATE = 0.018; // compounding interest per day beyond the free window
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpsertProfileFieldDto } from './dto/upsert-profile-field.dto';
 import { QueryAudienceDto, SaveAudienceDto } from './dto/query-audience.dto';
@@ -62,16 +63,19 @@ export class ProfileService {
   // Admin-configurable leads pricing: the certificate base fee and the pro-rata
   // baseline (the window the base fee covers, and the divisor for scaling the
   // leads cost). Invalid/unset config falls back to the defaults.
-  async getLeadsPricing(): Promise<{ baseFee: number; baselineDays: number }> {
-    const [feeRow, daysRow] = await Promise.all([
+  async getLeadsPricing(): Promise<{ baseFee: number; freeDays: number; dailyRate: number }> {
+    const [feeRow, freeRow, rateRow] = await Promise.all([
       this.settingRepo.findOne({ where: { key: 'LEADS_BASE_FEE' } }),
-      this.settingRepo.findOne({ where: { key: 'LEADS_BASELINE_DAYS' } }),
+      this.settingRepo.findOne({ where: { key: 'LEADS_FREE_DAYS' } }),
+      this.settingRepo.findOne({ where: { key: 'LEADS_DAILY_RATE' } }),
     ]);
     const fee = feeRow ? parseFloat(feeRow.value) : NaN;
-    const days = daysRow ? parseFloat(daysRow.value) : NaN;
+    const free = freeRow ? parseFloat(freeRow.value) : NaN;
+    const rate = rateRow ? parseFloat(rateRow.value) : NaN;
     return {
       baseFee: Number.isFinite(fee) && fee >= 0 ? fee : DEFAULT_LEADS_BASE_FEE,
-      baselineDays: Number.isFinite(days) && days > 0 ? days : DEFAULT_LEADS_BASELINE_DAYS,
+      freeDays: Number.isFinite(free) && free > 0 ? free : DEFAULT_LEADS_FREE_DAYS,
+      dailyRate: Number.isFinite(rate) && rate >= 0 ? rate : DEFAULT_LEADS_DAILY_RATE,
     };
   }
 
@@ -369,14 +373,16 @@ export class ProfileService {
       ? new Date(Date.now() + dto.consentDays * 86400_000)
       : null;
 
-    // Admin-configurable pricing (base fee per user + pro-rata baseline).
-    const { baseFee, baselineDays } = await this.getLeadsPricing();
+    // Admin-configurable pricing (per-user base fee + free window + daily rate).
+    const { baseFee, freeDays, dailyRate } = await this.getLeadsPricing();
 
-    // Pro-rata pricing: the per-person leads (data) cost scales linearly with the
-    // chosen window (days ÷ baselineDays). The base fee is charged PER USER — each
-    // lead bought incurs `baseFee` on top of its (period-scaled) data cost.
-    const periodDays = dto.consentDays && dto.consentDays > 0 ? dto.consentDays : baselineDays;
-    const periodFactor = periodDays / baselineDays;
+    // Authorisation pricing: the per-user base fee covers `freeDays`; every day
+    // beyond that compounds at `dailyRate` (e.g. 1.8%/day). The per-person leads
+    // (data) cost is a flat per-field charge — it does NOT scale with the window.
+    const periodDays = dto.consentDays && dto.consentDays > 0 ? dto.consentDays : freeDays;
+    const interestDays = Math.max(0, periodDays - freeDays);
+    const compoundFactor = Math.pow(1 + dailyRate, interestDays);
+    const effectiveBaseFee = parseFloat((baseFee * compoundFactor).toFixed(6));
 
     // H6 bugfix — wrap the wallet-mutating loop in a single transaction with
     // a pessimistic_write lock on the caller's wallet row, so two parallel
@@ -403,18 +409,17 @@ export class ProfileService {
         const sharableKeys = requestedKeys.filter((k) => (user.dataCategories || []).includes(k));
         if (sharableKeys.length === 0) continue;
 
-        const baseCostForUser = sharableKeys.reduce((s, k) => {
+        const costForUser = sharableKeys.reduce((s, k) => {
           const fieldCost = Number(fieldMap[k]?.creditCost || 0);
           const floor = Number(profile.floorPrices?.[k] || 0);
           return s + Math.max(fieldCost, floor);
         }, 0);
-        const costForUser = parseFloat((baseCostForUser * periodFactor).toFixed(6));
 
-        // Each lead costs the per-user base fee PLUS its data cost. Stop once the
-        // wallet can't cover the next lead in full.
-        if (Number(lockedCaller.walletBalance) < baseFee + costForUser) break;
-        lockedCaller.walletBalance = parseFloat((Number(lockedCaller.walletBalance) - baseFee).toFixed(6));
-        baseFeeTotal = parseFloat((baseFeeTotal + baseFee).toFixed(6));
+        // Each lead costs the (period-compounded) per-user base fee PLUS its data
+        // cost. Stop once the wallet can't cover the next lead in full.
+        if (Number(lockedCaller.walletBalance) < effectiveBaseFee + costForUser) break;
+        lockedCaller.walletBalance = parseFloat((Number(lockedCaller.walletBalance) - effectiveBaseFee).toFixed(6));
+        baseFeeTotal = parseFloat((baseFeeTotal + effectiveBaseFee).toFixed(6));
 
         const platformCut = parseFloat((costForUser * 0.24).toFixed(6));
         const userEarning = parseFloat((costForUser - platformCut).toFixed(6));
