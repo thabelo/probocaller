@@ -731,7 +731,7 @@ describe('ProfileService', () => {
       const bizCall = managerSpy.findOne.mock.calls.find(([e]: any) => e === Business);
       expect(bizCall).toBeTruthy();
       const [, opts] = bizCall;
-      expect(opts).toMatchObject({ where: { id: 1 }, lock: { mode: 'pessimistic_write' } });
+      expect(opts).toMatchObject({ where: { id: 1 }, lock: { mode: 'pessimistic_write' }, loadEagerRelations: false });
       // And the whole purchase must have run inside dataSource.transaction(...).
       expect(dataSource().transaction).toHaveBeenCalledTimes(1);
     });

@@ -83,7 +83,12 @@ describe('BusinessService — API keys', () => {
       const res = await service.topUpWallet(5, 9, 50);
       expect(res.balance).toBe(150);
       // the locked row is the Business, and the saved balance lands on it
-      expect(manager.findOne).toHaveBeenCalledWith(Business, expect.objectContaining({ where: { id: 5 } }));
+      expect(manager.findOne).toHaveBeenCalledWith(Business, expect.objectContaining({
+        where: { id: 5 },
+        // eager relations LEFT JOIN business_numbers — Postgres can't FOR UPDATE
+        // the nullable side, so the locked read must skip them (regression).
+        loadEagerRelations: false,
+      }));
       const saved = manager.save.mock.calls[0];
       expect(Number(saved[saved.length - 1].walletBalance)).toBe(150);
       expect(txService.log).toHaveBeenCalledWith(9, 'CREDIT_ADDED', 50, expect.any(String), undefined, manager, 5);

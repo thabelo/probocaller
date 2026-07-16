@@ -457,6 +457,9 @@ export class ProfileService {
       const lockedBiz = await manager.findOne(Business, {
         where: { id: business.id },
         lock: { mode: 'pessimistic_write' },
+        // Business eagerly joins its numbers; FOR UPDATE can't lock across that
+        // LEFT JOIN (Postgres), so read the bare row.
+        loadEagerRelations: false,
       });
       if (!lockedBiz) throw new NotFoundException('Business not found');
 

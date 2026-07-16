@@ -67,6 +67,9 @@ export class BusinessService {
       const biz = await manager.findOne(Business, {
         where: { id: business.id },
         lock: { mode: 'pessimistic_write' },
+        // Business eagerly joins its numbers; FOR UPDATE can't lock across that
+        // LEFT JOIN (Postgres), so read the bare row.
+        loadEagerRelations: false,
       });
       if (!biz) throw new NotFoundException('Business not found');
       const next = parseFloat((Number(biz.walletBalance) + Number(amount)).toFixed(4));
@@ -108,6 +111,9 @@ export class BusinessService {
       const biz = await manager.findOne(Business, {
         where: { id: business.id },
         lock: { mode: 'pessimistic_write' },
+        // Business eagerly joins its numbers; FOR UPDATE can't lock across that
+        // LEFT JOIN (Postgres), so read the bare row.
+        loadEagerRelations: false,
       });
       if (!owner || !biz) throw new NotFoundException('Wallet not found');
 
