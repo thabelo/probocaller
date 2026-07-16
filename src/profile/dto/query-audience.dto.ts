@@ -50,6 +50,12 @@ export class QueryAudienceDto {
   @IsOptional()
   @IsString()
   name?: string;
+
+  @ApiPropertyOptional({ description: 'Cap how many matched people to purchase (buyer-chosen limit ≤ matched reach).' })
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  maxPeople?: number;
 }
 
 export class SaveAudienceDto {

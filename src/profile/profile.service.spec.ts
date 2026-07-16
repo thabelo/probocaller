@@ -480,6 +480,22 @@ describe('ProfileService', () => {
       expect(result.purchased).toBe(3);
     });
 
+    it('maxPeople caps how many people are purchased, below the matched reach', async () => {
+      wireMatches(undefined, 1, 10); // 10 people match, no budget cap
+      const result = await service.purchaseLeads(7, {
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, maxPeople: 3,
+      });
+      expect(result.purchased).toBe(3);
+    });
+
+    it('maxPeople above the matched reach buys everyone (no over-count)', async () => {
+      wireMatches(undefined, 1, 2);
+      const result = await service.purchaseLeads(7, {
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, maxPeople: 50,
+      });
+      expect(result.purchased).toBe(2);
+    });
+
     it('within the free window: base fee is R250 PER USER (no interest) + flat leads cost', async () => {
       wireMatches(100, 1, 2); // 2 matches × cost 1 → leadsCost 2
       const result = await service.purchaseLeads(7, {

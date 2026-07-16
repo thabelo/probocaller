@@ -376,7 +376,11 @@ export class ProfileService {
 
     const fields = await this.getEnabledFields();
     const fieldMap = Object.fromEntries(fields.map((f) => [f.key, f]));
-    const matches = await this.matchingProfiles(dto.filters, { from: dto.fromDate, to: dto.toDate });
+    const allMatches = await this.matchingProfiles(dto.filters, { from: dto.fromDate, to: dto.toDate });
+    // Buyer-chosen cap on how many people to purchase (never above the matched reach).
+    const matches = dto.maxPeople != null && dto.maxPeople >= 0
+      ? allMatches.slice(0, dto.maxPeople)
+      : allMatches;
     if (matches.length === 0) return { purchased: 0, leads: [] as any[], totalCost: 0, totalEarnedByUsers: 0, certificate: undefined as DataCertificate | undefined, certificatePrice: 0 };
 
     // An API key's scopes (allowedFields) cap which fields it may buy.
