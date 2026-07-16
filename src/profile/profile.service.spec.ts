@@ -476,7 +476,7 @@ describe('ProfileService', () => {
       expect(result.purchased).toBe(3);
     });
 
-    it('issues a certificate priced R250 base + leads, freezing the purchased leads', async () => {
+    it('prices the certificate at a PER-USER base fee (R250 × leads) + leads cost', async () => {
       wireMatches(100, 1, 2); // 2 matches × cost 1 → leadsCost 2
       const result = await service.purchaseLeads(7, {
         filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 30, purpose: 'CRM', name: 'Q3 prospects',
@@ -490,30 +490,30 @@ describe('ProfileService', () => {
       expect(cert.leadCount).toBe(2);
       expect(cert.userIds.sort()).toEqual([100, 101]);
       expect(typeof cert.code).toBe('string');
-      // Price = R250 base + the leads generated at that time.
-      expect(cert.basePrice).toBe(250);
+      // Base fee is charged PER USER: R250 × 2 leads = R500, plus the leads cost.
+      expect(cert.basePrice).toBe(500);
       expect(cert.leadsCost).toBe(2);
-      expect(cert.totalPrice).toBe(252);
+      expect(cert.totalPrice).toBe(502);
       expect(new Date(cert.periodEnd).getTime()).toBeGreaterThan(new Date(cert.periodStart).getTime());
       expect(result.certificate?.code).toBe(cert.code);
-      // The business wallet paid the R250 base fee on top of the lead cost.
-      expect(result.totalCost).toBe(2);        // lead cost only
-      expect(result.certificatePrice).toBe(252);
+      // The business wallet paid the per-user base fee on top of the lead cost.
+      expect(result.totalCost).toBe(2);        // lead (data) cost only
+      expect(result.certificatePrice).toBe(502);
     });
 
-    it('scales the leads cost pro-rata by the authorisation window (days ÷ 30); base fee stays flat', async () => {
+    it('scales the leads cost pro-rata by the authorisation window (days ÷ 30); base fee is per user', async () => {
       wireMatches(100, 1, 2); // 2 matches × per-person cost 1
       const result = await service.purchaseLeads(7, {
         filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 60,
       });
-      // 60-day window → ×2 on the per-person leads cost; base fee unchanged.
+      // 60-day window → ×2 on the per-person leads cost; base fee is R250 × 2 users.
       expect(result.purchased).toBe(2);
       expect(result.totalCost).toBe(4);          // 2 × 1 × (60/30)
-      expect(result.certificatePrice).toBe(254); // 250 base + 4 leads
+      expect(result.certificatePrice).toBe(504); // 250×2 base + 4 leads
       const cert = managerSpy.save.mock.calls.find((c: any[]) => c[0] === DataCertificate)![1];
-      expect(cert.basePrice).toBe(250);
+      expect(cert.basePrice).toBe(500);
       expect(cert.leadsCost).toBe(4);
-      expect(cert.totalPrice).toBe(254);
+      expect(cert.totalPrice).toBe(504);
     });
 
     it('pro-rates DOWN for a short window (leads cost × days/30 for days < 30)', async () => {
@@ -525,7 +525,7 @@ describe('ProfileService', () => {
       expect(result.totalCost).toBe(1); // 2 × (15/30)
     });
 
-    it('charges the admin-configured base fee (not the hardcoded R250)', async () => {
+    it('charges the admin-configured base fee per user (not the hardcoded R250)', async () => {
       wireMatches(100, 1, 2); // 2 matches × per-person cost 1
       (service as any).settingRepo.findOne.mockImplementation(async ({ where }: any) =>
         where.key === 'LEADS_BASE_FEE' ? { value: '100' } : null); // baseline unset → 30
@@ -533,10 +533,10 @@ describe('ProfileService', () => {
         filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 30,
       });
       const cert = managerSpy.save.mock.calls.find((c: any[]) => c[0] === DataCertificate)![1];
-      expect(cert.basePrice).toBe(100);
+      expect(cert.basePrice).toBe(200); // R100 × 2 users
       expect(cert.leadsCost).toBe(2);
-      expect(cert.totalPrice).toBe(102);
-      expect(result.certificatePrice).toBe(102);
+      expect(cert.totalPrice).toBe(202);
+      expect(result.certificatePrice).toBe(202);
     });
 
     it('uses the admin-configured baseline days as the pro-rata divisor', async () => {

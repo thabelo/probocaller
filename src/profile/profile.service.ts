@@ -369,12 +369,12 @@ export class ProfileService {
       ? new Date(Date.now() + dto.consentDays * 86400_000)
       : null;
 
-    // Admin-configurable pricing (base fee + pro-rata baseline).
+    // Admin-configurable pricing (base fee per user + pro-rata baseline).
     const { baseFee, baselineDays } = await this.getLeadsPricing();
 
-    // Pro-rata pricing: the base fee covers a standard `baselineDays` window; the
-    // per-person leads cost scales linearly with the chosen window
-    // (days ÷ baselineDays). A double-length set costs ×2 on leads, etc.
+    // Pro-rata pricing: the per-person leads (data) cost scales linearly with the
+    // chosen window (days ÷ baselineDays). The base fee is charged PER USER — each
+    // lead bought incurs `baseFee` on top of its (period-scaled) data cost.
     const periodDays = dto.consentDays && dto.consentDays > 0 ? dto.consentDays : baselineDays;
     const periodFactor = periodDays / baselineDays;
 
@@ -391,17 +391,9 @@ export class ProfileService {
       });
       if (!lockedCaller) throw new NotFoundException('Business user not found');
 
-      // A purchase mints a certificate, which carries a fixed base fee. A business
-      // that can't cover the base fee can't buy leads at all. Reserve it up front
-      // so the per-lead loop only spends the remaining balance; refund it if no
-      // lead ends up being bought (no certificate is issued for zero leads).
-      if (Number(lockedCaller.walletBalance) < baseFee) {
-        return { purchased: 0, leads: [] as any[], totalCost: 0, totalEarnedByUsers: 0, certificate: undefined as DataCertificate | undefined, certificatePrice: 0 };
-      }
-      lockedCaller.walletBalance = parseFloat((Number(lockedCaller.walletBalance) - baseFee).toFixed(6));
-
       const leads: any[] = [];
-      let totalCost = 0;
+      let totalCost = 0;      // leads (data) cost, split with the data owners
+      let baseFeeTotal = 0;   // per-user base fee, platform revenue
       let totalEarned = 0;
 
       for (const profile of toProcess) {
@@ -418,7 +410,11 @@ export class ProfileService {
         }, 0);
         const costForUser = parseFloat((baseCostForUser * periodFactor).toFixed(6));
 
-        if (Number(lockedCaller.walletBalance) < totalCost + costForUser) break;
+        // Each lead costs the per-user base fee PLUS its data cost. Stop once the
+        // wallet can't cover the next lead in full.
+        if (Number(lockedCaller.walletBalance) < baseFee + costForUser) break;
+        lockedCaller.walletBalance = parseFloat((Number(lockedCaller.walletBalance) - baseFee).toFixed(6));
+        baseFeeTotal = parseFloat((baseFeeTotal + baseFee).toFixed(6));
 
         const platformCut = parseFloat((costForUser * 0.24).toFixed(6));
         const userEarning = parseFloat((costForUser - platformCut).toFixed(6));
@@ -475,18 +471,18 @@ export class ProfileService {
         totalEarned = parseFloat((totalEarned + userEarning).toFixed(6));
       }
 
-      // Issue a data-usage certificate for this purchase — priced at the base fee
-      // plus the leads generated now (frozen). It attests the business was
-      // authorised to use those numbers over [now, now + consentDays] (30-day
-      // default), and its code can be validated by anyone. Holding a certificate
-      // is what unlocks the business's Leads view. If no lead was bought, refund
-      // the reserved base fee and issue nothing.
+      // Issue a data-usage certificate for this purchase — priced at the per-user
+      // base fee (baseFee × leads) plus the leads generated now (frozen). It
+      // attests the business was authorised to use those numbers over
+      // [now, now + consentDays], and its code can be validated by anyone. Holding
+      // a certificate is what unlocks the business's Leads view. No lead bought →
+      // nothing was charged (the base fee is only taken per lead), so issue nothing.
       let certificate: DataCertificate | undefined;
       let certificatePrice = 0;
       if (leads.length > 0) {
         const periodStart = new Date();
         const periodEnd = new Date(periodStart.getTime() + periodDays * 86400_000);
-        certificatePrice = parseFloat((baseFee + totalCost).toFixed(4));
+        certificatePrice = parseFloat((baseFeeTotal + totalCost).toFixed(4));
         certificate = await manager.save(DataCertificate, manager.create(DataCertificate, {
           code: ProfileService.generateCertCode(),
           name: (dto.name || '').trim() || `Leads ${new Date().toISOString().slice(0, 10)}`,
@@ -497,17 +493,14 @@ export class ProfileService {
           leadCount: leads.length,
           userIds: leads.map((l) => l.userId),
           purpose: dto.purpose || null,
-          basePrice: baseFee,
+          basePrice: baseFeeTotal,
           leadsCost: totalCost,
           totalPrice: certificatePrice,
         }));
         await manager.save(Transaction, manager.create(Transaction, {
-          userId: businessUserId, type: 'CERTIFICATE_FEE', amount: -baseFee,
-          description: `Data certificate ${certificate.code} — base fee`,
+          userId: businessUserId, type: 'CERTIFICATE_FEE', amount: -baseFeeTotal,
+          description: `Data certificate ${certificate.code} — base fee (${leads.length} × per-user)`,
         }));
-      } else {
-        // No lead bought → refund the reserved base fee.
-        lockedCaller.walletBalance = parseFloat((Number(lockedCaller.walletBalance) + baseFee).toFixed(6));
       }
 
       await manager.save(User, lockedCaller);
