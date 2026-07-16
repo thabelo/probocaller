@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, Repository, In } from 'typeorm';
 import { ProfileField } from './profile-field.entity';
 import { UserProfile } from './user-profile.entity';
 import { DataAccessLog } from './data-access-log.entity';
@@ -334,6 +334,25 @@ export class ProfileService {
     });
   }
 
+  // Matched profiles narrowed to people who are ACTUALLY addressable right now:
+  // sharing is switched on AND they consent to at least one of the requested
+  // fields. This is the same gate purchaseLeads applies per user, so the reach
+  // estimate reflects who can really be bought — not everyone with data on file.
+  private async shareableMatches(
+    dto: QueryAudienceDto,
+    requestedKeys: string[],
+  ): Promise<UserProfile[]> {
+    const matches = await this.matchingProfiles(dto.filters, { from: dto.fromDate, to: dto.toDate }, dto.match);
+    if (matches.length === 0) return [];
+    const users = await this.userRepo.find({ where: { id: In(matches.map((m) => m.userId)) } });
+    const byId = new Map(users.map((u) => [u.id, u]));
+    return matches.filter((m) => {
+      const u = byId.get(m.userId);
+      if (!u || !u.dataShareEnabled) return false;
+      return requestedKeys.some((k) => (u.dataCategories || []).includes(k));
+    });
+  }
+
   async queryAudience(businessUserId: number, dto: QueryAudienceDto, allowedFields: string[] = []) {
     const business = await this.businessRepo.findOne({
       where: dto.businessId ? { id: dto.businessId, userId: businessUserId } : { userId: businessUserId },
@@ -341,12 +360,13 @@ export class ProfileService {
     if (!business) throw new ForbiddenException('Business profile required');
     const fields = await this.getEnabledFields();
     const fieldMap = Object.fromEntries(fields.map((f) => [f.key, f]));
-    const matches = await this.matchingProfiles(dto.filters, { from: dto.fromDate, to: dto.toDate }, dto.match);
 
     // Estimate cost: sum of creditCost for each requested field × matched users.
     // An API key's scopes (allowedFields) cap which fields it may access.
     let requestedKeys = dto.filters ? Object.keys(dto.filters) : fields.map((f) => f.key);
     if (allowedFields.length) requestedKeys = requestedKeys.filter((k) => allowedFields.includes(k));
+    // Reach = only people who can actually be bought (share opt-in + a consented field).
+    const matches = await this.shareableMatches(dto, requestedKeys);
     const costPerUser = requestedKeys.reduce((s, k) => s + Number(fieldMap[k]?.creditCost || 0), 0);
     const estimatedCost = parseFloat((costPerUser * matches.length).toFixed(4));
 
@@ -383,16 +403,18 @@ export class ProfileService {
 
     const fields = await this.getEnabledFields();
     const fieldMap = Object.fromEntries(fields.map((f) => [f.key, f]));
-    const allMatches = await this.matchingProfiles(dto.filters, { from: dto.fromDate, to: dto.toDate }, dto.match);
+    // An API key's scopes (allowedFields) cap which fields it may buy.
+    let requestedKeys = dto.filters ? Object.keys(dto.filters) : fields.map((f) => f.key);
+    if (allowedFields.length) requestedKeys = requestedKeys.filter((k) => allowedFields.includes(k));
+    // Only shareable people (share opt-in + a consented field), so the buyer's cap
+    // and the reach estimate operate on the same set purchaseLeads will actually bill.
+    const allMatches = await this.shareableMatches(dto, requestedKeys);
     // Buyer-chosen cap on how many people to purchase (never above the matched reach).
     const matches = dto.maxPeople != null && dto.maxPeople >= 0
       ? allMatches.slice(0, dto.maxPeople)
       : allMatches;
     if (matches.length === 0) return { purchased: 0, leads: [] as any[], totalCost: 0, totalEarnedByUsers: 0, certificate: undefined as DataCertificate | undefined, certificatePrice: 0 };
 
-    // An API key's scopes (allowedFields) cap which fields it may buy.
-    let requestedKeys = dto.filters ? Object.keys(dto.filters) : fields.map((f) => f.key);
-    if (allowedFields.length) requestedKeys = requestedKeys.filter((k) => allowedFields.includes(k));
     // H7 bugfix — compute costPerUser EXPLICITLY before the affordability
     // calc. The old expression was
     //     Math.floor(budget / sum || matches.length)

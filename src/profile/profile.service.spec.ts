@@ -434,6 +434,11 @@ describe('ProfileService', () => {
       const profiles = Array.from({ length: matchCount }, (_, i) =>
         mockProfile({ id: i + 1, userId: 100 + i, data: { income_range: 'gt_20k' } }));
       profileRepo.find.mockResolvedValue(profiles);
+      // The matched people all share this field (the shareability gate the reach
+      // estimate + purchase apply); per-user opt-out is exercised separately.
+      userRepo().find.mockResolvedValue(
+        Array.from({ length: matchCount }, (_, i) =>
+          ({ id: 100 + i, dataShareEnabled: true, dataCategories: ['income_range'] })));
       // The pre-txn lookups (caller existence check, etc.) still go through
       // userRepo.findOne; the wallet-mutating reads go through manager.findOne
       // inside the transaction.
@@ -551,6 +556,23 @@ describe('ProfileService', () => {
       expect(cert.basePrice).toBe(750); // 250 × 3 × 1 lead
     });
 
+    it('queryAudience counts only currently-shareable people (share opt-in + a consented field)', async () => {
+      businessRepo().findOne.mockResolvedValue({ id: 1, userId: 7, companyName: 'AcmeCo' });
+      fieldRepo.find.mockResolvedValue([mockField({ key: 'income_range', creditCost: 0 })]);
+      profileRepo.find.mockResolvedValue([
+        mockProfile({ id: 1, userId: 101, data: { income_range: 'gt_20k' } }),
+        mockProfile({ id: 2, userId: 102, data: { income_range: 'gt_20k' } }),
+        mockProfile({ id: 3, userId: 103, data: { income_range: 'gt_20k' } }),
+      ]);
+      userRepo().find.mockResolvedValue([
+        { id: 101, dataShareEnabled: true, dataCategories: ['income_range'] },  // shareable
+        { id: 102, dataShareEnabled: false, dataCategories: ['income_range'] }, // opted out of sharing
+        { id: 103, dataShareEnabled: true, dataCategories: ['marital_status'] }, // doesn't share this field
+      ]);
+      const res: any = await service.queryAudience(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } } });
+      expect(res.estimatedReach).toBe(1); // only #101 is genuinely addressable
+    });
+
     it('queryAudience returns the authoritative grand total (base fee + data), matching the charge', async () => {
       wireMatches(undefined, 1, 2); // 2 matches, data cost 1/user
       const res: any = await service.queryAudience(7, {
@@ -575,6 +597,8 @@ describe('ProfileService', () => {
         mockProfile({ id: 3, userId: 103, data: { income_range: 'gt_20k', marital_status: 'single' } }), // both
         mockProfile({ id: 4, userId: 104, data: { age_range: '25_34' } }),                         // neither
       ]);
+      userRepo().find.mockResolvedValue(
+        [101, 102, 103, 104].map((id) => ({ id, dataShareEnabled: true, dataCategories: ['income_range', 'marital_status'] })));
       const filters = {
         income_range: { op: 'eq', value: 'gt_20k' },
         marital_status: { op: 'eq', value: 'single' },
