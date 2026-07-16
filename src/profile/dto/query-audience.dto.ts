@@ -56,6 +56,14 @@ export class QueryAudienceDto {
   @IsNumber()
   @Min(1)
   maxPeople?: number;
+
+  @ApiPropertyOptional({
+    description: "How to combine filters: 'all' (AND — shares every field) or 'any' (OR — shares at least one). Defaults to 'all'.",
+    enum: ['all', 'any'],
+  })
+  @IsOptional()
+  @IsIn(['all', 'any'])
+  match?: 'all' | 'any';
 }
 
 export class SaveAudienceDto {

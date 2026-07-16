@@ -303,27 +303,34 @@ export class ProfileService {
   private async matchingProfiles(
     filters: Record<string, { op: string; value: any }> = {},
     dateRange: { from?: string; to?: string } = {},
+    match: 'all' | 'any' = 'all',
   ): Promise<UserProfile[]> {
     const profiles = await this.profileRepo.find();
     const fromTs = dateRange.from ? new Date(dateRange.from).getTime() : null;
     const toTs = dateRange.to ? new Date(dateRange.to).getTime() : null;
+    const testFilter = (p: UserProfile, op: string, key: string, value: any) => {
+      const v = p.data[key];
+      if (v === undefined || v === null) return false;
+      switch (op) {
+        case 'eq': return String(v) === String(value);
+        case 'gte': return Number(v) >= Number(value);
+        case 'lte': return Number(v) <= Number(value);
+        case 'in': return Array.isArray(value) && value.map(String).includes(String(v));
+        default: return false;
+      }
+    };
     return profiles.filter((p) => {
       if (!p.data || Object.keys(p.data).length === 0) return false;
       // Date-range filter on when the profile data was last updated.
       const updated = p.lastUpdated ? new Date(p.lastUpdated).getTime() : null;
       if (fromTs !== null && (updated === null || updated < fromTs)) return false;
       if (toTs !== null && (updated === null || updated > toTs)) return false;
-      return Object.entries(filters).every(([key, { op, value }]) => {
-        const v = p.data[key];
-        if (v === undefined || v === null) return false;
-        switch (op) {
-          case 'eq': return String(v) === String(value);
-          case 'gte': return Number(v) >= Number(value);
-          case 'lte': return Number(v) <= Number(value);
-          case 'in': return Array.isArray(value) && value.map(String).includes(String(v));
-          default: return false;
-        }
-      });
+      const entries = Object.entries(filters);
+      if (entries.length === 0) return true; // no criteria → everyone with shared data
+      // 'all' = AND (shares every chosen field); 'any' = OR (shares at least one).
+      return match === 'any'
+        ? entries.some(([key, { op, value }]) => testFilter(p, op, key, value))
+        : entries.every(([key, { op, value }]) => testFilter(p, op, key, value));
     });
   }
 
@@ -334,7 +341,7 @@ export class ProfileService {
     if (!business) throw new ForbiddenException('Business profile required');
     const fields = await this.getEnabledFields();
     const fieldMap = Object.fromEntries(fields.map((f) => [f.key, f]));
-    const matches = await this.matchingProfiles(dto.filters, { from: dto.fromDate, to: dto.toDate });
+    const matches = await this.matchingProfiles(dto.filters, { from: dto.fromDate, to: dto.toDate }, dto.match);
 
     // Estimate cost: sum of creditCost for each requested field × matched users.
     // An API key's scopes (allowedFields) cap which fields it may access.
@@ -376,7 +383,7 @@ export class ProfileService {
 
     const fields = await this.getEnabledFields();
     const fieldMap = Object.fromEntries(fields.map((f) => [f.key, f]));
-    const allMatches = await this.matchingProfiles(dto.filters, { from: dto.fromDate, to: dto.toDate });
+    const allMatches = await this.matchingProfiles(dto.filters, { from: dto.fromDate, to: dto.toDate }, dto.match);
     // Buyer-chosen cap on how many people to purchase (never above the matched reach).
     const matches = dto.maxPeople != null && dto.maxPeople >= 0
       ? allMatches.slice(0, dto.maxPeople)

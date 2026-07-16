@@ -563,6 +563,30 @@ describe('ProfileService', () => {
       expect(res.estimatedGrandTotal).toBe(502);     // base fees + data cost = what purchaseLeads charges
     });
 
+    it('match=any includes people with at LEAST ONE selected field (OR); match=all requires every field (AND)', async () => {
+      businessRepo().findOne.mockResolvedValue({ id: 1, userId: 7, companyName: 'AcmeCo' });
+      fieldRepo.find.mockResolvedValue([
+        mockField({ key: 'income_range', creditCost: 0 }),
+        mockField({ key: 'marital_status', creditCost: 0 }),
+      ]);
+      profileRepo.find.mockResolvedValue([
+        mockProfile({ id: 1, userId: 101, data: { income_range: 'gt_20k' } }),                     // income only
+        mockProfile({ id: 2, userId: 102, data: { marital_status: 'single' } }),                   // marital only
+        mockProfile({ id: 3, userId: 103, data: { income_range: 'gt_20k', marital_status: 'single' } }), // both
+        mockProfile({ id: 4, userId: 104, data: { age_range: '25_34' } }),                         // neither
+      ]);
+      const filters = {
+        income_range: { op: 'eq', value: 'gt_20k' },
+        marital_status: { op: 'eq', value: 'single' },
+      };
+      const anyRes: any = await service.queryAudience(7, { filters, match: 'any' });
+      expect(anyRes.estimatedReach).toBe(3); // income-only + marital-only + both
+      const allRes: any = await service.queryAudience(7, { filters, match: 'all' });
+      expect(allRes.estimatedReach).toBe(1); // only the person who has both
+      const defaultRes: any = await service.queryAudience(7, { filters }); // default preserves AND
+      expect(defaultRes.estimatedReach).toBe(1);
+    });
+
     it('the leads (data) cost is flat — it does NOT scale with the authorisation window', async () => {
       wireMatches(100, 2, 1); // 1 match × per-person cost 2
       const result = await service.purchaseLeads(7, {
