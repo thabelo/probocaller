@@ -152,6 +152,15 @@ describe('BusinessService — API keys', () => {
       await expect(service.transferWallet(5, 9, 0, 'in')).rejects.toBeInstanceOf(BadRequestException);
       await expect(service.transferWallet(5, 999, 10, 'in')).rejects.toBeInstanceOf(ForbiddenException);
     });
+
+    it('rejects non-finite and absurd amounts on every money-moving path (real money)', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9 });
+      for (const bad of [Infinity, -Infinity, NaN, 1e300, 1_000_001]) {
+        await expect(service.topUpWallet(5, 9, bad)).rejects.toBeInstanceOf(BadRequestException);
+        await expect(service.transferWallet(5, 9, bad, 'in')).rejects.toBeInstanceOf(BadRequestException);
+      }
+      expect(dataSource.transaction).not.toHaveBeenCalled(); // rejected before touching money
+    });
   });
 
   describe('createApiKey', () => {

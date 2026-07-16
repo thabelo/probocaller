@@ -475,4 +475,15 @@ describe('UserService', () => {
       expect(result).toHaveProperty('refreshToken');
     });
   });
+
+  describe('addCredit — real-money input hardening', () => {
+    it('rejects negative, zero, NaN, Infinity and absurd amounts before touching the balance', async () => {
+      const { BadRequestException } = require('@nestjs/common');
+      repo.findOne.mockResolvedValue({ id: 7, isBusiness: true, walletBalance: 100 });
+      for (const bad of [0, -50, NaN, Infinity, -Infinity, 1e300, 1_000_001]) {
+        await expect(service.addCredit(7, bad as any)).rejects.toBeInstanceOf(BadRequestException);
+      }
+      expect(repo.save).not.toHaveBeenCalled();
+    });
+  });
 });

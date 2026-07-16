@@ -279,7 +279,13 @@ export class UserService {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
     if (!user.isBusiness) throw new BadRequestException('Only business accounts can add call credits');
-    user.walletBalance = parseFloat((Number(user.walletBalance) + amount).toFixed(4));
+    // Real money: only finite, positive, sane amounts may credit a wallet —
+    // NaN/Infinity pass naive checks and corrupt the balance permanently.
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || amt <= 0 || amt > 1_000_000) {
+      throw new BadRequestException('Amount must be a positive number within the per-transaction limit');
+    }
+    user.walletBalance = parseFloat((Number(user.walletBalance) + amt).toFixed(4));
     await this.userRepository.save(user);
     await this.transactionService.log(userId, 'CREDIT_ADDED', amount, `Wallet top-up of $${amount.toFixed(2)}`);
     return user;

@@ -17,6 +17,27 @@ import { TransactionService } from '../transaction/transaction.service';
  */
 export const DEFAULT_BUSINESS_LOGO_URL = '/probocaller-logo.svg';
 
+/** Hard ceiling per money move — anything above this is a typo or an attack. */
+const MAX_MONEY_MOVE = 1_000_000;
+
+/**
+ * Validate a wallet amount for REAL money movement: a finite, positive number
+ * within sane bounds, normalised to the ledger's 4dp. Rejects NaN/Infinity
+ * (which pass a naive `> 0` check) and magnitudes that would overflow the
+ * numeric(12,4) columns into 500s.
+ */
+function assertMoneyAmount(amount: number): number {
+  const a = Number(amount);
+  if (!Number.isFinite(a) || a <= 0) {
+    throw new BadRequestException('Amount must be a positive number');
+  }
+  if (a > MAX_MONEY_MOVE) {
+    throw new BadRequestException(`Amount exceeds the per-transaction limit of ${MAX_MONEY_MOVE}`);
+  }
+  return parseFloat(a.toFixed(4));
+}
+
+
 @Injectable()
 export class BusinessService {
   constructor(
@@ -60,7 +81,7 @@ export class BusinessService {
 
   /** Add funds to the BUSINESS wallet (atomic credit + business-scoped audit row). */
   async topUpWallet(businessId: number, requesterUserId: number, amount: number) {
-    if (!(Number(amount) > 0)) throw new BadRequestException('Amount must be greater than zero');
+    amount = assertMoneyAmount(amount);
     const business = await this.ownedBusinessOrThrow(businessId, requesterUserId);
 
     return this.dataSource.transaction(async (manager) => {
@@ -99,9 +120,8 @@ export class BusinessService {
     amount: number,
     direction: 'in' | 'out',
   ) {
-    if (!(Number(amount) > 0)) throw new BadRequestException('Amount must be greater than zero');
+    const amt = assertMoneyAmount(amount);
     const business = await this.ownedBusinessOrThrow(businessId, requesterUserId);
-    const amt = Number(amount);
 
     return this.dataSource.transaction(async (manager) => {
       const owner = await manager.findOne(User, {
