@@ -452,11 +452,13 @@ export class ProfileService {
     // "Backend H6 — locks the caller wallet row" case in
     // profile.service.spec.ts.
     return this.dataSource.transaction(async (manager) => {
-      const lockedCaller = await manager.findOne(User, {
-        where: { id: businessUserId },
+      // Each business pays from its OWN wallet — lock the business row, not the
+      // owner's personal balance.
+      const lockedBiz = await manager.findOne(Business, {
+        where: { id: business.id },
         lock: { mode: 'pessimistic_write' },
       });
-      if (!lockedCaller) throw new NotFoundException('Business user not found');
+      if (!lockedBiz) throw new NotFoundException('Business not found');
 
       const leads: any[] = [];
       let totalCost = 0;      // leads (data) cost, split with the data owners
@@ -478,14 +480,14 @@ export class ProfileService {
 
         // Each lead costs the (period-compounded) per-user base fee PLUS its data
         // cost. Stop once the wallet can't cover the next lead in full.
-        if (Number(lockedCaller.walletBalance) < effectiveBaseFee + costForUser) break;
-        lockedCaller.walletBalance = parseFloat((Number(lockedCaller.walletBalance) - effectiveBaseFee).toFixed(6));
+        if (Number(lockedBiz.walletBalance) < effectiveBaseFee + costForUser) break;
+        lockedBiz.walletBalance = parseFloat((Number(lockedBiz.walletBalance) - effectiveBaseFee).toFixed(6));
         baseFeeTotal = parseFloat((baseFeeTotal + effectiveBaseFee).toFixed(6));
 
         const platformCut = parseFloat((costForUser * 0.24).toFixed(6));
         const userEarning = parseFloat((costForUser - platformCut).toFixed(6));
 
-        lockedCaller.walletBalance = parseFloat((Number(lockedCaller.walletBalance) - costForUser).toFixed(6));
+        lockedBiz.walletBalance = parseFloat((Number(lockedBiz.walletBalance) - costForUser).toFixed(6));
         user.walletBalance = parseFloat((Number(user.walletBalance) + userEarning).toFixed(6));
 
         // Notify the data owner of the profit (in-app; the app polls
@@ -504,7 +506,7 @@ export class ProfileService {
         // Incognito (premium): skip attributing this access in the user's
         // "who viewed my data" log. The payment/earning still happens below,
         // so the user is still compensated — only the viewer identity is hidden.
-        if (!(lockedCaller as any).incognitoEnabled) {
+        if (!(caller as any).incognitoEnabled) {
           await manager.save(DataAccessLog, manager.create(DataAccessLog, {
             userId: profile.userId,
             businessId: business.id,
@@ -518,6 +520,7 @@ export class ProfileService {
 
         await manager.save(Transaction, manager.create(Transaction, {
           userId: businessUserId, type: 'DATA_PURCHASE', amount: -costForUser,
+          businessId: business.id,
           description: `Lead data purchase: ${sharableKeys.join(', ')}`,
         }));
         await manager.save(Transaction, manager.create(Transaction, {
@@ -569,7 +572,7 @@ export class ProfileService {
         }));
       }
 
-      await manager.save(User, lockedCaller);
+      await manager.save(Business, lockedBiz);
 
       return { purchased: leads.length, leads, totalCost, totalEarnedByUsers: totalEarned, certificate, certificatePrice };
     });

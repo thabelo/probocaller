@@ -32,7 +32,7 @@ export class BusinessService {
     private readonly dataSource: DataSource,
   ) {}
 
-  /** Load a business the caller owns, or throw. The wallet is the owner user's. */
+  /** Load a business the caller owns, or throw. */
   private async ownedBusinessOrThrow(businessId: number, requesterUserId: number): Promise<Business> {
     const business = await this.businessRepo.findOne({ where: { id: businessId } });
     if (!business) throw new NotFoundException('Business not found');
@@ -43,44 +43,107 @@ export class BusinessService {
   }
 
   /**
-   * Business wallet = the owner user's walletBalance (what the call/API billing
-   * deducts from). Returns the live balance + the owner's transaction ledger.
+   * Each business has its OWN wallet (Business.walletBalance) — separate from
+   * the owner's personal balance. Returns the live balance + the ledger of
+   * transactions stamped with this businessId.
    */
   async getWallet(businessId: number, requesterUserId: number) {
     const business = await this.ownedBusinessOrThrow(businessId, requesterUserId);
-    const owner = await this.userRepo.findOne({ where: { id: business.userId } });
-    const transactions = await this.transactionService.findByUser(business.userId);
+    const transactions = await this.transactionService.findByBusiness(business.id);
     return {
       businessId: business.id,
       companyName: business.companyName,
-      balance: Number(owner?.walletBalance ?? 0),
+      balance: Number(business.walletBalance ?? 0),
       transactions,
     };
   }
 
-  /** Add funds to the business wallet (atomic credit + audited transaction). */
+  /** Add funds to the BUSINESS wallet (atomic credit + business-scoped audit row). */
   async topUpWallet(businessId: number, requesterUserId: number, amount: number) {
     if (!(Number(amount) > 0)) throw new BadRequestException('Amount must be greater than zero');
     const business = await this.ownedBusinessOrThrow(businessId, requesterUserId);
+
+    return this.dataSource.transaction(async (manager) => {
+      const biz = await manager.findOne(Business, {
+        where: { id: business.id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!biz) throw new NotFoundException('Business not found');
+      const next = parseFloat((Number(biz.walletBalance) + Number(amount)).toFixed(4));
+      biz.walletBalance = next as any;
+      await manager.save(Business, biz);
+      await this.transactionService.log(
+        business.userId,
+        'CREDIT_ADDED',
+        Number(amount),
+        `Wallet top-up — ${business.companyName}`,
+        undefined,
+        manager,
+        business.id,
+      );
+      return { businessId: business.id, balance: next };
+    });
+  }
+
+  /**
+   * Move money between the owner's personal balance and a business wallet.
+   * direction 'in'  = owner → business; 'out' = business → owner. Both rows are
+   * locked in one transaction, and each side gets its own ledger entry.
+   */
+  async transferWallet(
+    businessId: number,
+    requesterUserId: number,
+    amount: number,
+    direction: 'in' | 'out',
+  ) {
+    if (!(Number(amount) > 0)) throw new BadRequestException('Amount must be greater than zero');
+    const business = await this.ownedBusinessOrThrow(businessId, requesterUserId);
+    const amt = Number(amount);
 
     return this.dataSource.transaction(async (manager) => {
       const owner = await manager.findOne(User, {
         where: { id: business.userId },
         lock: { mode: 'pessimistic_write' },
       });
-      if (!owner) throw new NotFoundException('Business owner not found');
-      const next = Number(owner.walletBalance) + Number(amount);
-      owner.walletBalance = next as any;
-      await manager.save(owner);
+      const biz = await manager.findOne(Business, {
+        where: { id: business.id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!owner || !biz) throw new NotFoundException('Wallet not found');
+
+      const source = direction === 'in' ? Number(owner.walletBalance) : Number(biz.walletBalance);
+      if (source < amt) throw new BadRequestException('Insufficient funds for this transfer');
+
+      const sign = direction === 'in' ? 1 : -1;
+      owner.walletBalance = parseFloat((Number(owner.walletBalance) - sign * amt).toFixed(4)) as any;
+      biz.walletBalance = parseFloat((Number(biz.walletBalance) + sign * amt).toFixed(4)) as any;
+      await manager.save(User, owner);
+      await manager.save(Business, biz);
+
+      // Two audit rows: the owner's personal ledger + the business's ledger.
       await this.transactionService.log(
         owner.id,
-        'CREDIT_ADDED',
-        Number(amount),
-        'Business wallet top-up',
+        direction === 'in' ? 'TRANSFER_TO_BUSINESS' : 'TRANSFER_FROM_BUSINESS',
+        -sign * amt,
+        `${direction === 'in' ? 'Transfer to' : 'Transfer from'} ${business.companyName}`,
         undefined,
         manager,
       );
-      return { businessId: business.id, balance: next };
+      await this.transactionService.log(
+        owner.id,
+        direction === 'in' ? 'TRANSFER_FROM_OWNER' : 'TRANSFER_TO_OWNER',
+        sign * amt,
+        `${direction === 'in' ? 'Funded from' : 'Withdrawn to'} owner balance`,
+        undefined,
+        manager,
+        business.id,
+      );
+
+      return {
+        businessId: business.id,
+        balance: Number(biz.walletBalance),
+        ownerBalance: Number(owner.walletBalance),
+      };
     });
   }
 

@@ -160,4 +160,19 @@ export class BusinessController {
   ) {
     return this.businessService.topUpWallet(businessId, req.user.userId, Number(body?.amount));
   }
+
+  @Post(':businessId/wallet/transfer')
+  @ApiOperation({ summary: "Move money between the owner's balance and this business wallet ('in' = owner→business, 'out' = business→owner)" })
+  transferWallet(
+    @Request() req,
+    @Param('businessId', ParseIntPipe) businessId: number,
+    @Body() body: { amount: number; direction: 'in' | 'out' },
+  ) {
+    return this.businessService.transferWallet(
+      businessId,
+      req.user.userId,
+      Number(body?.amount),
+      body?.direction === 'out' ? 'out' : 'in',
+    );
+  }
 }

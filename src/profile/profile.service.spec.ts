@@ -429,7 +429,9 @@ describe('ProfileService', () => {
     });
 
     const wireMatches = (budget: number | undefined, fieldCost: number, matchCount: number, callerBalance = 1_000_000) => {
-      businessRepo().findOne.mockResolvedValue({ id: 1, userId: 7, companyName: 'AcmeCo' });
+      // callerBalance seeds the BUSINESS wallet — each business pays from its own
+      // wallet, never the owner's personal balance (kept at a sentinel 555 below).
+      businessRepo().findOne.mockResolvedValue({ id: 1, userId: 7, companyName: 'AcmeCo', walletBalance: callerBalance });
       fieldRepo.find.mockResolvedValue([mockField({ key: 'income_range', creditCost: fieldCost })]);
       const profiles = Array.from({ length: matchCount }, (_, i) =>
         mockProfile({ id: i + 1, userId: 100 + i, data: { income_range: 'gt_20k' } }));
@@ -444,14 +446,35 @@ describe('ProfileService', () => {
       // inside the transaction.
       userRepo().findOne.mockImplementation(async ({ where }: any) =>
         where.id === 7
-          ? { id: 7, walletBalance: callerBalance }
+          ? { id: 7, walletBalance: 555 } // owner's PERSONAL balance — must never be touched
           : { id: where.id, walletBalance: 0, dataShareEnabled: true, dataCategories: ['income_range'] });
-      managerSpy.findOne.mockImplementation(async (_entity: any, opts: any) =>
-        opts.where.id === 7
-          ? { id: 7, walletBalance: callerBalance }
-          : { id: opts.where.id, walletBalance: 0, dataShareEnabled: true, dataCategories: ['income_range'] });
+      managerSpy.findOne.mockImplementation(async (entity: any, opts: any) =>
+        entity === Business
+          ? { id: 1, userId: 7, companyName: 'AcmeCo', walletBalance: callerBalance }
+          : opts.where.id === 7
+            ? { id: 7, walletBalance: 555 }
+            : { id: opts.where.id, walletBalance: 0, dataShareEnabled: true, dataCategories: ['income_range'] });
       return budget;
     };
+
+    it("bills the BUSINESS wallet — the owner's personal balance is never touched", async () => {
+      wireMatches(100, 1, 2); // 2 leads, business wallet 1,000,000
+      await service.purchaseLeads(7, {
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 7,
+      });
+      // the Business row is debited the full R502 (base R500 + data R2)…
+      const bizSaves = managerSpy.save.mock.calls.filter((c: any[]) => c[0] === Business && c[1]?.id === 1);
+      expect(bizSaves.length).toBeGreaterThan(0);
+      const finalBiz = bizSaves[bizSaves.length - 1][1];
+      expect(Number(finalBiz.walletBalance)).toBeCloseTo(1_000_000 - 502, 4);
+      // …and the owner user (id 7) is never saved with a changed balance.
+      const ownerSaves = managerSpy.save.mock.calls.filter((c: any[]) => c[0] === User && c[1]?.id === 7);
+      expect(ownerSaves).toHaveLength(0);
+      // ledger rows are stamped with the business
+      const txSaves = managerSpy.save.mock.calls.filter((c: any[]) => c[0] === Transaction && c[1]?.type === 'DATA_PURCHASE');
+      expect(txSaves.length).toBeGreaterThan(0);
+      expect(txSaves.every((c: any[]) => c[1].businessId === 1)).toBe(true);
+    });
 
     it('budget=0 buys zero leads (was: bought every match)', async () => {
       const budget = wireMatches(0, 0.05, 10);
@@ -523,11 +546,11 @@ describe('ProfileService', () => {
       expect(result.totalCost).toBe(2);        // lead (data) cost only
       expect(result.certificatePrice).toBe(502);
 
-      // End-to-end money movement: the caller's wallet was actually debited the
+      // End-to-end money movement: the BUSINESS wallet was actually debited the
       // full R502 (base fees R500 + data cost R2), not just quoted.
-      const callerSaves = managerSpy.save.mock.calls.filter((c: any[]) => c[0] === User && c[1]?.id === 7);
-      const finalCaller = callerSaves[callerSaves.length - 1][1];
-      expect(Number(finalCaller.walletBalance)).toBeCloseTo(1_000_000 - 502, 4);
+      const bizSaves = managerSpy.save.mock.calls.filter((c: any[]) => c[0] === Business && c[1]?.id === 1);
+      const finalBiz = bizSaves[bizSaves.length - 1][1];
+      expect(Number(finalBiz.walletBalance)).toBeCloseTo(1_000_000 - 502, 4);
     });
 
     it('compounds the base fee 1.8%/day for each day beyond the free 7 days', async () => {
@@ -664,11 +687,13 @@ describe('ProfileService', () => {
 
     it('incognito caller: writes no DataAccessLog, but the user still earns', async () => {
       wireMatches(100, 5, 1);
-      // Caller (id 7) is incognito.
-      managerSpy.findOne.mockImplementation(async (_e: any, opts: any) =>
-        opts.where.id === 7
-          ? { id: 7, walletBalance: 1_000_000, incognitoEnabled: true }
-          : { id: opts.where.id, walletBalance: 0, dataShareEnabled: true, dataCategories: ['income_range'] });
+      // Caller (id 7) is incognito — the flag lives on the owner ACCOUNT (read
+      // pre-txn), while the money moves through the business wallet.
+      const userRepoRef = (service as any).userRepo;
+      userRepoRef.findOne.mockImplementation(async ({ where }: any) =>
+        where.id === 7
+          ? { id: 7, walletBalance: 555, incognitoEnabled: true }
+          : { id: where.id, walletBalance: 0, dataShareEnabled: true, dataCategories: ['income_range'] });
 
       const result = await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100 });
       expect(result.purchased).toBe(1);
@@ -698,17 +723,15 @@ describe('ProfileService', () => {
       expect(referral.payCommission).toHaveBeenCalledWith(100, 3.8, managerSpy);
     });
 
-    it('Backend H6 — locks the caller wallet row with pessimistic_write inside the txn (prevents concurrent over-spend)', async () => {
+    it('Backend H6 — locks the BUSINESS wallet row with pessimistic_write inside the txn (prevents concurrent over-spend)', async () => {
       wireMatches(100, 1, 3);
       await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100 });
 
-      // The caller must have been re-read inside the txn with a write lock.
-      const callerCall = managerSpy.findOne.mock.calls.find(
-        ([_e, opts]: any) => opts?.where?.id === 7,
-      );
-      expect(callerCall).toBeTruthy();
-      const [, opts] = callerCall;
-      expect(opts).toMatchObject({ lock: { mode: 'pessimistic_write' } });
+      // The paying business wallet must have been re-read inside the txn with a write lock.
+      const bizCall = managerSpy.findOne.mock.calls.find(([e]: any) => e === Business);
+      expect(bizCall).toBeTruthy();
+      const [, opts] = bizCall;
+      expect(opts).toMatchObject({ where: { id: 1 }, lock: { mode: 'pessimistic_write' } });
       // And the whole purchase must have run inside dataSource.transaction(...).
       expect(dataSource().transaction).toHaveBeenCalledTimes(1);
     });

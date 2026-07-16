@@ -25,8 +25,9 @@ export class TransactionService {
     description: string,
     callId?: number,
     manager?: EntityManager,
+    businessId?: number,
   ): Promise<Transaction> {
-    const data = { userId, type, amount, description, callId: callId ?? null };
+    const data = { userId, type, amount, description, callId: callId ?? null, businessId: businessId ?? null };
     if (manager) {
       const tx = manager.create(Transaction, data);
       return manager.save(Transaction, tx);
@@ -38,6 +39,15 @@ export class TransactionService {
   async findByUser(userId: number): Promise<Transaction[]> {
     return this.txRepo.find({
       where: { userId },
+      order: { createdAt: 'DESC' },
+      take: 100,
+    });
+  }
+
+  /** The per-business wallet ledger — rows stamped with that businessId. */
+  async findByBusiness(businessId: number): Promise<Transaction[]> {
+    return this.txRepo.find({
+      where: { businessId },
       order: { createdAt: 'DESC' },
       take: 100,
     });

@@ -21,6 +21,11 @@ export class Transaction {
   @Column({ type: 'int', nullable: true, default: null })
   callId: number;
 
+  // Set when the money moved through a BUSINESS wallet (not the user's own
+  // balance) — scopes the per-business ledger.
+  @Column({ type: 'int', nullable: true, default: null })
+  businessId: number;
+
   @Column({ nullable: true })
   reference: string;
 

@@ -14,7 +14,11 @@ const mockRepo = () => ({
   increment: jest.fn(), update: jest.fn(),
 });
 
-const mockTx = () => ({ findByUser: jest.fn().mockResolvedValue([]), log: jest.fn() });
+const mockTx = () => ({
+  findByUser: jest.fn().mockResolvedValue([]),
+  findByBusiness: jest.fn().mockResolvedValue([]),
+  log: jest.fn(),
+});
 
 describe('BusinessService — API keys', () => {
   let service: BusinessService;
@@ -46,15 +50,15 @@ describe('BusinessService — API keys', () => {
     apiKeyRepo.save.mockImplementation(async (x: any) => x);
   });
 
-  describe('getWallet', () => {
-    it("returns the owner's balance + transactions for a business the caller owns", async () => {
-      businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9, companyName: 'Acme' });
-      userRepo.findOne.mockResolvedValue({ id: 9, walletBalance: '123.4500' });
-      txService.findByUser.mockResolvedValue([{ id: 1, type: 'CALL_CHARGE', amount: '-2' }]);
+  describe('getWallet — each business has its OWN wallet', () => {
+    it("returns the business's balance + its business-scoped ledger (not the owner's)", async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9, companyName: 'Acme', walletBalance: '77.2500' });
+      txService.findByBusiness.mockResolvedValue([{ id: 1, type: 'CREDIT_ADDED', amount: '50' }]);
       const res = await service.getWallet(5, 9);
-      expect(res.balance).toBe(123.45);
+      expect(res.balance).toBe(77.25);
       expect(res.transactions).toHaveLength(1);
-      expect(txService.findByUser).toHaveBeenCalledWith(9);
+      expect(txService.findByBusiness).toHaveBeenCalledWith(5);
+      expect(txService.findByUser).not.toHaveBeenCalled();
     });
 
     it('forbids reading a wallet the caller does not own', async () => {
@@ -69,17 +73,20 @@ describe('BusinessService — API keys', () => {
   });
 
   describe('topUpWallet', () => {
-    it('credits the wallet atomically and logs a transaction', async () => {
+    it("credits the BUSINESS wallet atomically (not the owner's) and logs a business-scoped transaction", async () => {
       businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9, companyName: 'Acme' });
       const manager = {
-        findOne: jest.fn().mockResolvedValue({ id: 9, walletBalance: '100.0000' }),
-        save: jest.fn().mockImplementation(async (x: any) => x),
+        findOne: jest.fn().mockResolvedValue({ id: 5, userId: 9, walletBalance: '100.0000' }),
+        save: jest.fn().mockImplementation(async (...args: any[]) => args[args.length - 1]),
       };
       dataSource.transaction.mockImplementation(async (cb: any) => cb(manager));
       const res = await service.topUpWallet(5, 9, 50);
       expect(res.balance).toBe(150);
-      expect(manager.save).toHaveBeenCalled();
-      expect(txService.log).toHaveBeenCalledWith(9, 'CREDIT_ADDED', 50, expect.any(String), undefined, manager);
+      // the locked row is the Business, and the saved balance lands on it
+      expect(manager.findOne).toHaveBeenCalledWith(Business, expect.objectContaining({ where: { id: 5 } }));
+      const saved = manager.save.mock.calls[0];
+      expect(Number(saved[saved.length - 1].walletBalance)).toBe(150);
+      expect(txService.log).toHaveBeenCalledWith(9, 'CREDIT_ADDED', 50, expect.any(String), undefined, manager, 5);
     });
 
     it('rejects a non-positive amount', async () => {
@@ -91,6 +98,54 @@ describe('BusinessService — API keys', () => {
     it('forbids topping up a wallet the caller does not own', async () => {
       businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9 });
       await expect(service.topUpWallet(5, 999, 50)).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('transferWallet — move money between the owner and a business wallet', () => {
+    const wire = (ownerBalance: string, bizBalance: string) => {
+      businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9, companyName: 'Acme' });
+      const rows: Record<string, any> = {
+        user: { id: 9, walletBalance: ownerBalance },
+        biz: { id: 5, userId: 9, walletBalance: bizBalance },
+      };
+      const manager = {
+        findOne: jest.fn().mockImplementation(async (entity: any) =>
+          entity === User ? rows.user : rows.biz),
+        save: jest.fn().mockImplementation(async (...args: any[]) => args[args.length - 1]),
+      };
+      dataSource.transaction.mockImplementation(async (cb: any) => cb(manager));
+      return { manager, rows };
+    };
+
+    it("direction 'in': moves owner money INTO the business wallet, double-logged", async () => {
+      const { rows } = wire('200.0000', '10.0000');
+      const res = await service.transferWallet(5, 9, 60, 'in');
+      expect(Number(rows.user.walletBalance)).toBe(140);
+      expect(Number(rows.biz.walletBalance)).toBe(70);
+      expect(res.balance).toBe(70); // the business wallet after the move
+      // owner ledger entry (negative) + business ledger entry (positive)
+      expect(txService.log).toHaveBeenCalledWith(9, 'TRANSFER_TO_BUSINESS', -60, expect.any(String), undefined, expect.anything());
+      expect(txService.log).toHaveBeenCalledWith(9, 'TRANSFER_FROM_OWNER', 60, expect.any(String), undefined, expect.anything(), 5);
+    });
+
+    it("direction 'out': moves business money back to the owner", async () => {
+      const { rows } = wire('200.0000', '80.0000');
+      const res = await service.transferWallet(5, 9, 30, 'out');
+      expect(Number(rows.user.walletBalance)).toBe(230);
+      expect(Number(rows.biz.walletBalance)).toBe(50);
+      expect(res.balance).toBe(50);
+    });
+
+    it('rejects a transfer the source cannot afford', async () => {
+      wire('10.0000', '5.0000');
+      await expect(service.transferWallet(5, 9, 60, 'in')).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.transferWallet(5, 9, 60, 'out')).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('rejects non-positive amounts and non-owners', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9 });
+      await expect(service.transferWallet(5, 9, 0, 'in')).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.transferWallet(5, 999, 10, 'in')).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 

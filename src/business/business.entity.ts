@@ -54,6 +54,11 @@ export class Business {
   @Column({ type: 'decimal', precision: 12, scale: 2, default: 0 })
   defaultBidAmount: number;
 
+  // Each business has its OWN wallet — business spend (leads, calls) draws from
+  // here, funded by top-ups or transfers from the owner's personal balance.
+  @Column({ type: 'decimal', precision: 12, scale: 4, default: 0 })
+  walletBalance: number;
+
   @Column({ default: false })
   verified: boolean;
 
