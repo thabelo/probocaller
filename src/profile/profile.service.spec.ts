@@ -234,25 +234,27 @@ describe('ProfileService', () => {
     let settingRepo: ReturnType<typeof mockRepo>;
     beforeEach(() => { settingRepo = (service as any).settingRepo; });
 
-    it('falls back to the defaults (R250 base, 7 free days, 1.8%/day) when unset', async () => {
+    it('falls back to the defaults (R250 base, 7 free days, 1.8%/day, ×3 cap) when unset', async () => {
       settingRepo.findOne.mockResolvedValue(null);
-      expect(await service.getLeadsPricing()).toEqual({ baseFee: 250, freeDays: 7, dailyRate: 0.018 });
+      expect(await service.getLeadsPricing()).toEqual({ baseFee: 250, freeDays: 7, dailyRate: 0.018, maxMultiplier: 3 });
     });
 
     it('returns the configured values from settings', async () => {
       settingRepo.findOne.mockImplementation(async ({ where }: any) =>
         where.key === 'LEADS_BASE_FEE' ? { value: '400' }
           : where.key === 'LEADS_FREE_DAYS' ? { value: '14' }
-          : where.key === 'LEADS_DAILY_RATE' ? { value: '0.025' } : null);
-      expect(await service.getLeadsPricing()).toEqual({ baseFee: 400, freeDays: 14, dailyRate: 0.025 });
+          : where.key === 'LEADS_DAILY_RATE' ? { value: '0.025' }
+          : where.key === 'LEADS_MAX_MULTIPLIER' ? { value: '5' } : null);
+      expect(await service.getLeadsPricing()).toEqual({ baseFee: 400, freeDays: 14, dailyRate: 0.025, maxMultiplier: 5 });
     });
 
     it('ignores non-positive / non-numeric config and uses the defaults', async () => {
       settingRepo.findOne.mockImplementation(async ({ where }: any) =>
         where.key === 'LEADS_BASE_FEE' ? { value: 'abc' }
           : where.key === 'LEADS_FREE_DAYS' ? { value: '0' }
-          : where.key === 'LEADS_DAILY_RATE' ? { value: 'x' } : null);
-      expect(await service.getLeadsPricing()).toEqual({ baseFee: 250, freeDays: 7, dailyRate: 0.018 });
+          : where.key === 'LEADS_DAILY_RATE' ? { value: 'x' }
+          : where.key === 'LEADS_MAX_MULTIPLIER' ? { value: '0' } : null);
+      expect(await service.getLeadsPricing()).toEqual({ baseFee: 250, freeDays: 7, dailyRate: 0.018, maxMultiplier: 3 });
     });
   });
 
@@ -499,6 +501,12 @@ describe('ProfileService', () => {
       expect(result.certificate?.code).toBe(cert.code);
       expect(result.totalCost).toBe(2);        // lead (data) cost only
       expect(result.certificatePrice).toBe(502);
+
+      // End-to-end money movement: the caller's wallet was actually debited the
+      // full R502 (base fees R500 + data cost R2), not just quoted.
+      const callerSaves = managerSpy.save.mock.calls.filter((c: any[]) => c[0] === User && c[1]?.id === 7);
+      const finalCaller = callerSaves[callerSaves.length - 1][1];
+      expect(Number(finalCaller.walletBalance)).toBeCloseTo(1_000_000 - 502, 4);
     });
 
     it('compounds the base fee 1.8%/day for each day beyond the free 7 days', async () => {
@@ -513,6 +521,30 @@ describe('ProfileService', () => {
       expect(cert.leadsCost).toBe(2);     // data cost is flat (not period-scaled)
       expect(cert.totalPrice).toBe(511);
       expect(result.totalCost).toBe(2);
+    });
+
+    it('caps the compounding factor at maxMultiplier (base fee can never run away)', async () => {
+      wireMatches(100, 0, 1); // 1 match, zero data cost → isolate the base fee
+      (service as any).settingRepo.findOne.mockImplementation(async ({ where }: any) =>
+        where.key === 'LEADS_MAX_MULTIPLIER' ? { value: '3' } : null); // base 250, free 7, 1.8%/day
+      const result = await service.purchaseLeads(7, {
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 360,
+      });
+      // 1.018^353 ≈ 545×, but capped at ×3 → base fee = R750/user (not R136k).
+      const cert = managerSpy.save.mock.calls.find((c: any[]) => c[0] === DataCertificate)![1];
+      expect(cert.basePrice).toBe(750); // 250 × 3 × 1 lead
+    });
+
+    it('queryAudience returns the authoritative grand total (base fee + data), matching the charge', async () => {
+      wireMatches(undefined, 1, 2); // 2 matches, data cost 1/user
+      const res: any = await service.queryAudience(7, {
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, consentDays: 7, // free window → no interest
+      });
+      expect(res.estimatedReach).toBe(2);
+      expect(res.estimatedTotalCost).toBe(2);        // data cost only (unchanged field)
+      expect(res.estimatedBaseFeePerUser).toBe(250); // no interest at the free window
+      expect(res.estimatedBaseFeeTotal).toBe(500);   // 250 × 2 users
+      expect(res.estimatedGrandTotal).toBe(502);     // base fees + data cost = what purchaseLeads charges
     });
 
     it('the leads (data) cost is flat — it does NOT scale with the authorisation window', async () => {
