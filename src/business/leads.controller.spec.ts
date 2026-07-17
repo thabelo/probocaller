@@ -19,9 +19,21 @@ describe('LeadsController', () => {
 
     const result = await controller.getLeads(req(), dto);
 
-    expect(profile.purchaseLeads).toHaveBeenCalledWith(7, dto, ['income_range', 'age_range']);
+    // uncapped key → spendCap null (4th arg)
+    expect(profile.purchaseLeads).toHaveBeenCalledWith(7, dto, ['income_range', 'age_range'], null);
     expect(business.recordApiKeyUsage).toHaveBeenCalledWith(11, 0.4);
     expect(result).toEqual({ purchased: 2, leads: [], totalCost: 0.4 });
+  });
+
+  it("forwards the key's per-call spend cap to purchaseLeads", async () => {
+    const profile = makeProfile() as any;
+    const controller = new LeadsController(profile, makeBusiness() as any);
+    const capReq = { business: { id: 3, userId: 7 }, apiKey: { id: 11, scopes: ['income_range'], maxSpendPerCall: '750.0000' } };
+    const dto = { filters: {} } as any;
+
+    await controller.getLeads(capReq, dto);
+
+    expect(profile.purchaseLeads).toHaveBeenCalledWith(7, dto, ['income_range'], 750);
   });
 
   it('dryRun estimates (scoped), never bills, and records no usage', async () => {

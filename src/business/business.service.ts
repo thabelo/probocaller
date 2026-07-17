@@ -391,15 +391,19 @@ export class BusinessService {
   /** Create a new API key for a business, scoped to specific profile fields. */
   async createApiKey(
     businessId: number,
-    opts: { label?: string; scopes?: string[] },
+    opts: { label?: string; scopes?: string[]; maxSpendPerCall?: number | null },
   ): Promise<ApiKey> {
     const business = await this.businessRepo.findOne({ where: { id: businessId } });
     if (!business) throw new NotFoundException('Business not found');
+    // Only a finite positive cap is meaningful; anything else = uncapped (null).
+    const cap = Number(opts.maxSpendPerCall);
+    const maxSpendPerCall = Number.isFinite(cap) && cap > 0 ? parseFloat(cap.toFixed(4)) : null;
     const key = this.apiKeyRepo.create({
       businessId,
       key: 'pk_' + randomBytes(24).toString('hex'),
       label: opts.label ?? null,
       scopes: opts.scopes ?? [],
+      maxSpendPerCall,
       revoked: false,
     });
     return this.apiKeyRepo.save(key);
@@ -432,7 +436,7 @@ export class BusinessService {
   async createApiKeyForUser(
     userId: number,
     businessId: number,
-    opts: { label?: string; scopes?: string[] },
+    opts: { label?: string; scopes?: string[]; maxSpendPerCall?: number | null },
   ): Promise<ApiKey> {
     const business = await this.businessRepo.findOne({ where: { id: businessId, userId } });
     if (!business) throw new NotFoundException('Business not found or does not belong to your account.');

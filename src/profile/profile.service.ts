@@ -390,7 +390,15 @@ export class ProfileService {
     };
   }
 
-  async purchaseLeads(businessUserId: number, dto: QueryAudienceDto, allowedFields: string[] = []) {
+  async purchaseLeads(
+    businessUserId: number,
+    dto: QueryAudienceDto,
+    allowedFields: string[] = [],
+    // Hard ceiling on the total charge for THIS call (e.g. an API key's
+    // per-call spend cap). null/undefined = uncapped. Guards against an
+    // automated request draining the wallet in one shot.
+    spendCap?: number | null,
+  ) {
     // Purchase on behalf of a specific owned business when one is given (leads are
     // per business), else the caller's default business.
     const business = await this.businessRepo.findOne({
@@ -482,8 +490,11 @@ export class ProfileService {
         }, 0);
 
         // Each lead costs the (period-compounded) per-user base fee PLUS its data
-        // cost. Stop once the wallet can't cover the next lead in full.
-        if (Number(lockedBiz.walletBalance) < effectiveBaseFee + costForUser) break;
+        // cost. Stop once the wallet can't cover the next lead in full…
+        const nextCharge = effectiveBaseFee + costForUser;
+        if (Number(lockedBiz.walletBalance) < nextCharge) break;
+        // …or once this call's spend cap would be exceeded (API-key guardrail).
+        if (spendCap != null && parseFloat((baseFeeTotal + totalCost + nextCharge).toFixed(6)) > spendCap) break;
         lockedBiz.walletBalance = parseFloat((Number(lockedBiz.walletBalance) - effectiveBaseFee).toFixed(6));
         baseFeeTotal = parseFloat((baseFeeTotal + effectiveBaseFee).toFixed(6));
 

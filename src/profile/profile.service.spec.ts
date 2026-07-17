@@ -483,6 +483,22 @@ describe('ProfileService', () => {
       expect(result.totalCost).toBe(0);
     });
 
+    it('spendCap hard-limits the total charge per call (API-key guardrail)', async () => {
+      wireMatches(undefined, 1, 10); // 10 matches, base R250 + data R1 = R251/lead, wallet huge
+      // Cap the call at R600 → 2 leads (R502) fit, a 3rd (R753) would exceed it.
+      const result = await service.purchaseLeads(
+        7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } }, consentDays: 7 }, [], 600,
+      );
+      expect(result.purchased).toBe(2);
+      expect(result.certificatePrice).toBeCloseTo(502, 4); // 2 × (250 + 1)
+    });
+
+    it('spendCap undefined means unlimited (existing behaviour preserved)', async () => {
+      wireMatches(undefined, 1, 3);
+      const result = await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } } });
+      expect(result.purchased).toBe(3);
+    });
+
     it('budget < cost of one lead buys zero leads', async () => {
       const budget = wireMatches(1, 5, 10); // 1 / 5 = 0.2 → floor = 0
       const result = await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget });

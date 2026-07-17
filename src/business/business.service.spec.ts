@@ -182,6 +182,15 @@ describe('BusinessService — API keys', () => {
       await expect(service.createApiKey(9, {})).rejects.toBeInstanceOf(NotFoundException);
     });
 
+    it('persists a positive per-call spend cap, and normalises junk/non-positive to null (uncapped)', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 3 });
+      expect((await service.createApiKey(3, { maxSpendPerCall: 500 })).maxSpendPerCall).toBe(500);
+      expect((await service.createApiKey(3, {})).maxSpendPerCall).toBeNull();
+      expect((await service.createApiKey(3, { maxSpendPerCall: 0 })).maxSpendPerCall).toBeNull();
+      expect((await service.createApiKey(3, { maxSpendPerCall: -5 as any })).maxSpendPerCall).toBeNull();
+      expect((await service.createApiKey(3, { maxSpendPerCall: Infinity as any })).maxSpendPerCall).toBeNull();
+    });
+
     it('generates a unique key per call', async () => {
       businessRepo.findOne.mockResolvedValue({ id: 3 });
       const a = (await service.createApiKey(3, {})).key;

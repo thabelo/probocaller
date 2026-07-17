@@ -129,11 +129,12 @@ export class BusinessController {
   @ApiOperation({ summary: 'Create a scoped API key for one of my KYB-verified businesses' })
   createMyApiKey(
     @Request() req,
-    @Body() body: { businessId: number; label?: string; scopes?: string[] },
+    @Body() body: { businessId: number; label?: string; scopes?: string[]; maxSpendPerCall?: number | null },
   ) {
     return this.businessService.createApiKeyForUser(req.user.userId, body.businessId, {
       label: body.label,
       scopes: body.scopes,
+      maxSpendPerCall: body.maxSpendPerCall,
     });
   }
 

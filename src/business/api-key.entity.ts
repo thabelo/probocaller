@@ -30,6 +30,12 @@ export class ApiKey {
   @Column('simple-array', { default: '' })
   scopes: string[];
 
+  // Per-call spend ceiling (ledger currency). null = uncapped. A single
+  // /leads call can never charge more than this, so an automated integration
+  // can't drain the business wallet in one request.
+  @Column({ type: 'decimal', precision: 12, scale: 4, nullable: true, default: null })
+  maxSpendPerCall: number | null;
+
   @Column({ default: false })
   revoked: boolean;
 

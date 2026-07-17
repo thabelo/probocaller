@@ -32,7 +32,10 @@ export class LeadsController {
       const estimate = await this.profileService.queryAudience(userId, dto, scopes);
       return { dryRun: true, scopes, ...estimate };
     }
-    const result = await this.profileService.purchaseLeads(userId, dto, scopes);
+    // Enforce the key's per-call spend cap so an automated call can't drain the
+    // business wallet in one request.
+    const spendCap = req.apiKey?.maxSpendPerCall != null ? Number(req.apiKey.maxSpendPerCall) : null;
+    const result = await this.profileService.purchaseLeads(userId, dto, scopes, spendCap);
     await this.businessService.recordApiKeyUsage(req.apiKey.id, result.totalCost || 0);
     return result;
   }
