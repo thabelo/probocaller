@@ -58,6 +58,15 @@ export class DataCertificate {
   @Column({ nullable: true })
   purpose: string | null;
 
+  // Provenance: which API key minted this cert (null = bought in the dashboard).
+  // sourceLabel denormalises the key's label so the UI needn't join and the
+  // attribution survives the key being revoked/deleted.
+  @Column({ type: 'int', nullable: true, default: null })
+  apiKeyId: number | null;
+
+  @Column({ nullable: true })
+  sourceLabel: string | null;
+
   @ManyToOne(() => Business)
   @JoinColumn({ name: 'businessId' })
   business: Business;

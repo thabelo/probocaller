@@ -505,6 +505,25 @@ describe('ProfileService', () => {
       expect(result.purchased).toBe(0);
     });
 
+    it('stamps the minting API key on the certificate (source attribution)', async () => {
+      wireMatches(undefined, 1, 1);
+      await service.purchaseLeads(
+        7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } } }, [], null,
+        { apiKeyId: 42, label: 'Nightly CRM' },
+      );
+      const cert = managerSpy.save.mock.calls.find((c: any[]) => c[0] === DataCertificate)![1];
+      expect(cert.apiKeyId).toBe(42);
+      expect(cert.sourceLabel).toBe('Nightly CRM');
+    });
+
+    it('a dashboard purchase leaves the certificate unattributed (apiKeyId null)', async () => {
+      wireMatches(undefined, 1, 1);
+      await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } } });
+      const cert = managerSpy.save.mock.calls.find((c: any[]) => c[0] === DataCertificate)![1];
+      expect(cert.apiKeyId ?? null).toBeNull();
+      expect(cert.sourceLabel ?? null).toBeNull();
+    });
+
     it('budget = 2 × cost buys exactly 2 leads', async () => {
       const budget = wireMatches(10, 5, 10);
       const result = await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget });

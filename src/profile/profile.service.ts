@@ -398,6 +398,9 @@ export class ProfileService {
     // per-call spend cap). null/undefined = uncapped. Guards against an
     // automated request draining the wallet in one shot.
     spendCap?: number | null,
+    // Provenance of the purchase — the API key that made it, so the minted
+    // certificate can be attributed. Omit for dashboard purchases.
+    source?: { apiKeyId?: number | null; label?: string | null } | null,
   ) {
     // Purchase on behalf of a specific owned business when one is given (leads are
     // per business), else the caller's default business.
@@ -576,6 +579,8 @@ export class ProfileService {
           leadCount: leads.length,
           userIds: leads.map((l) => l.userId),
           purpose: dto.purpose || null,
+          apiKeyId: source?.apiKeyId ?? null,
+          sourceLabel: source?.label ?? null,
           basePrice: baseFeeTotal,
           leadsCost: totalCost,
           totalPrice: certificatePrice,

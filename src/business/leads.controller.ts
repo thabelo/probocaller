@@ -35,7 +35,9 @@ export class LeadsController {
     // Enforce the key's per-call spend cap so an automated call can't drain the
     // business wallet in one request.
     const spendCap = req.apiKey?.maxSpendPerCall != null ? Number(req.apiKey.maxSpendPerCall) : null;
-    const result = await this.profileService.purchaseLeads(userId, dto, scopes, spendCap);
+    // Attribute the minted certificate to the key that made this purchase.
+    const source = { apiKeyId: req.apiKey?.id ?? null, label: req.apiKey?.label ?? null };
+    const result = await this.profileService.purchaseLeads(userId, dto, scopes, spendCap, source);
     await this.businessService.recordApiKeyUsage(req.apiKey.id, result.totalCost || 0);
     return result;
   }
