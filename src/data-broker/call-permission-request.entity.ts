@@ -49,6 +49,12 @@ export class CallPermissionRequest {
   @Column({ type: 'timestamp', nullable: true, default: null })
   approvedAt: Date | null;
 
+  // Free-call whitelist: when the user allows the business to call FREE for a
+  // window, freeCall=true and expiresAt bounds it. Calls from this business are
+  // not charged until expiresAt passes.
+  @Column({ default: false })
+  freeCall: boolean;
+
   @Column({ type: 'timestamp', nullable: true, default: null })
   expiresAt: Date | null;
 

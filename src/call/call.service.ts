@@ -185,8 +185,13 @@ export class CallService {
       await this.callRepository.save(blockedCall);
       return { call: blockedCall, blocked: true, voiceNote: true, message: 'This person is not accepting calls through Probo Caller.' };
     }
-    // Tier 1: business rings free — the call carries a zero rate, so no one is charged.
-    const chargeRate = businessPolicy === 'free' ? 0 : ratePerSecond;
+    // Tier 1: business rings free — the call carries a zero rate, so no one is
+    // charged. A per-business free-call whitelist (granted by the recipient for
+    // a 24h/week/month window) also makes this specific caller free.
+    const freeWhitelisted = appIncoming || fromUser.isBusiness
+      ? await this.dataBrokerService.isFreeWhitelisted(recipient.id, callerBusinessUserId)
+      : false;
+    const chargeRate = businessPolicy === 'free' || freeWhitelisted ? 0 : ratePerSecond;
 
     const recipientBlocksCaller = fromUser.spamList?.includes(toUser.phoneNumber);
     if (recipientBlocksCaller) {

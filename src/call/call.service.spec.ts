@@ -66,7 +66,7 @@ describe('CallService — LOW_FUNDS blocking', () => {
         { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
         { provide: getRepositoryToken(Setting),    useFactory: mockSettingRepo },
         { provide: TransactionService, useValue: { log: jest.fn() } },
-        { provide: DataBrokerService,  useValue: { hasApproval: jest.fn().mockResolvedValue(true) } },
+        { provide: DataBrokerService,  useValue: { hasApproval: jest.fn().mockResolvedValue(true), isFreeWhitelisted: jest.fn().mockResolvedValue(false) } },
         { provide: ReferralService, useValue: { payCommission: jest.fn().mockResolvedValue(undefined) } },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
       ],
@@ -227,7 +227,7 @@ describe('CallService — completeCall reward integrity', () => {
         { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
         { provide: getRepositoryToken(Setting),    useFactory: mockSettingRepo },
         { provide: TransactionService, useValue: txService },
-        { provide: DataBrokerService,  useValue: { hasApproval: jest.fn().mockResolvedValue(true) } },
+        { provide: DataBrokerService,  useValue: { hasApproval: jest.fn().mockResolvedValue(true), isFreeWhitelisted: jest.fn().mockResolvedValue(false) } },
         { provide: ReferralService, useValue: referral },
         { provide: DataSource, useValue: dataSource },
       ],
@@ -399,7 +399,7 @@ describe('CallService — per-business attribution', () => {
         { provide: getRepositoryToken(Campaign),       useFactory: mockRepo },
         { provide: getRepositoryToken(Setting),        useFactory: mockSettingRepo },
         { provide: TransactionService, useValue: { log: jest.fn() } },
-        { provide: DataBrokerService,  useValue: { hasApproval: jest.fn().mockResolvedValue(true) } },
+        { provide: DataBrokerService,  useValue: { hasApproval: jest.fn().mockResolvedValue(true), isFreeWhitelisted: jest.fn().mockResolvedValue(false) } },
         { provide: ReferralService, useValue: { payCommission: jest.fn() } },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
       ],
@@ -439,6 +439,57 @@ describe('CallService — per-business attribution', () => {
       await service.initiateCall(CALLER, '+27829999999');
       expect(callRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'initiated', businessId: null, callingNumberId: null }),
+      );
+    });
+  });
+
+  describe('free-call whitelist → business call is free', () => {
+    let svc: CallService;
+    let uRepo: ReturnType<typeof mockRepo>;
+    let cRepo: ReturnType<typeof mockRepo>;
+    let dataBroker: { isFreeWhitelisted: jest.Mock; hasApproval: jest.Mock };
+
+    beforeEach(async () => {
+      dataBroker = { isFreeWhitelisted: jest.fn(), hasApproval: jest.fn().mockResolvedValue(true) };
+      const module: TestingModule = await Test.createTestingModule({
+        providers: [
+          CallService,
+          { provide: getRepositoryToken(CallLog),        useFactory: mockRepo },
+          { provide: getRepositoryToken(CallRating),     useFactory: mockRepo },
+          { provide: getRepositoryToken(User),           useFactory: mockRepo },
+          { provide: getRepositoryToken(Business),       useFactory: mockRepo },
+          { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+          { provide: getRepositoryToken(Setting),        useFactory: mockSettingRepo },
+          { provide: TransactionService, useValue: { log: jest.fn() } },
+          { provide: DataBrokerService,  useValue: dataBroker },
+          { provide: ReferralService, useValue: { payCommission: jest.fn() } },
+          { provide: DataSource, useValue: { transaction: jest.fn() } },
+        ],
+      }).compile();
+      svc = module.get(CallService);
+      uRepo = module.get(getRepositoryToken(User));
+      cRepo = module.get(getRepositoryToken(CallLog));
+      // business caller with funds → a 'paid'-policy recipient (would normally be charged).
+      uRepo.findOne
+        .mockResolvedValueOnce(mockUser({ id: 7, isBusiness: true, walletBalance: 100 }))
+        .mockResolvedValueOnce(mockUser({ id: 2, phoneNumber: '+27829999999', isBusiness: false, businessCallPolicy: 'paid' } as any))
+        .mockResolvedValue(mockUser({ id: 7, isBusiness: true, walletBalance: 100 }));
+    });
+
+    it('creates a zero-rate call when the caller is free-whitelisted', async () => {
+      dataBroker.isFreeWhitelisted.mockResolvedValue(true);
+      await svc.initiateCall(7, '+27829999999');
+      expect(dataBroker.isFreeWhitelisted).toHaveBeenCalledWith(2, 7);
+      expect(cRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'initiated', ratePerSecond: 0 }),
+      );
+    });
+
+    it('charges the normal rate when NOT whitelisted', async () => {
+      dataBroker.isFreeWhitelisted.mockResolvedValue(false);
+      await svc.initiateCall(7, '+27829999999');
+      expect(cRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'initiated', ratePerSecond: DEFAULT_RATE }),
       );
     });
   });
@@ -492,7 +543,7 @@ describe('CallService — a business is billed only when the user allows the cal
         { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
         { provide: getRepositoryToken(Setting),    useFactory: mockSettingRepo },
         { provide: TransactionService, useValue: { log: jest.fn() } },
-        { provide: DataBrokerService,  useValue: { hasApproval } },
+        { provide: DataBrokerService,  useValue: { hasApproval, isFreeWhitelisted: jest.fn().mockResolvedValue(false) } },
         { provide: ReferralService, useValue: { payCommission: jest.fn().mockResolvedValue(undefined) } },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
       ],
@@ -564,7 +615,7 @@ describe('CallService — incoming direction: the RECIPIENT user\'s permission i
         { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
         { provide: getRepositoryToken(Setting),    useFactory: mockSettingRepo },
         { provide: TransactionService, useValue: { log: jest.fn() } },
-        { provide: DataBrokerService,  useValue: { hasApproval } },
+        { provide: DataBrokerService,  useValue: { hasApproval, isFreeWhitelisted: jest.fn().mockResolvedValue(false) } },
         { provide: ReferralService, useValue: { payCommission: jest.fn().mockResolvedValue(undefined) } },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
       ],

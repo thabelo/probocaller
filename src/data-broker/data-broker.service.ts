@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ForbiddenException, ConflictException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { Repository, In, MoreThan } from 'typeorm';
 import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
 import { CallPermissionRequest } from './call-permission-request.entity';
@@ -197,20 +197,32 @@ export class DataBrokerService {
     return saved;
   }
 
-  async respondToRequest(userId: number, requestId: number, approved: boolean) {
+  /**
+   * Respond to a call-permission request. `freeWindowMs`, when given on an
+   * approval, grants the business a FREE call window (whitelist): the grant is
+   * marked free with an expiry, and any staked escrow is refunded (the caller
+   * isn't charged since the call is free). Without it, approval settles the
+   * escrow (Pay-to-Contact), rejection refunds it.
+   */
+  async respondToRequest(userId: number, requestId: number, approved: boolean, freeWindowMs?: number) {
     const request = await this.permissionRepo.findOne({ where: { id: requestId } });
     if (!request) throw new NotFoundException('Request not found');
     if (request.userId !== userId) throw new ForbiddenException('This request is not for you');
     if (request.status !== 'pending') throw new ConflictException('Request already responded to');
 
+    const free = approved && !!freeWindowMs && freeWindowMs > 0;
     request.status = approved ? 'approved' : 'rejected';
     if (approved) request.approvedAt = new Date();
+    if (free) {
+      request.freeCall = true;
+      request.expiresAt = new Date(Date.now() + freeWindowMs!);
+    }
     const saved = await this.permissionRepo.save(request);
 
-    // Pay-to-Contact: release the staked escrow to the user on approval, or
-    // refund it to the business on rejection. Only acts when a stake is held.
+    // Escrow: a free grant refunds the stake (no charge); a plain approval
+    // settles it to the user; a rejection refunds it. Only acts when held.
     if (request.escrowStatus === 'held') {
-      if (approved) {
+      if (approved && !free) {
         await this.payToContact.settle(requestId);
       } else {
         await this.payToContact.refund(requestId);
@@ -218,6 +230,26 @@ export class DataBrokerService {
     }
 
     return saved;
+  }
+
+  /**
+   * Is the calling business currently free-whitelisted to call this recipient?
+   * True when an approved, free grant from one of the caller's businesses is
+   * still within its window.
+   */
+  async isFreeWhitelisted(recipientUserId: number, callerBusinessUserId: number): Promise<boolean> {
+    const businesses = await this.businessRepo.find({ where: { userId: callerBusinessUserId } });
+    if (!businesses.length) return false;
+    const grant = await this.permissionRepo.findOne({
+      where: {
+        userId: recipientUserId,
+        businessId: In(businesses.map((b) => b.id)),
+        status: 'approved',
+        freeCall: true,
+        expiresAt: MoreThan(new Date()),
+      },
+    });
+    return !!grant;
   }
 
   async getMyRequests(userId: number) {

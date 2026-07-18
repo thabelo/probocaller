@@ -310,6 +310,49 @@ describe('DataBrokerService', () => {
     });
   });
 
+  describe('free-call whitelist — allow a business to call free for a window', () => {
+    it('approving with a free window marks the grant free and sets an expiry (24h)', async () => {
+      const request: any = { id: 7, userId: 1, status: 'pending', escrowStatus: 'none' };
+      permissionRepo.findOne.mockResolvedValue(request);
+      permissionRepo.save.mockImplementation((r: any) => Promise.resolve(r));
+
+      const before = Date.now();
+      const saved: any = await service.respondToRequest(1, 7, true, 24 * 60 * 60 * 1000);
+
+      expect(saved.status).toBe('approved');
+      expect(saved.freeCall).toBe(true);
+      const ms = new Date(saved.expiresAt).getTime() - before;
+      expect(ms).toBeGreaterThan(23.5 * 3600_000);
+      expect(ms).toBeLessThan(24.5 * 3600_000);
+    });
+
+    it('a free grant refunds any held escrow (the caller is not charged)', async () => {
+      const request: any = { id: 7, userId: 1, status: 'pending', escrowStatus: 'held' };
+      permissionRepo.findOne.mockResolvedValue(request);
+      permissionRepo.save.mockImplementation((r: any) => Promise.resolve(r));
+
+      await service.respondToRequest(1, 7, true, 7 * 24 * 60 * 60 * 1000);
+
+      expect(payToContact.refund).toHaveBeenCalledWith(7);
+      expect(payToContact.settle).not.toHaveBeenCalled();
+    });
+
+    it('isFreeWhitelisted: true only for an approved, free, unexpired grant from the caller business', async () => {
+      businessRepo.find.mockResolvedValue([{ id: 9 }]); // caller (userId 2) owns business 9
+      permissionRepo.findOne.mockResolvedValue({ id: 7, userId: 1, businessId: 9, status: 'approved', freeCall: true });
+      await expect(service.isFreeWhitelisted(1, 2)).resolves.toBe(true);
+
+      permissionRepo.findOne.mockResolvedValue(null); // no active grant
+      await expect(service.isFreeWhitelisted(1, 2)).resolves.toBe(false);
+    });
+
+    it('isFreeWhitelisted: false when the caller owns no business', async () => {
+      businessRepo.find.mockResolvedValue([]);
+      await expect(service.isFreeWhitelisted(1, 2)).resolves.toBe(false);
+      expect(permissionRepo.findOne).not.toHaveBeenCalled();
+    });
+  });
+
   describe('requestCallPermission — Pay-to-Contact stake', () => {
     beforeEach(() => {
       businessRepo.findOne.mockResolvedValue({ id: 3, companyName: 'Acme', userId: 2 });

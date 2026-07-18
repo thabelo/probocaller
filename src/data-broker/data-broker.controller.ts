@@ -37,9 +37,15 @@ export class DataBrokerController {
   }
 
   @Put('call-permission/:id/approve')
-  @ApiOperation({ summary: 'Approve a call permission request' })
-  approve(@Request() req, @Param('id') id: number) {
-    return this.dataBrokerService.respondToRequest(req.user.userId, Number(id), true);
+  @ApiOperation({ summary: 'Approve a call permission request — optional freeWindow (24h/week/month) grants a free-call whitelist' })
+  approve(@Request() req, @Param('id') id: number, @Body() body: { freeWindow?: '24h' | 'week' | 'month' }) {
+    const WINDOWS: Record<string, number> = {
+      '24h': 24 * 60 * 60 * 1000,
+      week: 7 * 24 * 60 * 60 * 1000,
+      month: 30 * 24 * 60 * 60 * 1000,
+    };
+    const freeWindowMs = body?.freeWindow ? WINDOWS[body.freeWindow] : undefined;
+    return this.dataBrokerService.respondToRequest(req.user.userId, Number(id), true, freeWindowMs);
   }
 
   @Put('call-permission/:id/reject')
