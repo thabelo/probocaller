@@ -6,13 +6,17 @@ import { UserController } from './user.controller';
 describe('UserController — findUser caller-ID lookup: permittedForYou', () => {
   const makeController = () => {
     const userService: any = { findOrCreatePlaceholder: jest.fn() };
-    const businessService: any = { resolveCallerIdentity: jest.fn(), getProfileByUserId: jest.fn() };
+    const businessService: any = { resolveCallerIdentity: jest.fn(), getProfileByUserId: jest.fn(), getOwnerWalletBalance: jest.fn().mockResolvedValue(null) };
     const transactionService: any = {};
-    const dataBrokerService: any = { isBusinessCallerAllowed: jest.fn() };
+    const dataBrokerService: any = {
+      isBusinessCallerAllowed: jest.fn(),
+      isFreeWhitelistedForBusiness: jest.fn().mockResolvedValue(false),
+    };
     const lookupService: any = { resolveExternalName: jest.fn().mockResolvedValue(null) };
     const externalLookupLimiter: any = { tryAcquire: jest.fn().mockReturnValue(true) };
-    const controller = new UserController(userService, businessService, transactionService, dataBrokerService, lookupService, externalLookupLimiter);
-    return { controller, userService, businessService, dataBrokerService, lookupService, externalLookupLimiter };
+    const settingRepo: any = { findOne: jest.fn().mockResolvedValue({ key: 'RATE_PER_SECOND', value: '0.15' }) };
+    const controller = new UserController(userService, businessService, transactionService, dataBrokerService, lookupService, externalLookupLimiter, settingRepo);
+    return { controller, userService, businessService, dataBrokerService, lookupService, externalLookupLimiter, settingRepo };
   };
 
   // Requests from an app build that supports the non-cacheable external-name flag.
@@ -37,6 +41,128 @@ describe('UserController — findUser caller-ID lookup: permittedForYou', () => 
     expect(res.isBusiness).toBe(true);
     expect(res.permittedForYou).toBe(false);
     expect(dataBrokerService.isBusinessCallerAllowed).toHaveBeenCalledWith(5, 3);
+  });
+
+  // Free-call whitelist: the incoming-call UI must be able to tell the user the
+  // business is NOT billed for this call (no earnings), so the lookup reports
+  // whether the caller is currently free-whitelisted for the requesting user.
+  // Keyed on the RESOLVED business id — grants live per business, and a last-10
+  // caller-ID lookup resolves to a placeholder user, never the owner.
+  it('flags freeCall when the business caller is free-whitelisted for the recipient', async () => {
+    const { controller, userService, businessService, dataBrokerService } = makeController();
+    userService.findOrCreatePlaceholder.mockResolvedValue(businessCallerUser);
+    businessService.resolveCallerIdentity.mockResolvedValue({
+      isBusiness: true, businessId: 3,
+      businessProfile: { companyName: 'Kalahari', industry: 'Finance', verified: true },
+    });
+    dataBrokerService.isBusinessCallerAllowed.mockResolvedValue(true);
+    dataBrokerService.isFreeWhitelistedForBusiness.mockResolvedValue(true);
+
+    const res: any = await controller.findUser('5091234567', { user: { userId: 5 } } as any);
+
+    expect(res.freeCall).toBe(true);
+    // Keyed on the recipient and the resolved business id.
+    expect(dataBrokerService.isFreeWhitelistedForBusiness).toHaveBeenCalledWith(5, 3);
+  });
+
+  it('reports freeCall false for a business caller without a grant, and never consults the whitelist for a personal caller', async () => {
+    const { controller, userService, businessService, dataBrokerService } = makeController();
+    userService.findOrCreatePlaceholder.mockResolvedValue(businessCallerUser);
+    businessService.resolveCallerIdentity.mockResolvedValue({
+      isBusiness: true, businessId: 3,
+      businessProfile: { companyName: 'Kalahari', industry: 'Finance', verified: true },
+    });
+    dataBrokerService.isBusinessCallerAllowed.mockResolvedValue(true);
+
+    const biz: any = await controller.findUser('5091234567', { user: { userId: 5 } } as any);
+    expect(biz.freeCall).toBe(false);
+
+    // Personal caller → no whitelist consultation at all.
+    dataBrokerService.isFreeWhitelistedForBusiness.mockClear();
+    userService.findOrCreatePlaceholder.mockResolvedValue({ ...businessCallerUser, phoneNumber: '5551112222' });
+    businessService.resolveCallerIdentity.mockResolvedValue(null);
+    const personal: any = await controller.findUser('5551112222', { user: { userId: 5 } } as any);
+    expect(personal.freeCall).toBe(false);
+    expect(dataBrokerService.isFreeWhitelistedForBusiness).not.toHaveBeenCalled();
+  });
+
+  // The ringing UI shows the caller's live per-second rate (mockup: "R 0.15/s").
+  // That number lives in the RATE_PER_SECOND setting — the same source billing
+  // uses — so the lookup must carry it rather than the app guessing a constant.
+  it('includes the platform ratePerSecond for a business caller', async () => {
+    const { controller, userService, businessService, dataBrokerService } = makeController();
+    userService.findOrCreatePlaceholder.mockResolvedValue(businessCallerUser);
+    businessService.resolveCallerIdentity.mockResolvedValue({
+      isBusiness: true, businessId: 3,
+      businessProfile: { companyName: 'Kalahari', industry: 'Finance', verified: true },
+    });
+    dataBrokerService.isBusinessCallerAllowed.mockResolvedValue(true);
+
+    const res: any = await controller.findUser('5091234567', { user: { userId: 5 } } as any);
+
+    expect(res.ratePerSecond).toBe(0.15);
+  });
+
+  it('falls back to the default rate when the setting is absent, and omits it for personal callers', async () => {
+    const { controller, userService, businessService, dataBrokerService, settingRepo } = makeController();
+    settingRepo.findOne.mockResolvedValue(null); // no RATE_PER_SECOND row
+    userService.findOrCreatePlaceholder.mockResolvedValue(businessCallerUser);
+    businessService.resolveCallerIdentity.mockResolvedValue({
+      isBusiness: true, businessId: 3,
+      businessProfile: { companyName: 'Kalahari', industry: 'Finance', verified: true },
+    });
+    dataBrokerService.isBusinessCallerAllowed.mockResolvedValue(true);
+
+    const biz: any = await controller.findUser('5091234567', { user: { userId: 5 } } as any);
+    expect(biz.ratePerSecond).toBe(0.002); // server default, not a client guess
+
+    userService.findOrCreatePlaceholder.mockResolvedValue({ ...businessCallerUser, phoneNumber: '5551112222' });
+    businessService.resolveCallerIdentity.mockResolvedValue(null);
+    const personal: any = await controller.findUser('5551112222', { user: { userId: 5 } } as any);
+    expect(personal.ratePerSecond).toBeNull(); // meaningless for personal callers
+  });
+
+  // The funds flag must inspect the wallet billing ACTUALLY debits — the business
+  // owner's user wallet — not the placeholder user auto-created for the raw
+  // calling number (balance always 0). Otherwise every paid ring from a
+  // registered business number is wrongly auto-rejected as "low funds".
+  it('funds-checks the business OWNER wallet for a number-resolved business caller', async () => {
+    const { controller, userService, businessService, dataBrokerService } = makeController();
+    // Placeholder user for the raw number: empty wallet.
+    userService.findOrCreatePlaceholder.mockResolvedValue({ ...businessCallerUser, isBusiness: false, walletBalance: 0 });
+    businessService.resolveCallerIdentity.mockResolvedValue({
+      isBusiness: true, businessId: 4,
+      businessProfile: { companyName: 'MTN HO', industry: 'Telecoms', verified: true },
+    });
+    businessService.getOwnerWalletBalance.mockResolvedValue(0.3268); // owner can fund ≥1s
+    dataBrokerService.isBusinessCallerAllowed.mockResolvedValue(true);
+
+    const funded: any = await controller.findUser('7831119999', { user: { userId: 5 } } as any);
+    expect(funded.hasSufficientFunds).toBe(true);
+    expect(businessService.getOwnerWalletBalance).toHaveBeenCalledWith(4);
+
+    // Owner truly broke → correctly flagged insufficient.
+    businessService.getOwnerWalletBalance.mockResolvedValue(0);
+    const broke: any = await controller.findUser('7831119999', { user: { userId: 5 } } as any);
+    expect(broke.hasSufficientFunds).toBe(false);
+  });
+
+  // An empty-wallet business is normally auto-rejected ("load funds") — but a
+  // free-whitelisted call bills nothing, so it must not be blocked for funds.
+  it('reports sufficient funds for a free-whitelisted business even with an empty wallet', async () => {
+    const { controller, userService, businessService, dataBrokerService } = makeController();
+    userService.findOrCreatePlaceholder.mockResolvedValue({ ...businessCallerUser, walletBalance: 0 });
+    businessService.resolveCallerIdentity.mockResolvedValue({
+      isBusiness: true, businessId: 3,
+      businessProfile: { companyName: 'Kalahari', industry: 'Finance', verified: true },
+    });
+    dataBrokerService.isBusinessCallerAllowed.mockResolvedValue(true);
+    dataBrokerService.isFreeWhitelistedForBusiness.mockResolvedValue(true);
+
+    const res: any = await controller.findUser('5091234567', { user: { userId: 5 } } as any);
+
+    expect(res.freeCall).toBe(true);
+    expect(res.hasSufficientFunds).toBe(true);
   });
 
   it('reports permitted for a non-business caller without consulting permissions', async () => {
@@ -123,5 +249,53 @@ describe('UserController — findUser caller-ID lookup: permittedForYou', () => 
     expect(res.name).toBe('Kalahari');
     expect(res.cacheable).not.toBe(false);
     expect(lookupService.resolveExternalName).not.toHaveBeenCalled();
+  });
+});
+
+// The Wallet screen's "How You Earn" projection must reflect the ADMIN-set rate,
+// not a hardcoded client constant. GET /user/rate exposes the live platform rate
+// and split to any authenticated user for that purpose.
+describe('UserController — GET /user/rate (live platform rate for the app)', () => {
+  const make = (settingVal: any) => {
+    const settingRepo: any = {
+      findOne: jest.fn().mockImplementation(async (opts: any) => {
+        if (opts.where.key === 'RATE_PER_SECOND') return settingVal.rate ?? null;
+        if (opts.where.key === 'PLATFORM_CUT_RATE') return settingVal.cut ?? null;
+        return null;
+      }),
+    };
+    return new UserController({} as any, {} as any, {} as any, {} as any, {} as any, {} as any, settingRepo);
+  };
+
+  it('returns the live rate, platform cut and derived user share', async () => {
+    const c = make({ rate: { value: '0.15' }, cut: { value: '0.24' } });
+    const res: any = await c.getRate();
+    expect(res.ratePerSecond).toBe(0.15);
+    expect(res.platformCutRate).toBe(0.24);
+    expect(res.userShare).toBeCloseTo(0.76, 6); // 1 - cut
+  });
+
+  it('falls back to platform defaults when settings are absent', async () => {
+    const c = make({});
+    const res: any = await c.getRate();
+    expect(res.ratePerSecond).toBe(0.002); // DEFAULT_RATE_PER_SECOND
+    expect(res.platformCutRate).toBe(0.24);
+    expect(res.userShare).toBeCloseTo(0.76, 6);
+  });
+});
+
+// Free, explicit opt-in: the client calls this after the business onboarding.
+describe('UserController — POST /user/business-opt-in', () => {
+  it('delegates to the service for the authenticated user only', async () => {
+    const userService: any = { enableBusinessMode: jest.fn().mockResolvedValue({ businessOptIn: true }) };
+    const controller = new UserController(
+      userService, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+    );
+
+    const res: any = await controller.enableBusinessMode({ user: { userId: 42 } } as any);
+
+    expect(res.businessOptIn).toBe(true);
+    // Keyed on the JWT subject — a caller can never opt someone else in.
+    expect(userService.enableBusinessMode).toHaveBeenCalledWith(42);
   });
 });

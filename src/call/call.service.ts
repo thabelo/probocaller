@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, Like, Repository } from 'typeorm';
 import { CallLog } from './call.entity';
 import { CallRating } from './call-rating.entity';
 import { User } from '../user/user.entity';
@@ -101,6 +101,41 @@ export class CallService {
         name: 'Unknown',
       });
       await this.userRepository.save(toUser);
+    }
+
+    // Answered-incoming flow: the app initiates billing with the CALLER's raw
+    // number (its last 10 digits). When that number is a registered business
+    // calling number, the call must be recorded against the business OWNER —
+    // the wallet completeCall actually debits — never against the non-business
+    // placeholder auto-created for the raw digits (which silently bills no one
+    // and pays the recipient nothing). Exact match first, then the same
+    // digit-suffix fallback used by caller-ID resolution.
+    if (!toUser.isBusiness) {
+      let num = await this.numberRepository.findOne({
+        where: { phoneNumber: toPhoneNumber, active: true },
+        relations: ['business'],
+      });
+      if (!num) {
+        const digits = String(toPhoneNumber).replace(/\D/g, '');
+        if (digits.length >= 10) {
+          num = await this.numberRepository.findOne({
+            where: { phoneNumber: Like(`%${digits.slice(-10)}`), active: true },
+            relations: ['business'],
+          });
+        }
+      }
+      if (num?.business?.active) {
+        const owner = await this.userRepository.findOne({ where: { id: num.business.userId } });
+        if (owner) {
+          toUser = owner;
+          // Attribute the call to the business for reporting when the caller
+          // didn't already attribute it via an owned calling number.
+          if (!attribution.businessId) {
+            attribution.businessId = num.business.id;
+            attribution.callingNumberId = num.id;
+          }
+        }
+      }
     }
 
     const ratePerSecond = await this.getRatePerSecond();
@@ -293,7 +328,12 @@ export class CallService {
       const payParty = payPartyId === call.fromUserId ? call.fromUser : call.toUser;
       const chargeParty = chargePartyId === call.fromUserId ? call.fromUser : call.toUser;
       const platformCutRate = await this.getPlatformCutRate();
-      const rate = Number(call.ratePerSecond) || DEFAULT_RATE_PER_SECOND;
+      // A stored rate of 0 is a LEGITIMATE free call (e.g. a whitelisted business
+      // or a 'free' policy), not a missing value — so only fall back to the default
+      // when the stored rate isn't a finite number. Using `|| DEFAULT` here would
+      // treat the falsy 0 as absent and silently bill a "free" call at the default.
+      const storedRate = Number(call.ratePerSecond);
+      const rate = Number.isFinite(storedRate) ? storedRate : DEFAULT_RATE_PER_SECOND;
 
       // Wrap ALL wallet mutations (business charge + receiver credit + both
       // ledger logs + the referral commission) AND the completion status flip in

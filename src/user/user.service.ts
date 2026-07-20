@@ -76,9 +76,26 @@ export class UserService {
       email: user.email,
       name: user.name,
       isBusiness: user.isBusiness,
+      // Gates every business surface on the clients. Opt-in and free.
+      businessOptIn: !!user.businessOptIn,
       walletBalance: Number(user.walletBalance),
       role: user.role,
     };
+  }
+
+  /**
+   * Turn on business mode for a normal account. Free and idempotent: it only
+   * unlocks the business surfaces (and the onboarding that precedes them) —
+   * registering an actual company stays a separate, later step.
+   */
+  async enableBusinessMode(userId: number) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    if (!user.businessOptIn) {
+      user.businessOptIn = true;
+      await this.userRepository.save(user);
+    }
+    return { businessOptIn: true };
   }
 
   /**

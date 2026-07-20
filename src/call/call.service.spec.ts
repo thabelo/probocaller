@@ -287,6 +287,28 @@ describe('CallService — completeCall reward integrity', () => {
     expect(earner.walletBalance).toBeCloseTo(1.52, 6);
   });
 
+  // Regression (free-call whitelist money leak): a call whose ratePerSecond is a
+  // legitimate 0 (a whitelisted free call) must complete at ZERO cost. The old
+  // `Number(call.ratePerSecond) || DEFAULT_RATE_PER_SECOND` treated the falsy 0 as
+  // "missing" and silently billed the business the default rate — so a "free" call
+  // still charged 0.002/s. Nothing may move for a genuinely free call.
+  it('charges NOTHING for a whitelisted free call (ratePerSecond === 0)', async () => {
+    const business = mockUser({ id: 2, isBusiness: true, walletBalance: 100 });
+    const earner   = mockUser({ id: 1, isBusiness: false, walletBalance: 0 });
+    const call = { id: 70, fromUserId: 1, toUserId: 2, status: 'initiated', ratePerSecond: 0 };
+
+    callRepo.findOne.mockResolvedValue(call);
+    wireWallets(business, earner, call);
+
+    const result = await service.completeCall(2, 70, 1000); // free: 1000 * 0 = $0.00
+
+    expect(result.cost).toBe(0);
+    expect(result.platformCut).toBe(0);
+    expect(result.userEarnings).toBe(0);
+    expect(business.walletBalance).toBeCloseTo(100, 6); // untouched
+    expect(earner.walletBalance).toBeCloseTo(0, 6);     // no phantom earnings
+  });
+
   // Direction independence: the business must be charged and the user paid even
   // when the business is the recorded CALLER (fromUser) rather than the callee.
   // A server-initiated business call (e.g. an outbound campaign) records the
@@ -439,6 +461,42 @@ describe('CallService — per-business attribution', () => {
       await service.initiateCall(CALLER, '+27829999999');
       expect(callRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'initiated', businessId: null, callingNumberId: null }),
+      );
+    });
+  });
+
+  // Answered-incoming flow: the app initiates billing with the CALLER's raw
+  // number (last-10). That number belongs to a registered business — the call
+  // must be recorded against the business OWNER user (so completeCall has a
+  // business party to charge and the recipient gets paid), never against the
+  // non-business placeholder user auto-created for the raw digits.
+  describe('initiateCall — registered business calling number resolves to the owner', () => {
+    it('maps the placeholder to the business owner and attributes the business', async () => {
+      userRepo.findOne.mockReset();
+      userRepo.findOne.mockImplementation(async (opts: any) => {
+        if (opts?.where?.id === 49) return mockUser({ id: 49, isBusiness: false, businessCallPolicy: 'paid' } as any);
+        if (opts?.where?.phoneNumber === '7831119999')
+          return mockUser({ id: 308, phoneNumber: '7831119999', isBusiness: false } as any); // placeholder
+        if (opts?.where?.id === 29) return mockUser({ id: 29, isBusiness: true, walletBalance: 100 });
+        return null;
+      });
+      numberRepo.findOne.mockImplementation(async (opts: any) => {
+        const cond = opts?.where?.phoneNumber;
+        const hit = { id: 1, businessId: 4, phoneNumber: '+27831119999', active: true,
+                      business: { id: 4, userId: 29, active: true } };
+        if (cond === '7831119999') return null; // exact miss
+        if (typeof cond === 'object' && String(cond._value ?? '').endsWith('7831119999')) return hit;
+        return null;
+      });
+
+      await service.initiateCall(49, '7831119999');
+
+      expect(callRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 'initiated',
+          toUserId: 29,      // the OWNER — billing has a business party
+          businessId: 4,     // attributed for reporting
+        }),
       );
     });
   });

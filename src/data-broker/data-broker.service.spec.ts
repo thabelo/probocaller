@@ -351,6 +351,26 @@ describe('DataBrokerService', () => {
       await expect(service.isFreeWhitelisted(1, 2)).resolves.toBe(false);
       expect(permissionRepo.findOne).not.toHaveBeenCalled();
     });
+
+    // Incoming-call lookups resolve the caller to a BUSINESS ID (via the calling
+    // number), not to the owner's user id — and grants are stored per business.
+    // So the whitelist must also be checkable by business id directly.
+    it('isFreeWhitelistedForBusiness: true for an active free grant on that business', async () => {
+      permissionRepo.findOne.mockResolvedValue({ id: 7, userId: 1, businessId: 9, status: 'approved', freeCall: true });
+      await expect(service.isFreeWhitelistedForBusiness(1, 9)).resolves.toBe(true);
+      // keyed straight on the business — no owner lookup involved
+      expect(businessRepo.find).not.toHaveBeenCalled();
+      const where = permissionRepo.findOne.mock.calls[0][0].where;
+      expect(where).toMatchObject({ userId: 1, businessId: 9, status: 'approved', freeCall: true });
+
+      permissionRepo.findOne.mockResolvedValue(null); // expired / no grant
+      await expect(service.isFreeWhitelistedForBusiness(1, 9)).resolves.toBe(false);
+    });
+
+    it('isFreeWhitelistedForBusiness: false for a null business id without querying', async () => {
+      await expect(service.isFreeWhitelistedForBusiness(1, null)).resolves.toBe(false);
+      expect(permissionRepo.findOne).not.toHaveBeenCalled();
+    });
   });
 
   describe('requestCallPermission — Pay-to-Contact stake', () => {

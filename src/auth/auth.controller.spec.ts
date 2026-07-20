@@ -26,8 +26,27 @@ describe('AuthController (cookie-based login for any user)', () => {
       httpOnly: true,
       sameSite: 'lax',
     }));
-    expect(result).toEqual({ user: { id: 5, phoneNumber: '+27810000001', name: 'Test User 1', role: 'user', isBusiness: true } });
+    expect(result).toEqual({ user: { id: 5, phoneNumber: '+27810000001', name: 'Test User 1', role: 'user', isBusiness: true, businessOptIn: false } });
     expect((result as any).accessToken).toBeUndefined();
+  });
+
+  // The web client persists this payload verbatim as its cached profile and
+  // never refetches it, so an omitted businessOptIn silently revokes business
+  // access on the user's next sign-in.
+  it('carries businessOptIn so a user who opted in keeps business access after re-login', async () => {
+    userRepo.findOne.mockResolvedValue({ id: 5, role: 'user', phoneNumber: '+27810000001', name: 'Opted In', isBusiness: false, businessOptIn: true });
+
+    const result = await controller.login({ phoneNumber: '+27810000001' }, res as any);
+
+    expect(result.user.businessOptIn).toBe(true);
+  });
+
+  it('reports businessOptIn false for a user who never opted in', async () => {
+    userRepo.findOne.mockResolvedValue({ id: 6, role: 'user', phoneNumber: '+27810000002', name: 'Plain', isBusiness: false });
+
+    const result = await controller.login({ phoneNumber: '+27810000002' }, res as any);
+
+    expect(result.user.businessOptIn).toBe(false);
   });
 
   it('rejects an unknown phone (no auto-create) and sets no cookie', async () => {
@@ -63,7 +82,7 @@ describe('AuthController (cookie-based login for any user)', () => {
       expect(jwt.sign).toHaveBeenCalledWith({ sub: 7, phoneNumber: '+27owner', imp: 152 });
       expect(res.cookie).toHaveBeenCalledWith('accessToken', 'jwt.tok.en', expect.objectContaining({ httpOnly: true }));
       expect(out).toEqual({
-        user: { id: 7, phoneNumber: '+27owner', name: 'Owner', role: 'user', isBusiness: true },
+        user: { id: 7, phoneNumber: '+27owner', name: 'Owner', role: 'user', isBusiness: true, businessOptIn: false },
         viewingAs: { businessId: 3, companyName: 'Acme' },
       });
     });
@@ -80,7 +99,7 @@ describe('AuthController (cookie-based login for any user)', () => {
       const out = await controller.exitImpersonation({ user: { userId: 7, impersonatorId: 152 } } as any, res as any);
       expect(jwt.sign).toHaveBeenCalledWith({ sub: 152, phoneNumber: '+27admin' });
       expect(res.cookie).toHaveBeenCalledWith('accessToken', 'jwt.tok.en', expect.objectContaining({ httpOnly: true }));
-      expect(out).toEqual({ user: { id: 152, phoneNumber: '+27admin', name: 'Admin', role: 'admin', isBusiness: false } });
+      expect(out).toEqual({ user: { id: 152, phoneNumber: '+27admin', name: 'Admin', role: 'admin', isBusiness: false, businessOptIn: false } });
     });
 
     it('refuses to exit when the session is not an impersonation', async () => {

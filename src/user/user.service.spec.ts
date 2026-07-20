@@ -2,7 +2,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { JwtService } from '@nestjs/jwt';
 import { DataSource } from 'typeorm';
-import { UnauthorizedException } from '@nestjs/common';
+import { UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { UserService } from './user.service';
 import { User } from './user.entity';
 import { TransactionService } from '../transaction/transaction.service';
@@ -485,5 +485,60 @@ describe('UserService', () => {
       }
       expect(repo.save).not.toHaveBeenCalled();
     });
+  });
+});
+
+// Business mode is OPT-IN: a normal user has no business capability until they
+// explicitly enable it (free). The flag rides on the user response so the
+// clients can gate their business surfaces without an extra round-trip.
+describe('UserService — business opt-in (free, explicit)', () => {
+  let service: UserService;
+  let repo: ReturnType<typeof mockRepo>;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        UserService,
+        { provide: getRepositoryToken(User), useFactory: mockRepo },
+        { provide: JwtService, useFactory: mockJwt },
+        { provide: TransactionService, useValue: { log: jest.fn(), sumByUserAndType: jest.fn().mockResolvedValue(0) } },
+        { provide: ReportService, useValue: { getReportSummary: jest.fn().mockResolvedValue(null) } },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(UserService);
+    repo = module.get(getRepositoryToken(User));
+  });
+
+  it('reports businessOptIn on the login user payload (false by default)', async () => {
+    repo.findOne.mockResolvedValue(mockUser({ businessOptIn: false } as any));
+    const res: any = await service.login({ phoneNumber: '+27821234567' });
+    expect(res.user.businessOptIn).toBe(false);
+  });
+
+  it('enableBusinessMode flips the flag and costs nothing', async () => {
+    const user = mockUser({ id: 7, businessOptIn: false, walletBalance: 12.34 } as any);
+    repo.findOne.mockResolvedValue(user);
+    repo.save.mockImplementation(async (u: any) => u);
+
+    const res: any = await service.enableBusinessMode(7);
+
+    expect(user.businessOptIn).toBe(true);
+    expect(res.businessOptIn).toBe(true);
+    // Free: the wallet is untouched and no charge is recorded.
+    expect(Number(user.walletBalance)).toBe(12.34);
+  });
+
+  it('enableBusinessMode is idempotent for an already opted-in user', async () => {
+    const user = mockUser({ id: 7, businessOptIn: true } as any);
+    repo.findOne.mockResolvedValue(user);
+    repo.save.mockImplementation(async (u: any) => u);
+    const res: any = await service.enableBusinessMode(7);
+    expect(res.businessOptIn).toBe(true);
+  });
+
+  it('404s when enabling for a user that does not exist', async () => {
+    repo.findOne.mockResolvedValue(null);
+    await expect(service.enableBusinessMode(999)).rejects.toBeInstanceOf(NotFoundException);
   });
 });

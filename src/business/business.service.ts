@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException, ConflictException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, Like, Repository } from 'typeorm';
 import { randomBytes } from 'crypto';
 import { Business } from './business.entity';
 import { normaliseCountryCode } from '../common/countries';
@@ -209,6 +209,9 @@ export class BusinessService {
     const user = await this.userRepo.findOne({ where: { id: userId } });
     if (user) {
       user.isBusiness = true;
+      // Registering a company implies (and supersedes) the free opt-in, so the
+      // owner never gets re-gated behind the business intro they've passed.
+      user.businessOptIn = true;
       await this.userRepo.save(user);
     }
 
@@ -299,10 +302,24 @@ export class BusinessService {
     numberPurposeLabel?: string;
     numberLabel?: string;
   } | null> {
-    const num = await this.numberRepo.findOne({
+    let num = await this.numberRepo.findOne({
       where: { phoneNumber, active: true },
       relations: ['business'],
     });
+    // Incoming-call lookups arrive as the caller's LAST 10 DIGITS (no country
+    // code), while calling numbers are stored canonically in E.164 — so an
+    // exact match misses real incoming rings. Fall back to a digit-suffix
+    // match, but only for full-length (≥10-digit) inputs so short strings can
+    // never wildcard onto an unrelated number.
+    if (!num) {
+      const digits = String(phoneNumber).replace(/\D/g, '');
+      if (digits.length >= 10) {
+        num = await this.numberRepo.findOne({
+          where: { phoneNumber: Like(`%${digits.slice(-10)}`), active: true },
+          relations: ['business'],
+        });
+      }
+    }
     if (!num || !num.business?.active) return null;
 
     const b = num.business;
@@ -319,6 +336,20 @@ export class BusinessService {
       numberPurposeLabel: NUMBER_PURPOSES[num.purpose as keyof typeof NUMBER_PURPOSES] || num.purpose,
       numberLabel: num.label,
     };
+  }
+
+  /**
+   * Wallet balance of the business's OWNER user — the wallet completeCall
+   * actually debits for a business call. The caller-ID lookup's funds flag must
+   * inspect this, not the placeholder user auto-created for a raw calling
+   * number (whose balance is always 0 and would wrongly auto-reject the ring).
+   */
+  async getOwnerWalletBalance(businessId: number | null): Promise<number | null> {
+    if (!businessId) return null;
+    const b = await this.businessRepo.findOne({ where: { id: businessId } });
+    if (!b) return null;
+    const owner = await this.userRepo.findOne({ where: { id: b.userId } });
+    return owner ? Number(owner.walletBalance) : null;
   }
 
   async getProfileByUserId(userId: number): Promise<{ id: number; companyName: string; industry: string; description?: string; verified: boolean } | null> {

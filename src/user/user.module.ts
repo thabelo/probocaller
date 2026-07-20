@@ -13,10 +13,12 @@ import { ReportModule } from '../report/report.module';
 import { DataBrokerModule } from '../data-broker/data-broker.module';
 import { LookupModule } from '../lookup/lookup.module';
 import { JWT_SECRET } from '../app.module';
+import { Setting } from '../config/setting.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User]),
+    // Setting: the caller-ID lookup surfaces the live RATE_PER_SECOND.
+    TypeOrmModule.forFeature([User, Setting]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     JwtModule.register({
       secret: JWT_SECRET,

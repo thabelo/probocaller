@@ -252,6 +252,26 @@ export class DataBrokerService {
     return !!grant;
   }
 
+  /**
+   * Same whitelist check, keyed on a resolved BUSINESS id. Incoming-call
+   * lookups identify the caller via the calling number → business, not via the
+   * owner's user id (which for a last-10 lookup is just a placeholder user), and
+   * grants are stored per business — so this is the correct key for caller-ID.
+   */
+  async isFreeWhitelistedForBusiness(recipientUserId: number, businessId: number | null): Promise<boolean> {
+    if (!businessId) return false;
+    const grant = await this.permissionRepo.findOne({
+      where: {
+        userId: recipientUserId,
+        businessId,
+        status: 'approved',
+        freeCall: true,
+        expiresAt: MoreThan(new Date()),
+      },
+    });
+    return !!grant;
+  }
+
   async getMyRequests(userId: number) {
     return this.permissionRepo.find({
       where: { userId },

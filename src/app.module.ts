@@ -159,7 +159,8 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
         limit: 60,
       },
     ]),
-    TypeOrmModule.forFeature([User, Business]),
+    // Setting: UserController (also declared here) reads RATE_PER_SECOND.
+    TypeOrmModule.forFeature([User, Business, Setting]),
     UserModule,
     CallModule,
     AdminModule,

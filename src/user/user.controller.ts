@@ -13,6 +13,9 @@ import { TransactionService } from '../transaction/transaction.service';
 import { DataBrokerService } from '../data-broker/data-broker.service';
 import { LookupService } from '../lookup/lookup.service';
 import { ExternalLookupRateLimiter } from './external-lookup-rate-limiter';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { Setting } from '../config/setting.entity';
 
 @ApiTags('users')
 @Controller('user')
@@ -24,6 +27,8 @@ export class UserController {
     private readonly dataBrokerService: DataBrokerService,
     private readonly lookupService: LookupService,
     private readonly externalLookupLimiter: ExternalLookupRateLimiter,
+    @InjectRepository(Setting)
+    private readonly settingRepository: Repository<Setting>,
   ) {}
 
   // ── Admin-only: returns the full user list with PII. ──────────────────
@@ -176,12 +181,43 @@ export class UserController {
     return this.userService.reportSpam(phoneNumber);
   }
 
+  // Free, explicit business opt-in — called after the business onboarding.
+  // Declared BEFORE the ':phoneNumber' catch-all so it isn't read as a lookup.
+  @Post('business-opt-in')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Enable business mode for the signed-in user (free)' })
+  async enableBusinessMode(@Request() req) {
+    return this.userService.enableBusinessMode(req.user.userId);
+  }
+
+  // Live platform earning rate for the app's wallet/earnings UI. Declared BEFORE
+  // the ':phoneNumber' catch-all so '/user/rate' isn't swallowed as a lookup.
+  @Get('rate')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get the live platform per-second rate and revenue split' })
+  async getRate() {
+    const DEFAULT_RATE_PER_SECOND = 0.002;
+    const DEFAULT_PLATFORM_CUT_RATE = 0.24;
+    const rateSetting = await this.settingRepository.findOne({ where: { key: 'RATE_PER_SECOND' } });
+    const cutSetting = await this.settingRepository.findOne({ where: { key: 'PLATFORM_CUT_RATE' } });
+    const ratePerSecond = rateSetting ? parseFloat(rateSetting.value) || DEFAULT_RATE_PER_SECOND : DEFAULT_RATE_PER_SECOND;
+    const platformCutRate = cutSetting ? parseFloat(cutSetting.value) || DEFAULT_PLATFORM_CUT_RATE : DEFAULT_PLATFORM_CUT_RATE;
+    return { ratePerSecond, platformCutRate, userShare: 1 - platformCutRate };
+  }
+
   @Get(':phoneNumber')
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Find user by phone (caller-ID lookup, auth required)' })
   async findUser(@Param('phoneNumber') phoneNumber: string, @Request() req) {
-    const RATE_PER_SECOND = 0.002;
+    // Live platform rate — the same RATE_PER_SECOND setting billing uses — so
+    // the ringing UI can show the caller's real per-second rate instead of a
+    // stale client-side constant.
+    const DEFAULT_RATE_PER_SECOND = 0.002;
+    const rateSetting = await this.settingRepository.findOne({ where: { key: 'RATE_PER_SECOND' } });
+    const RATE_PER_SECOND = rateSetting ? parseFloat(rateSetting.value) || DEFAULT_RATE_PER_SECOND : DEFAULT_RATE_PER_SECOND;
     const user = await this.userService.findOrCreatePlaceholder(phoneNumber);
     const callerIdentity = await this.businessService.resolveCallerIdentity(phoneNumber);
 
@@ -200,6 +236,15 @@ export class UserController {
     const permittedForYou = !effectivelyBusiness
       ? true
       : await this.dataBrokerService.isBusinessCallerAllowed(req.user.userId, callerBusinessId);
+
+    // Free-call whitelist: when the recipient granted this business a free-call
+    // window, the business is NOT billed and the recipient earns nothing — the
+    // incoming-call UI must say so instead of promising earnings. Keyed on the
+    // RESOLVED business id: grants are stored per business, and a last-10
+    // caller-ID lookup resolves to a placeholder user, never the owner.
+    const freeCall = effectivelyBusiness
+      ? await this.dataBrokerService.isFreeWhitelistedForBusiness(req.user.userId, callerBusinessId)
+      : false;
 
     // A user is "registered" only after going through signup, which overwrites the
     // synthetic placeholder email/name. Numbers in a business directory also count.
@@ -241,8 +286,21 @@ export class UserController {
       isSpam: user.isSpam,
       isBusiness: effectivelyBusiness,
       isRegistered,
-      hasSufficientFunds: !effectivelyBusiness || Number(user.walletBalance) >= RATE_PER_SECOND,
+      // A free-whitelisted business needs no funds — the call bills nothing.
+      // Otherwise check the wallet billing ACTUALLY debits: for a caller resolved
+      // via a registered business number that's the business OWNER's wallet, not
+      // the placeholder user auto-created for the raw number (always 0 — would
+      // wrongly auto-reject every paid business ring).
+      hasSufficientFunds: !effectivelyBusiness || freeCall || (
+        (callerIdentity
+          ? (await this.businessService.getOwnerWalletBalance(callerIdentity.businessId)) ?? Number(user.walletBalance)
+          : Number(user.walletBalance)
+        ) >= RATE_PER_SECOND
+      ),
       permittedForYou,
+      freeCall,
+      // Only meaningful for business callers (the recipient earns per second).
+      ratePerSecond: effectivelyBusiness ? RATE_PER_SECOND : null,
       ...(resolvedProfile && {
         businessProfile: resolvedProfile,
         numberPurpose: callerIdentity?.numberPurpose,

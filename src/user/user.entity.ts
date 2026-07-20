@@ -23,6 +23,12 @@ export class User {
   @Column({ default: false })
   isBusiness: boolean;
 
+  // Business mode is OPT-IN and free: a normal account has no business surface
+  // until the user explicitly enables it (after the intro/onboarding). Distinct
+  // from `isBusiness`, which means "has actually registered a company".
+  @Column({ default: false })
+  businessOptIn: boolean;
+
   // Subscription tier: 'free' | 'plus' | 'gold'. Drives premium badge, ad-free
   // experience and support priority (see SubscriptionService).
   @Column({ default: 'free' })

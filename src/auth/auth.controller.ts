@@ -56,7 +56,7 @@ export class AuthController {
     if (user.deactivatedAt) throw new UnauthorizedException('Account deactivated');
     const token = this.jwt.sign({ sub: user.id, phoneNumber: user.phoneNumber });
     res.cookie(ACCESS_COOKIE, token, cookieOptions());
-    return { user: { id: user.id, phoneNumber: toE164(user.phoneNumber), name: user.name, role: user.role, isBusiness: !!user.isBusiness } };
+    return { user: { id: user.id, phoneNumber: toE164(user.phoneNumber), name: user.name, role: user.role, isBusiness: !!user.isBusiness, businessOptIn: !!user.businessOptIn } };
   }
 
   @Post('logout')
@@ -88,7 +88,7 @@ export class AuthController {
     res.cookie(ACCESS_COOKIE, token, cookieOptions());
     this.logger.warn(`admin ${caller.id} now viewing as business ${business.id} (owner ${owner.id})`);
     return {
-      user: { id: owner.id, phoneNumber: toE164(owner.phoneNumber), name: owner.name, role: owner.role, isBusiness: !!owner.isBusiness },
+      user: { id: owner.id, phoneNumber: toE164(owner.phoneNumber), name: owner.name, role: owner.role, isBusiness: !!owner.isBusiness, businessOptIn: !!owner.businessOptIn },
       viewingAs: { businessId: business.id, companyName: business.companyName },
     };
   }
@@ -104,6 +104,6 @@ export class AuthController {
     const token = this.jwt.sign({ sub: admin.id, phoneNumber: admin.phoneNumber });
     res.cookie(ACCESS_COOKIE, token, cookieOptions());
     this.logger.warn(`admin ${admin.id} exited view-as`);
-    return { user: { id: admin.id, phoneNumber: toE164(admin.phoneNumber), name: admin.name, role: admin.role, isBusiness: !!admin.isBusiness } };
+    return { user: { id: admin.id, phoneNumber: toE164(admin.phoneNumber), name: admin.name, role: admin.role, isBusiness: !!admin.isBusiness, businessOptIn: !!admin.businessOptIn } };
   }
 }

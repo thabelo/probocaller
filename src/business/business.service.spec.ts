@@ -339,6 +339,17 @@ describe('BusinessService — register requires a country', () => {
     expect(businessRepo.create).toHaveBeenCalledWith(expect.objectContaining({ country: 'ZA', userId: 7 }));
   });
 
+  // Registering a company is a stronger signal than opting in, so it must also
+  // flip the opt-in flag — otherwise a business owner's own business surfaces
+  // would stay gated behind the intro they've clearly already moved past.
+  it('registering a business also opts the owner into business mode', async () => {
+    const owner = { id: 7, isBusiness: false, businessOptIn: false };
+    userRepo.findOne.mockResolvedValue(owner);
+    await service.register(7, { ...base, country: 'ZA' } as any);
+    expect(owner.isBusiness).toBe(true);
+    expect(owner.businessOptIn).toBe(true);
+  });
+
   it('rejects a missing country', async () => {
     await expect(service.register(7, base as any)).rejects.toBeInstanceOf(BadRequestException);
     expect(businessRepo.save).not.toHaveBeenCalled();
@@ -414,5 +425,109 @@ describe('BusinessService — calling numbers are stored in E.164', () => {
     await expect(service.addNumber(7, { ...base, phoneNumber: '0831119999' }))
       .rejects.toBeInstanceOf(ConflictException);
     expect(numberRepo.findOne).toHaveBeenCalledWith({ where: { phoneNumber: '+27831119999' } });
+  });
+});
+
+// Incoming-call lookups send the LAST 10 DIGITS of the caller (the app's
+// processNumber → last10), but calling numbers are stored canonically in E.164
+// (+27831119999). An exact-match lookup can therefore never resolve a business
+// from a real incoming ring — the identity must match on the digit suffix too.
+describe('BusinessService — resolveCallerIdentity matches last-10 lookups against E.164 numbers', () => {
+  let service: BusinessService;
+  let numberRepo: ReturnType<typeof mockRepo>;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BusinessService,
+        { provide: getRepositoryToken(Business), useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+        { provide: getRepositoryToken(ApiKey), useFactory: mockRepo },
+        { provide: getRepositoryToken(User), useFactory: mockRepo },
+        { provide: TransactionService, useFactory: mockTx },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(BusinessService);
+    numberRepo = module.get(getRepositoryToken(BusinessNumber));
+  });
+
+  const mtnRow = {
+    id: 1, phoneNumber: '+27831119999', purpose: 'TELE_SALES', label: null, active: true,
+    business: { id: 4, active: true, companyName: 'MTN HO', industry: 'Telecoms', verified: true },
+  };
+
+  it('resolves a last-10-digits lookup (7831119999) to the +27-stored business number', async () => {
+    // Exact match misses; the suffix pass must find the E.164 row.
+    numberRepo.findOne.mockImplementation(async (opts: any) => {
+      const cond = opts?.where?.phoneNumber;
+      if (cond === '7831119999') return null;                 // exact miss
+      if (typeof cond === 'object' && cond?._type === 'like'  // TypeORM Like()
+          && String(cond._value).endsWith('7831119999')) return mtnRow;
+      return null;
+    });
+
+    const res = await service.resolveCallerIdentity('7831119999');
+
+    expect(res).not.toBeNull();
+    expect(res!.businessId).toBe(4);
+    expect(res!.businessProfile!.companyName).toBe('MTN HO');
+  });
+
+  it('still resolves an exact E.164 lookup without a suffix query', async () => {
+    numberRepo.findOne.mockResolvedValue(mtnRow);
+    const res = await service.resolveCallerIdentity('+27831119999');
+    expect(res!.businessId).toBe(4);
+    expect(numberRepo.findOne).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT suffix-match short inputs (avoids accidental matches)', async () => {
+    numberRepo.findOne.mockResolvedValue(null);
+    const res = await service.resolveCallerIdentity('19999');
+    expect(res).toBeNull();
+    // only the exact attempt — a 5-digit suffix must never wildcard-match
+    expect(numberRepo.findOne).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The caller-ID lookup's funds flag must inspect the wallet BILLING actually
+// charges: completeCall debits the business-side OWNER's user wallet. A number
+// resolved to a business must therefore expose that owner's balance — not the
+// balance of the placeholder user auto-created for the raw calling number.
+describe('BusinessService — getOwnerWalletBalance', () => {
+  let service: BusinessService;
+  let businessRepo: ReturnType<typeof mockRepo>;
+  let userRepo: ReturnType<typeof mockRepo>;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BusinessService,
+        { provide: getRepositoryToken(Business), useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+        { provide: getRepositoryToken(ApiKey), useFactory: mockRepo },
+        { provide: getRepositoryToken(User), useFactory: mockRepo },
+        { provide: TransactionService, useFactory: mockTx },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(BusinessService);
+    businessRepo = module.get(getRepositoryToken(Business));
+    userRepo = module.get(getRepositoryToken(User));
+  });
+
+  it("returns the owner user's wallet balance for a business id", async () => {
+    businessRepo.findOne.mockResolvedValue({ id: 4, userId: 29 });
+    userRepo.findOne.mockResolvedValue({ id: 29, walletBalance: '0.3268' });
+    await expect(service.getOwnerWalletBalance(4)).resolves.toBeCloseTo(0.3268, 6);
+    expect(userRepo.findOne).toHaveBeenCalledWith({ where: { id: 29 } });
+  });
+
+  it('returns null for a missing business or owner, and for a null id without querying', async () => {
+    await expect(service.getOwnerWalletBalance(null)).resolves.toBeNull();
+    expect(businessRepo.findOne).not.toHaveBeenCalled();
+
+    businessRepo.findOne.mockResolvedValue(null);
+    await expect(service.getOwnerWalletBalance(404)).resolves.toBeNull();
   });
 });
