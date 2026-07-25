@@ -159,6 +159,11 @@ describe('CallService — LOW_FUNDS blocking', () => {
       expect(notifSave).toBeDefined();
       expect(notifSave.id).toBe(receiver.id);
     });
+
+    it('names the receiver as the party that is out of funds', async () => {
+      const result = await service.initiateCall(caller.id, receiver.phoneNumber);
+      expect(result.lowFundsParty).toBe('receiver');
+    });
   });
 
   // ─── Scenario 3: Caller has sufficient funds → call proceeds ─────────────────
@@ -183,6 +188,71 @@ describe('CallService — LOW_FUNDS blocking', () => {
       expect(callRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'initiated' }),
       );
+    });
+  });
+  // ─── Paid PERSONAL caller with an empty wallet ──────────────────────────────
+  // A "Paid Personal + Paid Business" recipient charges everyone. A personal
+  // caller who can't cover the rate must be blocked and told how to top up —
+  // previously only BUSINESS callers were funds-checked, so a broke personal
+  // caller sailed through on a paid tier.
+  describe('when a PERSONAL caller is charged but has an empty wallet', () => {
+    const caller   = mockUser({ id: 1, isBusiness: false, walletBalance: 0 });
+    const receiver = mockUser({
+      id: 2, phoneNumber: '+27829999999', isBusiness: false, walletBalance: 50,
+      businessCallPolicy: 'paid', newCallPolicy: 'paid', unknownCallPolicy: 'paid',
+    });
+
+    beforeEach(() => {
+      userRepo.findOne
+        .mockResolvedValueOnce(caller)
+        .mockResolvedValueOnce(receiver)
+        .mockResolvedValue(caller);
+      userRepo.save.mockResolvedValue(caller);
+    });
+
+    it('blocks the call with LOW_FUNDS', async () => {
+      const result = await service.initiateCall(caller.id, receiver.phoneNumber);
+      expect(result.blocked).toBe(true);
+      expect(callRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'blocked', blockedReason: 'LOW_FUNDS' }),
+      );
+    });
+
+    it('returns the insufficient-funds voice note for the caller', async () => {
+      const result = await service.initiateCall(caller.id, receiver.phoneNumber);
+      expect(result.voiceNote).toBe(true);
+      expect(result.message).toMatch(/insufficient funds/i);
+      expect(result.message).toMatch(/probocaller\.com/i);
+    });
+
+    // The client shows different copy depending on whose wallet is empty —
+    // telling the caller "the company has insufficient funds" would be a lie.
+    it('names the caller as the party that is out of funds', async () => {
+      const result = await service.initiateCall(caller.id, receiver.phoneNumber);
+      expect(result.lowFundsParty).toBe('caller');
+    });
+  });
+
+  // A free tier must NOT be funds-gated — nobody is charged, so an empty wallet
+  // is irrelevant and the call has to ring.
+  describe('when the tier is free', () => {
+    const caller   = mockUser({ id: 1, isBusiness: true, walletBalance: 0 });
+    const receiver = mockUser({
+      id: 2, phoneNumber: '+27829999999', isBusiness: false, walletBalance: 0,
+      businessCallPolicy: 'free',
+    });
+
+    beforeEach(() => {
+      userRepo.findOne
+        .mockResolvedValueOnce(caller)
+        .mockResolvedValueOnce(receiver)
+        .mockResolvedValue(caller);
+      userRepo.save.mockResolvedValue(caller);
+    });
+
+    it('rings free even with an empty wallet', async () => {
+      const result = await service.initiateCall(caller.id, receiver.phoneNumber);
+      expect(result.blocked).toBe(false);
     });
   });
 });
@@ -700,4 +770,5 @@ describe('CallService — incoming direction: the RECIPIENT user\'s permission i
     expect(res.blocked).toBe(false);
     expect(res.call.status).toBe('initiated');
   });
+
 });

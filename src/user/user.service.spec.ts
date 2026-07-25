@@ -541,4 +541,111 @@ describe('UserService — business opt-in (free, explicit)', () => {
     repo.findOne.mockResolvedValue(null);
     await expect(service.enableBusinessMode(999)).rejects.toBeInstanceOf(NotFoundException);
   });
+
+  it('disableBusinessMode hides the surfaces but keeps the company and wallet intact', async () => {
+    const user = mockUser({ id: 7, businessOptIn: true, isBusiness: true, walletBalance: 12.34 } as any);
+    repo.findOne.mockResolvedValue(user);
+    repo.save.mockImplementation(async (u: any) => u);
+
+    const res: any = await service.disableBusinessMode(7);
+
+    expect(user.businessOptIn).toBe(false);
+    expect(res.businessOptIn).toBe(false);
+    // Opting out is a VISIBILITY change, never a deletion: the registered
+    // company and the money it holds must survive so opting back in restores
+    // everything exactly as it was.
+    expect(user.isBusiness).toBe(true);
+    expect(Number(user.walletBalance)).toBe(12.34);
+  });
+});
+
+/**
+ * Caller-ID lookup must find an account however its number was stored.
+ *
+ * The lookup matched `phoneNumber` as an exact string, so a user registered as
+ * "+27821234567" was invisible to a lookup for "27821234567" or "0821234567" —
+ * and instead of matching, a fresh placeholder was minted with isBusiness=false
+ * and a zero wallet. Every signal the incoming-call gate depends on (business
+ * status, spam flag, funds) was silently lost, so a low-funds business call
+ * rang through with no voice note.
+ */
+describe('UserService.findOrCreatePlaceholder — number-format matching', () => {
+  let service: UserService;
+  let repo: ReturnType<typeof mockRepo>;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        UserService,
+        { provide: getRepositoryToken(User), useFactory: mockRepo },
+        { provide: JwtService, useFactory: mockJwt },
+        { provide: TransactionService, useValue: { log: jest.fn(), sumByUserAndType: jest.fn() } },
+        { provide: ReportService, useValue: {} },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get<UserService>(UserService);
+    repo = module.get(getRepositoryToken(User));
+  });
+
+  const stored = mockUser({ id: 42, phoneNumber: '+27821234567', isBusiness: true, walletBalance: 0 });
+
+  it.each([
+    ['27821234567', 'international without the plus'],
+    ['0821234567', 'SA national format'],
+    ['+27821234567', 'exactly as stored'],
+  ])('matches the stored +27 account when asked for %s (%s)', async (asked) => {
+    repo.find = jest.fn().mockImplementation(({ where }: any) => {
+      const wanted = where.phoneNumber;
+      const list = Array.isArray(wanted?._value) ? wanted._value : [wanted];
+      return Promise.resolve(list.includes(stored.phoneNumber) ? [stored] : []);
+    });
+
+    const found = await service.findOrCreatePlaceholder(asked);
+
+    expect(found.id).toBe(42);
+    expect(found.isBusiness).toBe(true);
+    // The whole point: no throwaway placeholder gets minted for a known caller.
+    expect(repo.save).not.toHaveBeenCalled();
+  });
+
+  // Years of exact-match lookups minted duplicate placeholder rows ("Unknown",
+  // no business, empty wallet) alongside the real account. With variants now
+  // matching several rows, the canonical E.164 account must win — otherwise the
+  // gate reads a placeholder and still sees no business and no funds problem.
+  it('prefers the canonical +27 account over a legacy placeholder row', async () => {
+    const placeholder = mockUser({ id: 356, phoneNumber: '27821234567', name: 'Unknown', isBusiness: false });
+    // Both rows come back from the one query; canonical must win.
+    repo.find = jest.fn().mockResolvedValue([placeholder, stored]);
+
+    const found = await service.findOrCreatePlaceholder('27821234567');
+
+    expect(found.id).toBe(42);
+    expect(found.isBusiness).toBe(true);
+  });
+
+  // Caller-ID sits on the incoming-call hot path: the overlay shows
+  // "Looking up caller…" until this resolves. Probing formats one at a time
+  // multiplies the round trips, so the whole variant set goes in one query.
+  it('resolves the caller in a single database round trip', async () => {
+    repo.find = jest.fn().mockResolvedValue([stored]);
+    repo.findOne.mockResolvedValue(null);
+
+    await service.findOrCreatePlaceholder('0821234567');
+
+    const queries = repo.findOne.mock.calls.length + (repo.find as jest.Mock).mock.calls.length;
+    expect(queries).toBe(1);
+  });
+
+  it('still creates a placeholder for a genuinely unknown number', async () => {
+    repo.find = jest.fn().mockResolvedValue([]);
+    repo.findOne.mockResolvedValue(null);
+    repo.create.mockImplementation((u: any) => u);
+    repo.save.mockImplementation((u: any) => Promise.resolve({ ...u, id: 99 }));
+
+    const created = await service.findOrCreatePlaceholder('+27829990000');
+
+    expect(created.id).toBe(99);
+    expect(repo.save).toHaveBeenCalled();
+  });
 });

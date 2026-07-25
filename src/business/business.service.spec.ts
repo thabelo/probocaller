@@ -531,3 +531,40 @@ describe('BusinessService — getOwnerWalletBalance', () => {
     await expect(service.getOwnerWalletBalance(404)).resolves.toBeNull();
   });
 });
+
+// Logo can be changed on UPDATE, not just at registration — so updateProfile must
+// persist a new logoUrl while still refusing to let a caller flip `verified`.
+describe('BusinessService — updateProfile persists the logo', () => {
+  let service: BusinessService;
+  let businessRepo: ReturnType<typeof mockRepo>;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BusinessService,
+        { provide: getRepositoryToken(Business), useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+        { provide: getRepositoryToken(ApiKey), useFactory: mockRepo },
+        { provide: getRepositoryToken(User), useFactory: mockRepo },
+        { provide: TransactionService, useFactory: mockTx },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(BusinessService);
+    businessRepo = module.get(getRepositoryToken(Business));
+  });
+
+  it('writes a new logoUrl but ignores an attempt to self-verify', async () => {
+    const row: any = { id: 5, userId: 9, companyName: 'Acme', logoUrl: '/old.png', verified: false };
+    businessRepo.findOne.mockResolvedValueOnce(row).mockResolvedValueOnce(row);
+    businessRepo.save.mockImplementation(async (x: any) => x);
+
+    await service.updateProfile(9, 5, {
+      logoUrl: '/business/logo/new.png',
+      verified: true, // must be stripped
+    } as any);
+
+    expect(row.logoUrl).toBe('/business/logo/new.png');
+    expect(row.verified).toBe(false);
+  });
+});

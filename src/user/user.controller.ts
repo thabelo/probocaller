@@ -191,6 +191,16 @@ export class UserController {
     return this.userService.enableBusinessMode(req.user.userId);
   }
 
+  // The mirror of the opt-in: hides the business surfaces without deleting any
+  // business data. Declared BEFORE the ':phoneNumber' catch-all, same as above.
+  @Post('business-opt-out')
+  @UseGuards(AuthGuard('jwt'))
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Turn business mode back off (keeps all business data)' })
+  async disableBusinessMode(@Request() req) {
+    return this.userService.disableBusinessMode(req.user.userId);
+  }
+
   // Live platform earning rate for the app's wallet/earnings UI. Declared BEFORE
   // the ':phoneNumber' catch-all so '/user/rate' isn't swallowed as a lookup.
   @Get('rate')
@@ -216,10 +226,15 @@ export class UserController {
     // the ringing UI can show the caller's real per-second rate instead of a
     // stale client-side constant.
     const DEFAULT_RATE_PER_SECOND = 0.002;
-    const rateSetting = await this.settingRepository.findOne({ where: { key: 'RATE_PER_SECOND' } });
+    // These three depend only on the phone number, so they go out together.
+    // Run one after another they stacked three round trips onto the ringing
+    // overlay, which sits on "Looking up caller…" until this returns.
+    const [rateSetting, user, callerIdentity] = await Promise.all([
+      this.settingRepository.findOne({ where: { key: 'RATE_PER_SECOND' } }),
+      this.userService.findOrCreatePlaceholder(phoneNumber),
+      this.businessService.resolveCallerIdentity(phoneNumber),
+    ]);
     const RATE_PER_SECOND = rateSetting ? parseFloat(rateSetting.value) || DEFAULT_RATE_PER_SECOND : DEFAULT_RATE_PER_SECOND;
-    const user = await this.userService.findOrCreatePlaceholder(phoneNumber);
-    const callerIdentity = await this.businessService.resolveCallerIdentity(phoneNumber);
 
     // Fall back to the user's own business profile when calling from an unregistered number
     const fallbackProfile = (!callerIdentity && user.isBusiness)

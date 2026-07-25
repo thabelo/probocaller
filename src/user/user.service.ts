@@ -1,6 +1,6 @@
 import { Injectable, UnauthorizedException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import { User } from './user.entity';
 import { LoginDto } from './dto/login.dto';
@@ -8,6 +8,8 @@ import { SignupDto } from './dto/signup.dto';
 import { JwtService } from '@nestjs/jwt';
 import { TransactionService } from '../transaction/transaction.service';
 import { ReportService } from '../report/report.service';
+import { phoneNumberVariants } from '../auth/phone-variants';
+import { normalisePhoneNumber } from '../common/phone';
 
 /** Parse any SA phone number into its canonical parts. */
 function parsePhone(raw: string): { phone: string; country: string; code: string; phoneLocal: string } {
@@ -96,6 +98,22 @@ export class UserService {
       await this.userRepository.save(user);
     }
     return { businessOptIn: true };
+  }
+
+  /**
+   * Turn business mode back off. The mirror of enableBusinessMode and equally
+   * free: it only hides the business surfaces. Nothing is deleted — the
+   * registered company, its wallet, API keys and leads all stay exactly as they
+   * were, so opting back in restores the account rather than rebuilding it.
+   */
+  async disableBusinessMode(userId: number) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found');
+    if (user.businessOptIn) {
+      user.businessOptIn = false;
+      await this.userRepository.save(user);
+    }
+    return { businessOptIn: false };
   }
 
   /**
@@ -204,14 +222,29 @@ export class UserService {
   }
 
   async findOrCreatePlaceholder(phoneNumber: string): Promise<User> {
-    let user = await this.userRepository.findOne({ where: { phoneNumber } });
+    // Match however the number was stored. An exact-string match made a user
+    // registered as "+27821234567" invisible to a lookup for "27821234567" or
+    // "0821234567" — and minted a fresh placeholder instead, quietly dropping
+    // their business status, spam flag and wallet balance. The incoming-call
+    // gate reads exactly those fields, so a low-funds business call rang
+    // through with no voice note. Same variant list login already matches on.
+    const variants = phoneNumberVariants(phoneNumber);
+    const canonical = normalisePhoneNumber(phoneNumber);
+    // One round trip for every stored form — this sits on the incoming-call hot
+    // path, where the overlay reads "Looking up caller…" until it returns.
+    const matches = variants.length > 1
+      ? await this.userRepository.find({ where: { phoneNumber: In(variants) } })
+      : await this.userRepository.find({ where: { phoneNumber } });
+    // Years of exact-match lookups left duplicate placeholder rows beside the
+    // real account, so the canonical E.164 row wins when several match.
+    const user = matches.find((u) => u.phoneNumber === canonical) ?? matches[0];
     if (user) return user;
-    user = this.userRepository.create({
+    const placeholder = this.userRepository.create({
       phoneNumber,
       email: `${phoneNumber}@probo.local`,
       name: 'Unknown',
     });
-    return this.userRepository.save(user);
+    return this.userRepository.save(placeholder);
   }
 
   /**

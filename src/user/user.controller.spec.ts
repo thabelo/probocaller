@@ -299,3 +299,74 @@ describe('UserController — POST /user/business-opt-in', () => {
     expect(userService.enableBusinessMode).toHaveBeenCalledWith(42);
   });
 });
+
+describe('UserController — POST /user/business-opt-out', () => {
+  it('delegates to the service for the authenticated user only', async () => {
+    const userService: any = { disableBusinessMode: jest.fn().mockResolvedValue({ businessOptIn: false }) };
+    const controller = new UserController(
+      userService, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+    );
+
+    const res: any = await controller.disableBusinessMode({ user: { userId: 42 } } as any);
+
+    expect(res.businessOptIn).toBe(false);
+    // Keyed on the JWT subject — a caller can never opt someone else out.
+    expect(userService.disableBusinessMode).toHaveBeenCalledWith(42);
+  });
+});
+
+/**
+ * Caller-ID is on the incoming-call hot path — the ringing overlay shows
+ * "Looking up caller…" until this endpoint answers, so every avoidable round
+ * trip is visible delay. The platform rate, the user row and the business
+ * identity depend on nothing but the phone number, so they must be fetched
+ * concurrently rather than one after another.
+ */
+describe('UserController — findUser latency', () => {
+  it('fetches the rate, the user and the caller identity concurrently', async () => {
+    const started: string[] = [];
+    let resolveAll: () => void = () => {};
+    const gate = new Promise<void>((res) => { resolveAll = res; });
+
+    // Each dependency records that it started, then waits on a shared gate.
+    // Sequential code deadlocks here; concurrent code reaches all three.
+    const track = <T>(name: string, value: T) => jest.fn(async () => {
+      started.push(name);
+      if (started.length === 3) resolveAll();
+      await gate;
+      return value;
+    });
+
+    const userService: any = {
+      findOrCreatePlaceholder: track('user', {
+        id: 9, phoneNumber: '5091234567', name: 'Unknown',
+        isBusiness: false, isSpam: false, walletBalance: 100,
+      }),
+    };
+    const businessService: any = {
+      resolveCallerIdentity: track('identity', null),
+      getProfileByUserId: jest.fn().mockResolvedValue(null),
+      getOwnerWalletBalance: jest.fn().mockResolvedValue(null),
+    };
+    const dataBrokerService: any = {
+      isBusinessCallerAllowed: jest.fn().mockResolvedValue(true),
+      isFreeWhitelistedForBusiness: jest.fn().mockResolvedValue(false),
+    };
+    const lookupService: any = { resolveExternalName: jest.fn().mockResolvedValue(null) };
+    const externalLookupLimiter: any = { tryAcquire: jest.fn().mockReturnValue(true) };
+    const settingRepo: any = { findOne: track('rate', { key: 'RATE_PER_SECOND', value: '0.15' }) };
+
+    const controller = new UserController(
+      userService, businessService, {} as any, dataBrokerService,
+      lookupService, externalLookupLimiter, settingRepo,
+    );
+
+    const result = await Promise.race([
+      controller.findUser('5091234567', { user: { userId: 5 }, headers: {} } as any).then(() => 'done'),
+      new Promise((res) => setTimeout(() => res('timeout'), 2000)),
+    ]);
+
+    expect(started.sort()).toEqual(['identity', 'rate', 'user']);
+    expect(result).toBe('done');
+  });
+});

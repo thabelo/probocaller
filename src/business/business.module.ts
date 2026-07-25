@@ -7,6 +7,8 @@ import { ApiKey } from './api-key.entity';
 import { User } from '../user/user.entity';
 import { BusinessService } from './business.service';
 import { BusinessController } from './business.controller';
+import { BusinessLogoController } from './business-logo.controller';
+import { BusinessLogoService } from './business-logo.service';
 import { LeadsController } from './leads.controller';
 import { ApiKeyGuard } from './api-key.guard';
 import { ProfileModule } from '../profile/profile.module';
@@ -19,8 +21,8 @@ import { TransactionModule } from '../transaction/transaction.module';
     ProfileModule,
     TransactionModule,
   ],
-  controllers: [BusinessController, LeadsController],
-  providers: [BusinessService, ApiKeyGuard],
+  controllers: [BusinessController, BusinessLogoController, LeadsController],
+  providers: [BusinessService, BusinessLogoService, ApiKeyGuard],
   exports: [BusinessService],
 })
 export class BusinessModule {}

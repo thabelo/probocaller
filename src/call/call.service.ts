@@ -87,7 +87,14 @@ export class CallService {
     fromUserId: number,
     toPhoneNumber: string,
     opts?: { fromNumberId?: number; campaignId?: number },
-  ): Promise<{ call: CallLog; blocked: boolean; voiceNote: boolean; message: string }> {
+  ): Promise<{
+    call: CallLog;
+    blocked: boolean;
+    voiceNote: boolean;
+    message: string;
+    // Which wallet came up short, so the client can address the right party.
+    lowFundsParty?: 'caller' | 'receiver';
+  }> {
     const fromUser = await this.userRepository.findOne({ where: { id: fromUserId } });
     if (!fromUser) throw new NotFoundException('User not found');
 
@@ -140,24 +147,9 @@ export class CallService {
 
     const ratePerSecond = await this.getRatePerSecond();
 
-    // Caller (business) has insufficient wallet balance
-    if (fromUser.isBusiness && Number(fromUser.walletBalance) < ratePerSecond) {
-      const blockedCall = this.callRepository.create({
-        ...attribution,
-        fromUserId,
-        toUserId: toUser.id,
-        status: 'blocked',
-        ratePerSecond,
-        blockedReason: 'LOW_FUNDS',
-        completedAt: new Date(),
-      });
-      await this.callRepository.save(blockedCall);
-      await this.addNotification(
-        fromUser.id,
-        'Your call was blocked — wallet balance is too low. Please top up your account to continue making calls.',
-      );
-      return { call: blockedCall, blocked: true, voiceNote: true, message: 'Hello, Your call is blocked by Probo Caller, please load funds. Visit ProboCaller dot com to learn more.  Your call is blocked by Probo Caller, please load funds. Visit Probo Caller dot com to learn more. Goodbye!' };
-    }
+    // NOTE: the caller's funds are checked further down, once we know whether
+    // this call is actually charged. Gating here would wrongly block a caller
+    // on a FREE tier, where nobody is billed.
 
     // Receiver (business) has insufficient wallet balance to accept the call
     if (toUser.isBusiness && Number(toUser.walletBalance) < ratePerSecond) {
@@ -175,7 +167,7 @@ export class CallService {
         toUser.id,
         'An incoming call was blocked because your wallet balance is too low. Top up your account to receive calls.',
       );
-      return { call: blockedCall, blocked: true, voiceNote: true, message: 'Hello, Your call is blocked by Probo Caller, please load funds. Visit ProboCaller dot com to learn more.  Your call is blocked by Probo Caller, please load funds. Visit Probo Caller dot com to learn more. Goodbye!' };
+      return { call: blockedCall, blocked: true, voiceNote: true, message: 'Hello, Your call is blocked by Probo Caller, please load funds. Visit ProboCaller dot com to learn more.  Your call is blocked by Probo Caller, please load funds. Visit Probo Caller dot com to learn more. Goodbye!', lowFundsParty: 'receiver' as const };
     }
 
     // Identify the human recipient and the calling business by role, not by
@@ -227,6 +219,37 @@ export class CallService {
       ? await this.dataBrokerService.isFreeWhitelisted(recipient.id, callerBusinessUserId)
       : false;
     const chargeRate = businessPolicy === 'free' || freeWhitelisted ? 0 : ratePerSecond;
+
+    // Any CHARGED call — a paid business tier or a paid personal tier — requires
+    // the payer to cover at least one second. Checked here (not earlier) so a
+    // free tier never funds-gates a call nobody is billed for, and so personal
+    // callers on a paid tier are gated too, not just businesses.
+    if (chargeRate > 0) {
+      const payer = appIncoming ? toUser : fromUser;
+      if (Number(payer.walletBalance) < chargeRate) {
+        const blockedCall = this.callRepository.create({
+          ...attribution,
+          fromUserId,
+          toUserId: toUser.id,
+          status: 'blocked',
+          ratePerSecond: chargeRate,
+          blockedReason: 'LOW_FUNDS',
+          completedAt: new Date(),
+        });
+        await this.callRepository.save(blockedCall);
+        await this.addNotification(
+          payer.id,
+          'Your call was blocked — wallet balance is too low. Please top up your account to continue making calls.',
+        );
+        return {
+          call: blockedCall,
+          blocked: true,
+          voiceNote: true,
+          message: 'Insufficient funds, visit probocaller.com to add funds',
+          lowFundsParty: 'caller' as const,
+        };
+      }
+    }
 
     const recipientBlocksCaller = fromUser.spamList?.includes(toUser.phoneNumber);
     if (recipientBlocksCaller) {
