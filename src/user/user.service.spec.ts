@@ -81,6 +81,25 @@ describe('UserService', () => {
       expect(repo.save).toHaveBeenCalled();
       expect(result).toHaveProperty('accessToken');
     });
+
+    it('F1: resolves one account across phone formats — national login finds the +27 account', async () => {
+      const user = mockUser(); // stored as +27821234567
+      repo.findOne.mockResolvedValue(user);
+      await service.login({ phoneNumber: '0821234567' });
+      // Looked up by every equivalent variant, so no duplicate account is created.
+      const op = repo.findOne.mock.calls[0][0].where.phoneNumber as any;
+      const values = op?.value ?? op?._value ?? op;
+      expect(Array.isArray(values) ? values : [values]).toContain('+27821234567');
+      expect(repo.create).not.toHaveBeenCalled();
+    });
+
+    it('F1: stores the canonical E.164 form when creating from a national number', async () => {
+      repo.findOne.mockResolvedValue(null);
+      repo.create.mockImplementation((data: any) => ({ ...data }));
+      repo.save.mockImplementation(async (data: any) => ({ id: 7, ...data }));
+      await service.login({ phoneNumber: '0821234567' });
+      expect(repo.create.mock.calls[0][0].phoneNumber).toBe('+27821234567');
+    });
   });
 
   describe('addMultipleContacts — mass-assignment hardening (H1)', () => {

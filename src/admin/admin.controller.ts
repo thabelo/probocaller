@@ -62,9 +62,17 @@ export class AdminController {
   }
 
   @Get('users')
-  @ApiOperation({ summary: 'Get all users' })
-  async getAllUsers() {
-    return this.adminService.getAllUsers();
+  @ApiOperation({ summary: 'Get users (optional server-side search + pagination)' })
+  async getAllUsers(
+    @Query('search') search?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.adminService.getAllUsers({
+      search,
+      limit: limit ? parseInt(limit, 10) : undefined,
+      offset: offset ? parseInt(offset, 10) : undefined,
+    });
   }
 
   @Post('users/bulk')

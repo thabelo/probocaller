@@ -8,7 +8,7 @@ import { SignupDto } from './dto/signup.dto';
 import { JwtService } from '@nestjs/jwt';
 import { TransactionService } from '../transaction/transaction.service';
 import { ReportService } from '../report/report.service';
-import { phoneNumberVariants } from '../auth/phone-variants';
+import { phoneNumberVariants, toE164 } from '../auth/phone-variants';
 import { normalisePhoneNumber } from '../common/phone';
 
 /** Parse any SA phone number into its canonical parts. */
@@ -159,15 +159,22 @@ export class UserService {
 
   async login(loginDto: LoginDto) {
     const { phoneNumber, referralCode } = loginDto;
-    let user = await this.userRepository.findOne({ where: { phoneNumber } });
+    // Resolve the account by every equivalent phone format so "0XXXXXXXXX",
+    // "27XXXXXXXXX" and "+27XXXXXXXXX" all map to ONE account instead of minting
+    // duplicates (F1). New accounts are stored in canonical E.164 form.
+    const variants = phoneNumberVariants(phoneNumber);
+    let user = variants.length
+      ? await this.userRepository.findOne({ where: { phoneNumber: In(variants) } })
+      : null;
     if (!user) {
+      const canonical = toE164(phoneNumber);
       // Record who referred this account (drives the lifetime 3% commission paid
       // via ReferralService whenever this user later EARNS). No signup credit.
       const referredBy = await this.resolveReferrer(referralCode);
       user = this.userRepository.create({
-        phoneNumber,
-        email: `${phoneNumber}@probo.local`,
-        name: phoneNumber,
+        phoneNumber: canonical,
+        email: `${canonical}@probo.local`,
+        name: canonical,
         ...(referredBy && { referredBy }),
       });
       await this.userRepository.save(user);
@@ -179,7 +186,11 @@ export class UserService {
 
   async signup(signupDto: SignupDto) {
     const { phoneNumber, email, name, referralCode } = signupDto;
-    let user = await this.userRepository.findOne({ where: { phoneNumber } });
+    // Same canonical resolution as login so signup never forks a duplicate (F1).
+    const variants = phoneNumberVariants(phoneNumber);
+    let user = variants.length
+      ? await this.userRepository.findOne({ where: { phoneNumber: In(variants) } })
+      : null;
     if (user) {
       user.email = email;
       user.name = name;
@@ -188,11 +199,12 @@ export class UserService {
         await this.assignReferralCode(user);
       }
     } else {
+      const canonical = toE164(phoneNumber);
       // Record who referred this account (drives the lifetime 3% commission paid
       // via ReferralService whenever this user later EARNS). No signup credit.
       const referredBy = await this.resolveReferrer(referralCode);
       user = this.userRepository.create({
-        phoneNumber, email, name,
+        phoneNumber: canonical, email, name,
         ...(referredBy && { referredBy }),
       });
       await this.userRepository.save(user);

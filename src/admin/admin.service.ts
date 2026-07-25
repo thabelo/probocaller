@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { ILike, In, Repository } from 'typeorm';
 import { User } from '../user/user.entity';
 import { CallLog } from '../call/call.entity';
 import { Setting } from '../config/setting.entity';
@@ -113,8 +113,20 @@ export class AdminService {
     return result;
   }
 
-  async getAllUsers() {
-    const users = await this.userRepository.find({ order: { createdAt: 'DESC' } });
+  // Optional server-side search + pagination (F3). Called with no args it
+  // returns every user (unchanged behaviour, so the client-side filter and CSV
+  // export keep working); with a search term it filters name/phone/email so the
+  // list scales past a full-table fetch.
+  async getAllUsers(opts?: { search?: string; limit?: number; offset?: number }) {
+    const search = opts?.search?.trim();
+    const find: any = { order: { createdAt: 'DESC' } };
+    if (opts?.limit && opts.limit > 0) find.take = opts.limit;
+    if (opts?.offset && opts.offset > 0) find.skip = opts.offset;
+    if (search) {
+      const like = ILike(`%${search}%`);
+      find.where = [{ name: like }, { phoneNumber: like }, { email: like }];
+    }
+    const users = await this.userRepository.find(find);
     return users.map((u) => this.serializeUser(u));
   }
 

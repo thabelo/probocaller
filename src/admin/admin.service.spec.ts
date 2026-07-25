@@ -188,3 +188,45 @@ describe('AdminService — getStats: earnings vs earnings from invitees', () => 
     expect(stats.referralEarnings).toBe(1.2345);
   });
 });
+
+describe('AdminService — getAllUsers server-side search/pagination (F3)', () => {
+  let service: AdminService;
+  let userRepo: ReturnType<typeof mockRepo>;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AdminService,
+        { provide: getRepositoryToken(User),     useFactory: mockRepo },
+        { provide: getRepositoryToken(CallLog),  useFactory: mockRepo },
+        { provide: getRepositoryToken(Setting),  useFactory: mockRepo },
+        { provide: getRepositoryToken(Business), useFactory: mockRepo },
+        { provide: TransactionService, useValue: { log: jest.fn() } },
+        { provide: AuditService, useValue: { record: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(AdminService);
+    userRepo = module.get(getRepositoryToken(User));
+    userRepo.find.mockResolvedValue([]);
+  });
+
+  it('filters by name, phone and email when a search term is given', async () => {
+    await service.getAllUsers({ search: 'jane' });
+    const arg = userRepo.find.mock.calls[0][0];
+    expect(Array.isArray(arg.where)).toBe(true);
+    const fields = arg.where.map((w: any) => Object.keys(w)[0]).sort();
+    expect(fields).toEqual(['email', 'name', 'phoneNumber']);
+  });
+
+  it('returns all users (no where filter) when no search term is given', async () => {
+    await service.getAllUsers();
+    expect(userRepo.find.mock.calls[0][0].where).toBeUndefined();
+  });
+
+  it('applies limit/offset as take/skip', async () => {
+    await service.getAllUsers({ limit: 50, offset: 100 });
+    const arg = userRepo.find.mock.calls[0][0];
+    expect(arg.take).toBe(50);
+    expect(arg.skip).toBe(100);
+  });
+});

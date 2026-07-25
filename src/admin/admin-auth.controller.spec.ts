@@ -28,6 +28,20 @@ describe('AdminAuthController', () => {
     expect((result as any).accessToken).toBeUndefined();
   });
 
+  it('F4: matches an admin stored as +27… when logging in with the national 0-form', async () => {
+    userRepo.findOne.mockResolvedValue({ id: 1, role: 'admin', phoneNumber: '+27821234567', name: 'Admin', email: 'a@b' });
+
+    const result = await controller.login({ phoneNumber: '0821234567' }, res as any);
+
+    // Looks the admin up by every equivalent variant, including the stored +27 form.
+    const arg = userRepo.findOne.mock.calls[0][0];
+    const op = arg.where.phoneNumber as any;
+    const values = op?.value ?? op?._value ?? op;
+    expect(Array.isArray(values) ? values : [values]).toContain('+27821234567');
+    expect(res.cookie).toHaveBeenCalled();
+    expect(result).toEqual({ user: { id: 1, phoneNumber: '+27821234567', name: 'Admin', role: 'admin' } });
+  });
+
   it('rejects a non-admin user and sets no cookie', async () => {
     userRepo.findOne.mockResolvedValue({ id: 2, role: 'user', phoneNumber: '+27' });
     await expect(controller.login({ phoneNumber: '+27' }, res as any)).rejects.toBeInstanceOf(ForbiddenException);

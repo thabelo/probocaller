@@ -2,9 +2,10 @@ import { Controller, Post, Body, Res, ForbiddenException, HttpCode } from '@nest
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { JwtService } from '@nestjs/jwt';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import type { Response } from 'express';
 import { User } from '../user/user.entity';
+import { phoneNumberVariants } from '../auth/phone-variants';
 
 const ACCESS_COOKIE = 'accessToken';
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -41,8 +42,11 @@ export class AdminAuthController {
   @ApiOperation({ summary: 'Admin login — sets an HttpOnly session cookie' })
   async login(@Body() body: { phoneNumber: string }, @Res({ passthrough: true }) res: Response) {
     const phoneNumber = body?.phoneNumber?.trim();
-    const user = phoneNumber
-      ? await this.userRepo.findOne({ where: { phoneNumber } })
+    // Match the admin regardless of how the number was stored (national "0…" vs
+    // international "+27…"), the same way /user/login resolves accounts (F4).
+    const variants = phoneNumber ? phoneNumberVariants(phoneNumber) : [];
+    const user = variants.length
+      ? await this.userRepo.findOne({ where: { phoneNumber: In(variants) } })
       : null;
     if (!user || user.role !== 'admin') {
       throw new ForbiddenException('Admin access required');
