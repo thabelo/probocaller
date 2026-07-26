@@ -435,6 +435,8 @@ describe('BusinessService — calling numbers are stored in E.164', () => {
 describe('BusinessService — resolveCallerIdentity matches last-10 lookups against E.164 numbers', () => {
   let service: BusinessService;
   let numberRepo: ReturnType<typeof mockRepo>;
+  let businessRepo: ReturnType<typeof mockRepo>;
+  let userRepo: ReturnType<typeof mockRepo>;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -450,6 +452,30 @@ describe('BusinessService — resolveCallerIdentity matches last-10 lookups agai
     }).compile();
     service = module.get(BusinessService);
     numberRepo = module.get(getRepositoryToken(BusinessNumber));
+    businessRepo = module.get(getRepositoryToken(Business));
+    userRepo = module.get(getRepositoryToken(User));
+  });
+
+  it('F7: resolves a last-10 lookup to the business via its OWNER user when no business_number row exists', async () => {
+    // Alpha Funded Ltd has no business_number row; its owner is +27861110001.
+    numberRepo.findOne.mockResolvedValue(null); // no explicit business number
+    userRepo.findOne.mockImplementation(async (opts: any) => {
+      const cond = opts?.where?.phoneNumber;
+      if (typeof cond === 'object' && cond?._type === 'like'
+          && String(cond._value).endsWith('861110001')) {
+        return { id: 370, phoneNumber: '+27861110001', isBusiness: true };
+      }
+      return null;
+    });
+    businessRepo.findOne.mockResolvedValue({
+      id: 34, userId: 370, active: true, companyName: 'Alpha Funded Ltd', industry: 'Finance', verified: true,
+    });
+
+    const res = await service.resolveCallerIdentity('7861110001');
+
+    expect(res).not.toBeNull();
+    expect(res!.businessId).toBe(34);
+    expect(res!.businessProfile!.companyName).toBe('Alpha Funded Ltd');
   });
 
   const mtnRow = {

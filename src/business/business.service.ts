@@ -319,6 +319,30 @@ export class BusinessService {
           relations: ['business'],
         });
       }
+      // A verified business may have no explicit business_number row and be
+      // reachable only on its OWNER's number. Resolve that too, by digit-suffix
+      // against the owner user's stored E.164 — otherwise a real business call
+      // from the device's last-10 number reads "Unknown" (F7).
+      if (!num && digits.length >= 10) {
+        const owner = await this.userRepo.findOne({
+          where: { phoneNumber: Like(`%${digits.slice(-10)}`), isBusiness: true },
+        });
+        if (owner) {
+          const biz = await this.businessRepo.findOne({ where: { userId: owner.id, active: true } });
+          if (biz) {
+            return {
+              isBusiness: true,
+              businessId: biz.id,
+              businessProfile: {
+                companyName: biz.companyName,
+                industry: biz.industry,
+                description: biz.description,
+                verified: biz.verified,
+              },
+            };
+          }
+        }
+      }
     }
     if (!num || !num.business?.active) return null;
 
