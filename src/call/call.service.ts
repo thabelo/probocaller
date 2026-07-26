@@ -453,7 +453,7 @@ export class CallService {
 
       // Notification is non-financial; keep it outside the wallet transaction.
       if (receiverId !== null) {
-        await this.addNotification(receiverId, `You earned $${earnedForReceiver.toFixed(4)} from a ${duration}s business call`);
+        await this.addNotification(receiverId, `You earned R${earnedForReceiver.toFixed(4)} from a ${duration}s business call`);
       }
     } else {
       // Non-business call: no money moves; just mark it completed.

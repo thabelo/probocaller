@@ -433,6 +433,24 @@ describe('CallService — completeCall reward integrity', () => {
     expect(referral.payCommission).toHaveBeenCalledWith(1, 1.52, manager);
   });
 
+  it('F15: the earnings notification is in ZAR (R…), not dollars', async () => {
+    const business = mockUser({ id: 2, isBusiness: true, walletBalance: 100 });
+    const earner   = mockUser({ id: 1, isBusiness: false, walletBalance: 0 });
+    const call = { id: 56, fromUserId: 1, toUserId: 2, status: 'initiated', ratePerSecond: 0.002 };
+    callRepo.findOne.mockResolvedValue(call);
+    wireWallets(business, earner, call);
+
+    await service.completeCall(2, 56, 1000);
+
+    const notifSave = userRepo.save.mock.calls
+      .map((c: any[]) => c[0])
+      .find((u: any) => Array.isArray(u?.notifications) && u.notifications.some((n: any) => /You earned/.test(n.message)));
+    expect(notifSave).toBeDefined();
+    const msg = notifSave.notifications.find((n: any) => /You earned/.test(n.message)).message;
+    expect(msg).toContain('R');
+    expect(msg).not.toContain('$');
+  });
+
   it('idempotent: a second completeCall on an already-completed call pays NO extra commission', async () => {
     const completed = { id: 54, fromUserId: 1, toUserId: 2, status: 'completed', ratePerSecond: 0.002 };
     callRepo.findOne.mockResolvedValue(completed);
