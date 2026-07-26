@@ -93,6 +93,24 @@ describe('UserService', () => {
       expect(repo.create).not.toHaveBeenCalled();
     });
 
+    // The client has no other way to tell a first-ever login from a returning
+    // one, and it needs to know: a brand-new account is created with placeholder
+    // name/email (the phone number and <phone>@probo.local), so the app must send
+    // that user through the profile step instead of straight into the app.
+    it('flags a first-ever login so the client can collect a real profile', async () => {
+      repo.findOne.mockResolvedValue(null);
+      repo.create.mockImplementation((data: any) => ({ ...data }));
+      repo.save.mockImplementation(async (data: any) => ({ id: 7, ...data }));
+      const result: any = await service.login({ phoneNumber: '+27821234567' });
+      expect(result.isNewUser).toBe(true);
+    });
+
+    it('does not flag a returning login as new', async () => {
+      repo.findOne.mockResolvedValue(mockUser());
+      const result: any = await service.login({ phoneNumber: '+27821234567' });
+      expect(result.isNewUser).toBe(false);
+    });
+
     it('F1: stores the canonical E.164 form when creating from a national number', async () => {
       repo.findOne.mockResolvedValue(null);
       repo.create.mockImplementation((data: any) => ({ ...data }));

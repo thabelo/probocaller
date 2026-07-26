@@ -166,6 +166,7 @@ export class UserService {
     let user = variants.length
       ? await this.userRepository.findOne({ where: { phoneNumber: In(variants) } })
       : null;
+    const isNewUser = !user;
     if (!user) {
       const canonical = toE164(phoneNumber);
       // Record who referred this account (drives the lifetime 3% commission paid
@@ -181,7 +182,11 @@ export class UserService {
       await this.assignReferralCode(user);
     }
     const tokens = this.issueTokens(user);
-    return { ...tokens, user: this.userResponse(user) };
+    // The name/email above are placeholders. `isNewUser` is the only signal the
+    // client has to send this account through the profile step and replace them
+    // with something real — without it every account keeps its phone number as
+    // its display name for good.
+    return { ...tokens, isNewUser, user: this.userResponse(user) };
   }
 
   async signup(signupDto: SignupDto) {
