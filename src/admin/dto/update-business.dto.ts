@@ -1,4 +1,4 @@
-import { IsBoolean, IsEmail, IsIn, IsNumber, IsOptional, IsString, IsUrl, Max, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsEmail, IsIn, IsNumber, IsOptional, IsString, IsUrl, Length, Max, MaxLength, Min, ValidateIf } from 'class-validator';
 import { ApiProperty } from '@nestjs/swagger';
 
 // Strict allow-list for admin business profile edits. Any extra field is rejected
@@ -17,8 +17,19 @@ export class AdminUpdateBusinessDto {
   @IsOptional() @IsString() @MaxLength(80)
   registrationNumber?: string;
 
+  // ISO 3166-1 alpha-2, mirroring the Business entity — required for a NEW
+  // registration (derived from the user's phone by the mobile app) but the
+  // admin edit form must be able to view/correct it too.
   @ApiProperty({ required: false })
-  @IsOptional() @IsUrl({ require_protocol: true })
+  @IsOptional() @IsString() @Length(2, 2)
+  country?: string;
+
+  // @IsOptional() only skips validation for null/undefined, not ''. The admin
+  // edit form always sends every field (pre-filled with '' when unset), so
+  // website/contactEmail need an explicit "only validate format when non-empty"
+  // guard or saving a profile with no website/email always 400s.
+  @ApiProperty({ required: false })
+  @ValidateIf((o) => !!o.website) @IsUrl({ require_protocol: true })
   website?: string;
 
   @ApiProperty({ required: false })
@@ -26,7 +37,7 @@ export class AdminUpdateBusinessDto {
   description?: string;
 
   @ApiProperty({ required: false })
-  @IsOptional() @IsEmail()
+  @ValidateIf((o) => !!o.contactEmail) @IsEmail()
   contactEmail?: string;
 
   @ApiProperty({ required: false })
