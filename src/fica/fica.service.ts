@@ -16,10 +16,21 @@ const ALLOWED_MIME = new Set(['application/pdf', 'image/jpeg', 'image/jpg', 'ima
 const MAX_BYTES = 10 * 1024 * 1024;
 
 export const REQUIRED_DOCS: { key: FicaDocType; label: string }[] = [
-  { key: 'id_document',      label: 'ID document or passport (photo)' },
+  // SA KYC needs BOTH sides: the back carries the barcode and issue details a
+  // reviewer checks against the front.
+  { key: 'id_front',         label: 'ID document — front' },
+  { key: 'id_back',          label: 'ID document — back' },
   { key: 'proof_of_address', label: 'Proof of address (utility bill, < 3 months)' },
   { key: 'selfie',           label: 'Selfie holding your ID' },
 ];
+
+/** Still accepted on upload, though no longer requested. See FicaDocType. */
+const LEGACY_DOCS: FicaDocType[] = ['id_document'];
+
+/** A legacy single-slot ID stands in for the front. */
+const SATISFIED_BY: Partial<Record<FicaDocType, FicaDocType[]>> = {
+  id_front: ['id_document'],
+};
 
 const ACTIVE: FicaStatus[] = ['draft', 'pending'];
 
@@ -41,6 +52,18 @@ export class FicaService {
     private readonly documentRepo: Repository<FicaDocument>,
   ) {
     if (!fs.existsSync(this.uploadsRoot)) fs.mkdirSync(this.uploadsRoot, { recursive: true });
+  }
+
+  /**
+   * Whether the uploaded set covers everything KYC needs.
+   *
+   * Public so the rule lives in one place: the auto-advance to "pending" and any
+   * caller checking readiness must not drift apart.
+   */
+  isSubmissionComplete(present: Set<string>): boolean {
+    return REQUIRED_DOCS.every(
+      (r) => present.has(r.key) || (SATISFIED_BY[r.key] ?? []).some((alt) => present.has(alt)),
+    );
   }
 
   getRequirements() {
@@ -74,8 +97,16 @@ export class FicaService {
       order: { createdAt: 'DESC' },
     });
 
-    if (existing && existing.status === 'pending') {
-      throw new ForbiddenException('Your FICA submission is already under review.');
+    // "Under review" is not "decided": until an admin actually verifies, the
+    // person can still fix a typo rather than waiting for a rejection to do it.
+    // Only a verified record is frozen — at that point it is evidence.
+    if (!existing) {
+      const approved = await this.submissionRepo.findOne({
+        where: { userId, status: 'approved' },
+      });
+      if (approved) {
+        throw new ForbiddenException('Your identity is already verified.');
+      }
     }
 
     const target = existing ?? this.submissionRepo.create({ userId, status: 'draft' });
@@ -99,7 +130,8 @@ export class FicaService {
     }
     if (file.size > MAX_BYTES) throw new BadRequestException('File exceeds 10 MB.');
 
-    if (!REQUIRED_DOCS.some((d) => d.key === documentType)) {
+    const accepted = [...REQUIRED_DOCS.map((d) => d.key), ...LEGACY_DOCS];
+    if (!accepted.includes(documentType)) {
       throw new BadRequestException(`Invalid documentType "${documentType}".`);
     }
 
@@ -145,7 +177,7 @@ export class FicaService {
     if (submission.status !== 'draft') return submission;
     const docs = await this.documentRepo.find({ where: { submissionId: submission.id } });
     const present = new Set(docs.map((d) => d.documentType));
-    const allPresent = REQUIRED_DOCS.every((r) => present.has(r.key));
+    const allPresent = this.isSubmissionComplete(present);
     if (allPresent) {
       submission.status = 'pending';
       submission.submittedAt = new Date();
