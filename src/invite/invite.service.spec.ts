@@ -48,6 +48,16 @@ describe('InviteService', () => {
       expect(repo.save.mock.calls[0][0].phoneNumber).toBe('+27821140092');
     });
 
+    /**
+     * Invites are not SA-only. The client sends full E.164, so a non-SA number
+     * must survive normalisation intact — mangling it to +27… would mean the
+     * invite never matches when that person signs up.
+     */
+    it('keeps a non-SA number in its own country code', async () => {
+      await service.record(42, { phoneNumber: '+447911123456' });
+      expect(repo.save.mock.calls[0][0].phoneNumber).toBe('+447911123456');
+    });
+
     it('stamps the inviter own referral code so the link is attributable', async () => {
       await service.record(42, { phoneNumber: '0821140092' });
       expect(repo.save.mock.calls[0][0].referralCode).toBe('PROBO-ME');
