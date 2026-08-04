@@ -33,6 +33,24 @@ export function isSupportedNetwork(code: string): boolean {
 }
 
 /**
+ * Airtime is a South-Africa-only product — the operators above and the ZAR limits
+ * are all SA — so the recipient line must be South African. Accepts the three
+ * forms a user can type: +27…, 27… and the national trunk form 0….
+ *
+ * SA mobile subscriber numbers are 9 digits after the country code and start with
+ * 6, 7 or 8 (06x/07x/08x nationally).
+ */
+export function isSouthAfricanMsisdn(phoneNumber: string): boolean {
+  const digits = String(phoneNumber || '').replace(/\D/g, '');
+  const national = digits.startsWith('27')
+    ? digits.slice(2)
+    : digits.startsWith('0')
+      ? digits.slice(1)
+      : digits;
+  return /^[678]\d{8}$/.test(national);
+}
+
+/**
  * Default airtime provider backed by Reloadly (https://reloadly.com) — the
  * standard airtime/top-up API with SA operator coverage. Reads credentials from
  * the environment; if they're not set, it fails cleanly so the feature stays

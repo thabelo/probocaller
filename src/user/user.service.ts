@@ -7,6 +7,7 @@ import { LoginDto } from './dto/login.dto';
 import { SignupDto } from './dto/signup.dto';
 import { JwtService } from '@nestjs/jwt';
 import { TransactionService } from '../transaction/transaction.service';
+import { InviteService } from '../invite/invite.service';
 import { ReportService } from '../report/report.service';
 import { phoneNumberVariants, toE164 } from '../auth/phone-variants';
 import { normalisePhoneNumber } from '../common/phone';
@@ -37,7 +38,21 @@ export class UserService {
     private jwtService: JwtService,
     private readonly transactionService: TransactionService,
     private readonly reportService: ReportService,
+    private readonly inviteService: InviteService,
   ) {}
+
+  /**
+   * Close the loop on whoever invited this number, so the admin view can show
+   * conversions rather than only sends. Never allowed to break a signup — an
+   * invite is bookkeeping, and a new account matters more than its provenance.
+   */
+  private async markInviteAccepted(canonical: string): Promise<void> {
+    try {
+      await this.inviteService.markAccepted(canonical);
+    } catch {
+      /* non-fatal */
+    }
+  }
 
   private issueTokens(user: User) {
     const payload = { sub: user.id, phoneNumber: user.phoneNumber };
@@ -180,6 +195,7 @@ export class UserService {
       });
       await this.userRepository.save(user);
       await this.assignReferralCode(user);
+      await this.markInviteAccepted(canonical);
     }
     const tokens = this.issueTokens(user);
     // The name/email above are placeholders. `isNewUser` is the only signal the
@@ -214,6 +230,7 @@ export class UserService {
       });
       await this.userRepository.save(user);
       await this.assignReferralCode(user);
+      await this.markInviteAccepted(canonical);
     }
     const tokens = this.issueTokens(user);
     return { ...tokens, user: this.userResponse(user) };

@@ -3,13 +3,14 @@ import { Entity, Column, PrimaryGeneratedColumn, CreateDateColumn, UpdateDateCol
 export type AirtimeStatus = 'pending' | 'delivered' | 'failed';
 
 /**
- * Airtime redemption lifecycle (fulfilled by an external airtime provider):
+ * Airtime redemption lifecycle (processed by a ProboCaller admin):
  *   pending    → created, wallet already debited ("reserved")
- *   pending    → delivered  (provider confirmed the top-up)
- *   pending    → failed     (provider rejected → wallet refunded)
+ *   pending    → delivered  (admin confirmed the manual top-up)
+ *   pending    → failed     (admin rejected → wallet refunded)
  *
- * Unlike bank withdrawals (admin-approved), airtime is fulfilled in real time
- * by the provider, so the debit is refunded automatically on provider failure.
+ * Requests are processed by a ProboCaller admin (same as bank withdrawals): the
+ * wallet is debited when the request is queued, and an admin either confirms the
+ * manual top-up or rejects it, which refunds the user.
  */
 @Entity('airtime_payouts')
 export class AirtimePayout {
@@ -35,9 +36,16 @@ export class AirtimePayout {
   @Column({ default: 'pending' })
   status: AirtimeStatus;
 
-  /** Provider transaction reference once delivered. */
+  /** Operator/receipt reference the admin records when confirming the top-up. */
   @Column({ nullable: true, type: 'text' })
   providerRef: string;
+
+  /** Admin who resolved the request (delivered or rejected it). */
+  @Column({ nullable: true })
+  reviewedBy: number;
+
+  @Column({ nullable: true, type: 'timestamp' })
+  reviewedAt: Date;
 
   /** Reason string when status = failed. */
   @Column({ nullable: true, type: 'text' })

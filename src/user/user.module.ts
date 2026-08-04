@@ -9,6 +9,7 @@ import { ExternalLookupRateLimiter } from './external-lookup-rate-limiter';
 import { JwtStrategy } from '../auth/jwt.strategy';
 import { BusinessModule } from '../business/business.module';
 import { TransactionModule } from '../transaction/transaction.module';
+import { InviteModule } from '../invite/invite.module';
 import { ReportModule } from '../report/report.module';
 import { DataBrokerModule } from '../data-broker/data-broker.module';
 import { LookupModule } from '../lookup/lookup.module';
@@ -27,6 +28,7 @@ import { Setting } from '../config/setting.entity';
     forwardRef(() => BusinessModule),
     TransactionModule,
     ReportModule,
+    InviteModule,
     forwardRef(() => DataBrokerModule),
     LookupModule,
   ],

@@ -63,6 +63,7 @@ import { SpamReportModule } from './spam-report/spam-report.module';
 import { ReportedSms } from './reported-sms/reported-sms.entity';
 import { ReportedSmsModule } from './reported-sms/reported-sms.module';
 import { FeedbackModule } from './feedback/feedback.module';
+import { InviteModule } from './invite/invite.module';
 import { ErrorLogModule } from './error-log/error-log.module';
 import { AuditModule } from './audit/audit.module';
 import { RetentionModule } from './retention/retention.module';
@@ -182,6 +183,7 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
     SpamReportModule,
     ReportedSmsModule,
     FeedbackModule,
+    InviteModule,
     ErrorLogModule,
     AuditModule,
     RetentionModule,

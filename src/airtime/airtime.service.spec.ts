@@ -46,6 +46,30 @@ describe('AirtimeService', () => {
 
   const dto = { amount: 20, phoneNumber: '0821234567', network: 'MTN' };
 
+  /**
+   * Airtime is a South-African-only product: the networks we can top up (Vodacom,
+   * MTN, Cell C, Telkom) and the ZAR limits are all SA. The recipient number must
+   * therefore be a South African line — a +234 or +44 number can never be served,
+   * so it is rejected before the wallet is touched.
+   */
+  describe('South Africa only', () => {
+    it('rejects a recipient number outside South Africa', async () => {
+      manager.findOne.mockResolvedValue(buildUser(500));
+      await expect(service.redeem(1, { ...dto, phoneNumber: '+2348012345678' }))
+        .rejects.toThrow(/South Africa/i);
+      // Rejected before any wallet write.
+      expect(manager.save).not.toHaveBeenCalled();
+    });
+
+    it('accepts +27, 0-prefixed and 27-prefixed South African numbers', async () => {
+      manager.findOne.mockResolvedValue(buildUser(500));
+      provider.sendAirtime.mockResolvedValue({ providerRef: 'r1', status: 'delivered' });
+      for (const phoneNumber of ['+27821234567', '0821234567', '27821234567']) {
+        await expect(service.redeem(1, { ...dto, phoneNumber })).resolves.toBeTruthy();
+      }
+    });
+  });
+
   it('rejects an unsupported network', async () => {
     await expect(service.redeem(1, { ...dto, network: 'SAFARICOM' })).rejects.toThrow(/network/i);
     expect(manager.save).not.toHaveBeenCalled();
@@ -105,5 +129,73 @@ describe('AirtimeService', () => {
     provider.sendAirtime.mockResolvedValue({ providerRef: 'x', status: 'delivered' });
     await service.redeem(1, dto);
     expect(manager.findOne).toHaveBeenCalled();
+  });
+
+  /**
+   * Airtime requests are processed by a ProboCaller admin, not an external
+   * provider: redeem reserves the money and queues the request, and an admin
+   * later confirms the manual top-up or rejects it (refunding the user). This is
+   * the same shape as bank withdrawals.
+   */
+  describe('admin-processed queue', () => {
+    it('queues the request as pending without calling any provider', async () => {
+      manager.findOne.mockResolvedValue(buildUser(500));
+
+      const payout = await service.redeem(1, dto);
+
+      expect(payout.status).toBe('pending');
+      expect(provider.sendAirtime).not.toHaveBeenCalled();
+    });
+
+    it('still debits the wallet up front so the money cannot be spent twice', async () => {
+      const user = buildUser(500);
+      manager.findOne.mockResolvedValue(user);
+
+      await service.redeem(1, { ...dto, amount: 20 });
+
+      expect(user.walletBalance).toBe(480);
+      expect(tx.log).toHaveBeenCalledWith(
+        1, 'AIRTIME_REDEEMED', -20, expect.any(String), undefined, manager,
+      );
+    });
+
+    it('lists requests for an admin, newest first, filtered by status', async () => {
+      await service.listAll('pending');
+      expect(repo.find).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { status: 'pending' }, order: { createdAt: 'DESC' } }),
+      );
+    });
+
+    it('marks a queued request delivered with the admin top-up reference', async () => {
+      const payout = { id: 7, userId: 1, amount: 20, status: 'pending' };
+      manager.findOne.mockResolvedValue(payout);
+
+      const out = await service.review(99, 7, 'delivered', 'MTN receipt 4471');
+
+      expect(out.status).toBe('delivered');
+      expect(out.providerRef).toBe('MTN receipt 4471');
+    });
+
+    it('refunds the user when an admin rejects a queued request', async () => {
+      const payout = { id: 7, userId: 1, amount: 20, status: 'pending' };
+      const user = buildUser(480);
+      manager.findOne.mockImplementation(async (entity: any) =>
+        entity === User ? user : payout,
+      );
+
+      const out = await service.review(99, 7, 'failed', 'No operator coverage');
+
+      expect(out.status).toBe('failed');
+      expect(out.failureReason).toBe('No operator coverage');
+      expect(user.walletBalance).toBe(500);
+      expect(tx.log).toHaveBeenCalledWith(
+        1, 'AIRTIME_REFUNDED', 20, expect.stringContaining('refunded'), undefined, manager,
+      );
+    });
+
+    it('refuses to review a request that is no longer pending', async () => {
+      manager.findOne.mockResolvedValue({ id: 7, userId: 1, amount: 20, status: 'delivered' });
+      await expect(service.review(99, 7, 'failed', 'too late')).rejects.toThrow(/pending/i);
+    });
   });
 });

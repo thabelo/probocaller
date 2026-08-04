@@ -38,6 +38,12 @@ describe('canonical ENTITIES list (schema source of truth)', () => {
     expect(names).toEqual(expect.arrayContaining(['Feedback', 'AdminInvite', 'AuditLog', 'UserConsent', 'ErrorLog']));
   });
 
+  // Person-to-person invites: the referral chain's origin record. Distinct from
+  // AdminInvite, which grants an admin role.
+  it('registers the Invite table', () => {
+    expect(names).toContain('Invite');
+  });
+
   it('has no duplicate entity classes', () => {
     expect(new Set(names).size).toBe(names.length);
   });

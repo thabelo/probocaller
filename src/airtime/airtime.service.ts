@@ -1,12 +1,12 @@
 import {
-  BadRequestException, Inject, Injectable, NotFoundException,
+  BadRequestException, Injectable, NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, DataSource } from 'typeorm';
-import { AirtimePayout } from './airtime.entity';
+import { AirtimePayout, AirtimeStatus } from './airtime.entity';
 import { User } from '../user/user.entity';
 import { TransactionService } from '../transaction/transaction.service';
-import { AIRTIME_PROVIDER, AirtimeProvider, SA_NETWORKS, isSupportedNetwork } from './airtime.provider';
+import { SA_NETWORKS, isSupportedNetwork, isSouthAfricanMsisdn } from './airtime.provider';
 
 export interface RedeemAirtimeInput {
   amount: number;
@@ -22,8 +22,6 @@ export class AirtimeService {
     @InjectRepository(AirtimePayout)
     private readonly repo: Repository<AirtimePayout>,
     private readonly tx: TransactionService,
-    @Inject(AIRTIME_PROVIDER)
-    private readonly provider: AirtimeProvider,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -39,6 +37,74 @@ export class AirtimeService {
     return this.repo.find({ where: { userId }, order: { createdAt: 'DESC' }, take: 100 });
   }
 
+  /** [admin] Every request, newest first, optionally filtered by status. */
+  listAll(status?: AirtimeStatus) {
+    const where = status ? { status } : {};
+    return this.repo.find({ where, order: { createdAt: 'DESC' }, take: 500 });
+  }
+
+  /**
+   * [admin] Resolve a queued request.
+   *  - 'delivered' → the admin topped the number up manually; `reference` records
+   *    the operator receipt. The debit taken at redeem() stands.
+   *  - 'failed'    → refund the reserved amount and record why.
+   *
+   * The payout row is locked for the whole transaction so two admins clicking at
+   * once can't both refund (or deliver-and-refund) the same request.
+   */
+  async review(
+    adminUserId: number,
+    id: number,
+    decision: 'delivered' | 'failed',
+    reference?: string,
+  ): Promise<AirtimePayout> {
+    return this.dataSource.transaction(async (manager) => {
+      const payout = await manager.findOne(AirtimePayout, {
+        where: { id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!payout) throw new NotFoundException('Airtime request not found.');
+      if (payout.status !== 'pending') {
+        throw new BadRequestException(
+          `Only pending airtime requests can be reviewed (current: ${payout.status}).`,
+        );
+      }
+
+      payout.status = decision;
+      payout.reviewedBy = adminUserId;
+      payout.reviewedAt = new Date();
+
+      if (decision === 'delivered') {
+        if (reference) payout.providerRef = reference;
+        await manager.save(AirtimePayout, payout);
+        await this.tx.log(
+          payout.userId, 'AIRTIME_DELIVERED', 0,
+          `Airtime R${payout.amount} to ${payout.phoneNumber} delivered${reference ? ` — ${reference}` : ''}`,
+          undefined, manager,
+        );
+        return payout;
+      }
+
+      payout.failureReason = reference || 'Rejected by admin.';
+      await manager.save(AirtimePayout, payout);
+
+      const user = await manager.findOne(User, {
+        where: { id: payout.userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (user) {
+        user.walletBalance = round4(Number(user.walletBalance) + Number(payout.amount));
+        await manager.save(user);
+      }
+      await this.tx.log(
+        payout.userId, 'AIRTIME_REFUNDED', Number(payout.amount),
+        `Airtime R${payout.amount} rejected — refunded: ${payout.failureReason}`,
+        undefined, manager,
+      );
+      return payout;
+    });
+  }
+
   async redeem(userId: number, input: RedeemAirtimeInput): Promise<AirtimePayout> {
     const amount = round4(Number(input.amount));
     const network = String(input.network || '').toUpperCase();
@@ -48,6 +114,11 @@ export class AirtimeService {
       throw new BadRequestException(`Unsupported network. Choose one of: ${SA_NETWORKS.map((n) => n.label).join(', ')}.`);
     }
     if (!phoneNumber) throw new BadRequestException('A recipient phone number is required.');
+    // South Africa only: we can top up SA operators in ZAR and nothing else, so
+    // reject a foreign line here — before the wallet is debited.
+    if (!isSouthAfricanMsisdn(phoneNumber)) {
+      throw new BadRequestException('Airtime is available for South African numbers only.');
+    }
     if (!(amount >= this.min)) throw new BadRequestException(`Minimum airtime is R${this.min}.`);
     if (amount > this.max) throw new BadRequestException(`Maximum airtime is R${this.max}.`);
 
@@ -70,29 +141,9 @@ export class AirtimeService {
       return saved;
     });
 
-    // 2) Fulfil via the external provider — outside the DB lock so we never
-    //    hold a row lock across a network call.
-    try {
-      const result = await this.provider.sendAirtime({ phoneNumber, amount, network });
-      payout.status = result.status === 'delivered' ? 'delivered' : 'pending';
-      payout.providerRef = result.providerRef;
-      await this.repo.save(payout);
-      return payout;
-    } catch (err: any) {
-      // 3) Provider failed → refund the reserved amount and mark the payout failed.
-      const reason = err?.message || 'Airtime provider error.';
-      await this.dataSource.transaction(async (manager) => {
-        const user = await manager.findOne(User, { where: { id: userId }, lock: { mode: 'pessimistic_write' } });
-        if (user) {
-          user.walletBalance = round4(Number(user.walletBalance) + amount);
-          await manager.save(user);
-        }
-        payout.status = 'failed';
-        payout.failureReason = reason;
-        await manager.save(AirtimePayout, payout);
-        await this.tx.log(userId, 'AIRTIME_REFUNDED', amount, `Airtime R${amount} failed — refunded`, undefined, manager);
-      });
-      throw new BadRequestException(`Airtime top-up failed: ${reason} Your balance was refunded.`);
-    }
+    // Queued for a ProboCaller admin to process. The wallet is already debited
+    // (reserved) above, so the balance can't be spent twice while the request
+    // waits; an admin rejection refunds it in review().
+    return payout;
   }
 }

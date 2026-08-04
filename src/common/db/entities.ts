@@ -29,6 +29,7 @@ import { Conversation } from '../../messaging/conversation.entity';
 import { Message } from '../../messaging/message.entity';
 import { CallScreening } from '../../screening/call-screening.entity';
 import { Feedback } from '../../feedback/feedback.entity';
+import { Invite } from '../../invite/invite.entity';
 import { AdminInvite } from '../../admin/admin-invite.entity';
 import { AuditLog } from '../../audit/audit-log.entity';
 import { UserConsent } from '../../consent/user-consent.entity';
@@ -78,6 +79,7 @@ export const ENTITIES = [
   Message,
   CallScreening,
   Feedback,
+  Invite,
   AdminInvite,
   AuditLog,
   UserConsent,

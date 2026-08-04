@@ -6,6 +6,7 @@ import { UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { UserService } from './user.service';
 import { User } from './user.entity';
 import { TransactionService } from '../transaction/transaction.service';
+import { InviteService } from '../invite/invite.service';
 import { ReportService } from '../report/report.service';
 
 const mockUser = (overrides = {}): User =>
@@ -32,7 +33,10 @@ describe('UserService', () => {
   let fakeManager: { findOne: jest.Mock; save: jest.Mock; count: jest.Mock };
   let dataSource: { transaction: jest.Mock };
 
+  let inviteService: any;
+
   beforeEach(async () => {
+    inviteService = { markAccepted: jest.fn(async () => null) };
     tx = {
       log: jest.fn().mockResolvedValue(undefined),
       sumByUserAndType: jest.fn().mockResolvedValue(0),
@@ -53,6 +57,7 @@ describe('UserService', () => {
         { provide: JwtService, useFactory: mockJwt },
         { provide: TransactionService, useValue: tx },
         { provide: ReportService, useValue: { getReportSummary: jest.fn().mockResolvedValue(null) } },
+        { provide: InviteService, useValue: inviteService },
         { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
@@ -531,8 +536,10 @@ describe('UserService', () => {
 describe('UserService — business opt-in (free, explicit)', () => {
   let service: UserService;
   let repo: ReturnType<typeof mockRepo>;
+  let inviteService: any;
 
   beforeEach(async () => {
+    inviteService = { markAccepted: jest.fn(async () => null) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UserService,
@@ -540,6 +547,7 @@ describe('UserService — business opt-in (free, explicit)', () => {
         { provide: JwtService, useFactory: mockJwt },
         { provide: TransactionService, useValue: { log: jest.fn(), sumByUserAndType: jest.fn().mockResolvedValue(0) } },
         { provide: ReportService, useValue: { getReportSummary: jest.fn().mockResolvedValue(null) } },
+        { provide: InviteService, useValue: inviteService },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
       ],
     }).compile();
@@ -618,6 +626,7 @@ describe('UserService.findOrCreatePlaceholder — number-format matching', () =>
         { provide: JwtService, useFactory: mockJwt },
         { provide: TransactionService, useValue: { log: jest.fn(), sumByUserAndType: jest.fn() } },
         { provide: ReportService, useValue: {} },
+        { provide: InviteService, useValue: { markAccepted: jest.fn(async () => null) } },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
       ],
     }).compile();
@@ -684,5 +693,48 @@ describe('UserService.findOrCreatePlaceholder — number-format matching', () =>
 
     expect(created.id).toBe(99);
     expect(repo.save).toHaveBeenCalled();
+  });
+});
+
+/**
+ * An invite is only useful to the admin view if it can show whether the person
+ * actually joined. Signup is the moment that becomes knowable, so it closes the
+ * loop on whoever invited that number.
+ */
+describe('UserService — signup closes the loop on an invite', () => {
+  let service: UserService;
+  let repo: any;
+  let inviteService: any;
+
+  beforeEach(async () => {
+    inviteService = { markAccepted: jest.fn(async () => null) };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        UserService,
+        { provide: getRepositoryToken(User), useFactory: mockRepo },
+        { provide: JwtService, useFactory: mockJwt },
+        { provide: TransactionService, useValue: { creditSignupBonus: jest.fn() } },
+        { provide: ReportService, useValue: { getReportSummary: jest.fn().mockResolvedValue(null) } },
+        { provide: InviteService, useValue: inviteService },
+        { provide: DataSource, useValue: { createQueryRunner: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(UserService);
+    repo = module.get(getRepositoryToken(User));
+  });
+
+  it('marks the invite accepted when a brand-new number signs up', async () => {
+    repo.findOne.mockResolvedValue(null);
+    repo.create.mockImplementation((d: any) => ({ ...d }));
+    repo.save.mockImplementation(async (u: any) => ({ id: 77, ...u }));
+    await service.login({ phoneNumber: '0821140092' });
+    expect(inviteService.markAccepted).toHaveBeenCalledWith('+27821140092');
+  });
+
+  /** A returning user was not just invited — nothing to close. */
+  it('does not touch invites when an existing user logs in', async () => {
+    repo.findOne.mockResolvedValue(mockUser());
+    await service.login({ phoneNumber: '0821140092' });
+    expect(inviteService.markAccepted).not.toHaveBeenCalled();
   });
 });
