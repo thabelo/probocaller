@@ -184,6 +184,34 @@ export class FicaService {
     return this.submissionRepo.save(sub);
   }
 
+  /**
+   * A user reading back one of their OWN documents, for in-app preview.
+   *
+   * Separate from readFileBuffer (admin-only, no ownership test) because these
+   * files are ID documents, proof of address and a selfie holding an ID — enough
+   * to impersonate someone. Ownership is proven from the parent submission
+   * BEFORE touching the disk, and a missing submission is treated as refusal
+   * rather than as permission.
+   */
+  async readOwnFileBuffer(
+    userId: number,
+    documentId: number,
+  ): Promise<{ buffer: Buffer; mime: string; name: string }> {
+    const doc = await this.documentRepo.findOne({ where: { id: documentId } });
+    if (!doc) throw new NotFoundException('Document not found');
+
+    const submission = await this.submissionRepo.findOne({
+      where: { id: doc.submissionId },
+    });
+    if (!submission || submission.userId !== userId) {
+      throw new ForbiddenException('Not your document');
+    }
+
+    const abs = path.join(this.uploadsRoot, doc.filePath);
+    if (!fs.existsSync(abs)) throw new NotFoundException('File missing on disk');
+    return { buffer: fs.readFileSync(abs), mime: doc.mimeType, name: doc.originalName };
+  }
+
   async readFileBuffer(documentId: number): Promise<{ buffer: Buffer; mime: string; name: string }> {
     const doc = await this.documentRepo.findOne({ where: { id: documentId } });
     if (!doc) throw new NotFoundException('Document not found');

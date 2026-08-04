@@ -1,7 +1,9 @@
 import {
   Controller, Get, Post, Param, Body, UseGuards, Request, ParseIntPipe,
-  UseInterceptors, UploadedFile,
+  UseInterceptors, UploadedFile, Res,
 } from '@nestjs/common';
+import { Response } from 'express';
+import { sanitiseHeaderFilename } from '../common/sanitise-filename';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { AuthGuard } from '@nestjs/passport';
@@ -23,6 +25,27 @@ export class SubmitFicaDto {
 @Controller('fica')
 export class FicaController {
   constructor(private readonly fica: FicaService) {}
+
+  /**
+   * Stream back one of the caller's OWN documents, so the app can show what was
+   * uploaded rather than a bare "Uploaded" tick. Ownership is enforced in the
+   * service — these are ID documents, and the admin download deliberately has no
+   * such check because it sits behind AdminGuard.
+   */
+  @Get('documents/:id/file')
+  @ApiOperation({ summary: 'Preview one of your own uploaded FICA documents' })
+  async ownFile(
+    @Request() req,
+    @Param('id', ParseIntPipe) id: number,
+    @Res() res: Response,
+  ) {
+    const { buffer, mime, name } = await this.fica.readOwnFileBuffer(req.user.userId, id);
+    // originalName is user-supplied at upload time; unsanitised CR/LF or quotes
+    // in it can split or inject response headers.
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Content-Disposition', `inline; filename="${sanitiseHeaderFilename(name)}"`);
+    res.send(buffer);
+  }
 
   @Get('requirements')
   @ApiOperation({ summary: 'List required FICA documents' })
