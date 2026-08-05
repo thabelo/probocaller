@@ -5,6 +5,7 @@ import { BadRequestException } from '@nestjs/common';
 import { TransferService } from './transfer.service';
 import { PendingTransfer } from './pending-transfer.entity';
 import { User } from '../user/user.entity';
+import { Transaction } from '../transaction/transaction.entity';
 
 /**
  * Sending to someone who is not on ProboCaller used to be refused outright
@@ -44,6 +45,7 @@ describe('TransferService — sending to a non-user', () => {
         TransferService,
         { provide: getRepositoryToken(User), useValue: userRepo },
         { provide: getRepositoryToken(PendingTransfer), useValue: { find: jest.fn(), save: jest.fn() } },
+        { provide: getRepositoryToken(Transaction), useValue: { find: jest.fn(async () => []) } },
         { provide: DataSource, useValue: { transaction: (cb: any) => cb(manager) } },
       ],
     }).compile();

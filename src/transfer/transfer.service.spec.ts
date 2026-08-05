@@ -4,6 +4,7 @@ import { DataSource } from 'typeorm';
 import { TransferService } from './transfer.service';
 import { User } from '../user/user.entity';
 import { Transaction } from '../transaction/transaction.entity';
+import { PendingTransfer } from './pending-transfer.entity';
 
 /**
  * Security regression — Backend C3.
@@ -52,6 +53,8 @@ describe('TransferService — wallet lock hardening (C3)', () => {
       providers: [
         TransferService,
         { provide: getRepositoryToken(User), useValue: userRepo },
+        { provide: getRepositoryToken(PendingTransfer), useValue: { find: jest.fn(async () => []), save: jest.fn() } },
+        { provide: getRepositoryToken(Transaction), useValue: { find: jest.fn(async () => []) } },
         { provide: DataSource, useValue: dataSource },
       ],
     }).compile();

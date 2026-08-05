@@ -4,6 +4,7 @@ import { DataSource } from 'typeorm';
 import { TransferService } from './transfer.service';
 import { PendingTransfer } from './pending-transfer.entity';
 import { User } from '../user/user.entity';
+import { Transaction } from '../transaction/transaction.entity';
 
 /**
  * Held money only means anything if it actually reaches the person. Signup is
@@ -30,6 +31,7 @@ describe('TransferService.claimPendingFor', () => {
         TransferService,
         { provide: getRepositoryToken(User), useValue: { findOne: jest.fn() } },
         { provide: getRepositoryToken(PendingTransfer), useValue: pendingRepo },
+        { provide: getRepositoryToken(Transaction), useValue: { find: jest.fn(async () => []) } },
         { provide: DataSource, useValue: { transaction: (cb: any) => cb(manager) } },
       ],
     }).compile();

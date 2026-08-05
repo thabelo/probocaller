@@ -2,7 +2,7 @@ import {
   BadRequestException, ForbiddenException, Injectable, NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository, Not } from 'typeorm';
+import { DataSource, Repository, Not, In } from 'typeorm';
 import { User } from '../user/user.entity';
 import { isRegisteredAccount } from '../user/registered-account';
 import { PendingTransfer } from './pending-transfer.entity';
@@ -12,13 +12,99 @@ import { toE164 } from '../auth/phone-variants';
 const PENDING_TRANSFER_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 import { Transaction } from '../transaction/transaction.entity';
 
+export type AdminTransferStatus = 'completed' | 'held' | 'claimed' | 'expired';
+
+export type AdminTransferRow = {
+  id: string;
+  senderUserId: number;
+  senderName?: string;
+  senderPhone?: string;
+  /** Empty for a completed transfer: the ledger records the pair, not a number. */
+  recipientPhone: string;
+  amount: number;
+  status: AdminTransferStatus;
+  note?: string;
+  createdAt: Date;
+  expiresAt?: Date;
+  claimedAt?: Date | null;
+};
+
 @Injectable()
 export class TransferService {
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    @InjectRepository(PendingTransfer)
+    private readonly pendingRepo: Repository<PendingTransfer>,
+    @InjectRepository(Transaction)
+    private readonly txRepo: Repository<Transaction>,
     private readonly ds: DataSource,
   ) {}
+
+  /**
+   * Every person-to-person movement, for admin oversight.
+   *
+   * Held money is the reason this exists: it sits against a phone number with no
+   * account behind it, so it appears in nobody's wallet and nobody's statement.
+   * Without a view of it, an expiring hold or a mistyped number is invisible.
+   *
+   * Completed transfers are recorded as Transactions and held ones as
+   * PendingTransfers, so the two are merged here rather than in the UI.
+   */
+  async listForAdmin(): Promise<AdminTransferRow[]> {
+    const [holds, sends] = await Promise.all([
+      this.pendingRepo.find(),
+      this.txRepo.find({ where: { type: 'P2P_SEND' } }),
+    ]);
+
+    const senderIds = [
+      ...new Set([
+        ...holds.map((h) => h.senderUserId),
+        ...sends.map((t) => t.userId),
+      ]),
+    ].filter((id) => id != null);
+
+    const senders = senderIds.length
+      ? await this.userRepo.find({ where: { id: In(senderIds) } })
+      : [];
+    const byId = new Map(senders.map((u) => [u.id, u]));
+
+    const decorate = (userId: number) => {
+      const u = byId.get(userId);
+      return { senderUserId: userId, senderName: u?.name, senderPhone: u?.phoneNumber };
+    };
+
+    const heldRows: AdminTransferRow[] = holds.map((h) => ({
+      id: `pending-${h.id}`,
+      ...decorate(h.senderUserId),
+      recipientPhone: h.recipientPhone,
+      amount: Number(h.amount),
+      // 'pending' is the row's own word for it; 'held' is what it means to a
+      // person reading the list.
+      status: h.status === 'pending' ? 'held' : (h.status as AdminTransferStatus),
+      note: h.note ?? undefined,
+      createdAt: h.createdAt,
+      expiresAt: h.expiresAt,
+      claimedAt: h.claimedAt ?? null,
+    }));
+
+    const sentRows: AdminTransferRow[] = sends.map((t) => ({
+      id: `tx-${t.id}`,
+      ...decorate(t.userId),
+      recipientPhone: '',
+      // Stored as a negative debit against the sender; shown as the amount that
+      // moved, since a minus sign here would read as a refund.
+      amount: Math.abs(Number(t.amount)),
+      status: 'completed',
+      note: t.description ?? undefined,
+      createdAt: t.createdAt,
+      claimedAt: null,
+    }));
+
+    return [...heldRows, ...sentRows].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+  }
 
   /**
    * Atomic P2P transfer.  Deducts from sender, credits recipient, logs both
