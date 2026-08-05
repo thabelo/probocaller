@@ -7,6 +7,7 @@ import { UserService } from './user.service';
 import { User } from './user.entity';
 import { TransactionService } from '../transaction/transaction.service';
 import { InviteService } from '../invite/invite.service';
+import { TransferService } from '../transfer/transfer.service';
 import { ReportService } from '../report/report.service';
 
 const mockUser = (overrides = {}): User =>
@@ -34,9 +35,11 @@ describe('UserService', () => {
   let dataSource: { transaction: jest.Mock };
 
   let inviteService: any;
+  let transferService: any;
 
   beforeEach(async () => {
     inviteService = { markAccepted: jest.fn(async () => null) };
+    transferService = { claimPendingFor: jest.fn(async () => ({ claimed: 0, total: 0 })) };
     tx = {
       log: jest.fn().mockResolvedValue(undefined),
       sumByUserAndType: jest.fn().mockResolvedValue(0),
@@ -58,6 +61,7 @@ describe('UserService', () => {
         { provide: TransactionService, useValue: tx },
         { provide: ReportService, useValue: { getReportSummary: jest.fn().mockResolvedValue(null) } },
         { provide: InviteService, useValue: inviteService },
+        { provide: TransferService, useValue: transferService },
         { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
@@ -537,9 +541,11 @@ describe('UserService — business opt-in (free, explicit)', () => {
   let service: UserService;
   let repo: ReturnType<typeof mockRepo>;
   let inviteService: any;
+  let transferService: any;
 
   beforeEach(async () => {
     inviteService = { markAccepted: jest.fn(async () => null) };
+    transferService = { claimPendingFor: jest.fn(async () => ({ claimed: 0, total: 0 })) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UserService,
@@ -548,6 +554,7 @@ describe('UserService — business opt-in (free, explicit)', () => {
         { provide: TransactionService, useValue: { log: jest.fn(), sumByUserAndType: jest.fn().mockResolvedValue(0) } },
         { provide: ReportService, useValue: { getReportSummary: jest.fn().mockResolvedValue(null) } },
         { provide: InviteService, useValue: inviteService },
+        { provide: TransferService, useValue: transferService },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
       ],
     }).compile();
@@ -627,6 +634,7 @@ describe('UserService.findOrCreatePlaceholder — number-format matching', () =>
         { provide: TransactionService, useValue: { log: jest.fn(), sumByUserAndType: jest.fn() } },
         { provide: ReportService, useValue: {} },
         { provide: InviteService, useValue: { markAccepted: jest.fn(async () => null) } },
+        { provide: TransferService, useValue: { claimPendingFor: jest.fn(async () => ({ claimed: 0, total: 0 })) } },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
       ],
     }).compile();
@@ -705,9 +713,11 @@ describe('UserService — signup closes the loop on an invite', () => {
   let service: UserService;
   let repo: any;
   let inviteService: any;
+  let transferService: any;
 
   beforeEach(async () => {
     inviteService = { markAccepted: jest.fn(async () => null) };
+    transferService = { claimPendingFor: jest.fn(async () => ({ claimed: 0, total: 0 })) };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         UserService,
@@ -716,6 +726,7 @@ describe('UserService — signup closes the loop on an invite', () => {
         { provide: TransactionService, useValue: { creditSignupBonus: jest.fn() } },
         { provide: ReportService, useValue: { getReportSummary: jest.fn().mockResolvedValue(null) } },
         { provide: InviteService, useValue: inviteService },
+        { provide: TransferService, useValue: transferService },
         { provide: DataSource, useValue: { createQueryRunner: jest.fn() } },
       ],
     }).compile();
@@ -732,6 +743,18 @@ describe('UserService — signup closes the loop on an invite', () => {
   });
 
   /** A returning user was not just invited — nothing to close. */
+  /**
+   * Money sent to them before they joined is held against their number; signup
+   * is the moment it can finally land.
+   */
+  it('claims money held for that number when a brand-new user signs up', async () => {
+    repo.findOne.mockResolvedValue(null);
+    repo.create.mockImplementation((d: any) => ({ ...d }));
+    repo.save.mockImplementation(async (u: any) => ({ id: 77, ...u }));
+    await service.login({ phoneNumber: '0821140092' });
+    expect(transferService.claimPendingFor).toHaveBeenCalledWith(expect.any(Number), '+27821140092');
+  });
+
   it('does not touch invites when an existing user logs in', async () => {
     repo.findOne.mockResolvedValue(mockUser());
     await service.login({ phoneNumber: '0821140092' });

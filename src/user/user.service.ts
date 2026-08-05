@@ -8,6 +8,7 @@ import { SignupDto } from './dto/signup.dto';
 import { JwtService } from '@nestjs/jwt';
 import { TransactionService } from '../transaction/transaction.service';
 import { InviteService } from '../invite/invite.service';
+import { TransferService } from '../transfer/transfer.service';
 import { ReportService } from '../report/report.service';
 import { phoneNumberVariants, toE164 } from '../auth/phone-variants';
 import { normalisePhoneNumber } from '../common/phone';
@@ -30,6 +31,9 @@ function parsePhone(raw: string): { phone: string; country: string; code: string
   return { phone: e164, country: 'za', code: '27', phoneLocal: local };
 }
 
+/** One request must not be able to ask about a whole phonebook. */
+const CHECK_REGISTERED_MAX = 1000;
+
 @Injectable()
 export class UserService {
   constructor(
@@ -39,6 +43,7 @@ export class UserService {
     private readonly transactionService: TransactionService,
     private readonly reportService: ReportService,
     private readonly inviteService: InviteService,
+    private readonly transferService: TransferService,
   ) {}
 
   /**
@@ -46,6 +51,19 @@ export class UserService {
    * conversions rather than only sends. Never allowed to break a signup — an
    * invite is bookkeeping, and a new account matters more than its provenance.
    */
+  /**
+   * Money sent to this number before the account existed is held rather than
+   * credited to a placeholder. Signup is when it can finally land. Never allowed
+   * to break a signup — a failed sweep leaves the hold in place to retry.
+   */
+  private async claimHeldMoney(userId: number, canonical: string): Promise<void> {
+    try {
+      await this.transferService.claimPendingFor(userId, canonical);
+    } catch {
+      /* non-fatal — the hold stays pending */
+    }
+  }
+
   private async markInviteAccepted(canonical: string): Promise<void> {
     try {
       await this.inviteService.markAccepted(canonical);
@@ -193,9 +211,13 @@ export class UserService {
         name: canonical,
         ...(referredBy && { referredBy }),
       });
-      await this.userRepository.save(user);
+      // Use the RETURNED entity rather than relying on save() mutating the
+      // argument in place — that is an implementation detail, and the id is
+      // needed immediately below.
+      user = await this.userRepository.save(user);
       await this.assignReferralCode(user);
       await this.markInviteAccepted(canonical);
+      await this.claimHeldMoney(user.id, canonical);
     }
     const tokens = this.issueTokens(user);
     // The name/email above are placeholders. `isNewUser` is the only signal the
@@ -228,9 +250,13 @@ export class UserService {
         phoneNumber: canonical, email, name,
         ...(referredBy && { referredBy }),
       });
-      await this.userRepository.save(user);
+      // Use the RETURNED entity rather than relying on save() mutating the
+      // argument in place — that is an implementation detail, and the id is
+      // needed immediately below.
+      user = await this.userRepository.save(user);
       await this.assignReferralCode(user);
       await this.markInviteAccepted(canonical);
+      await this.claimHeldMoney(user.id, canonical);
     }
     const tokens = this.issueTokens(user);
     return { ...tokens, user: this.userResponse(user) };
@@ -379,6 +405,53 @@ export class UserService {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
     return { balance: Number(user.walletBalance) };
+  }
+
+  /**
+   * Which of these numbers belong to ProboCaller users.
+   *
+   * Answered in ONE query: the send-money contact picker badges every contact,
+   * and a per-contact lookup would be hundreds of round trips on a real
+   * phonebook. Numbers are echoed back exactly as asked so the client can match
+   * rows without re-normalising, while matching itself goes through the same
+   * variant list login uses — a contact saved as "082…" must still match an
+   * account stored as "+27…", or the badge lies.
+   */
+  async checkRegistered(
+    phoneNumbers: string[],
+  ): Promise<{ phoneNumber: string; registered: boolean; name?: string }[]> {
+    const asked = (phoneNumbers ?? []).slice(0, CHECK_REGISTERED_MAX);
+
+    // Map every stored variant back to the number the caller asked about.
+    const variantToAsked = new Map<string, string>();
+    for (const raw of asked) {
+      // phoneNumberVariants echoes back whatever it is given, so "abc" would
+      // otherwise become a query term. Require something phone-shaped first.
+      if (String(raw ?? '').replace(/\D/g, '').length < 7) continue;
+      for (const v of phoneNumberVariants(String(raw))) {
+        variantToAsked.set(v, raw);
+      }
+    }
+    if (variantToAsked.size === 0) {
+      return asked.map((phoneNumber) => ({ phoneNumber, registered: false }));
+    }
+
+    const found = await this.userRepository.find({
+      where: { phoneNumber: In([...variantToAsked.keys()]) },
+    });
+
+    const hit = new Map<string, User>();
+    for (const u of found) {
+      const key = variantToAsked.get(u.phoneNumber);
+      if (key !== undefined) hit.set(key, u);
+    }
+
+    return asked.map((phoneNumber) => {
+      const u = hit.get(phoneNumber);
+      return u
+        ? { phoneNumber, registered: true, name: u.name }
+        : { phoneNumber, registered: false };
+    });
   }
 
   async getNotifications(userId: number): Promise<{ notifications: any[] }> {

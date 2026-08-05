@@ -44,6 +44,11 @@ describe('canonical ENTITIES list (schema source of truth)', () => {
     expect(names).toContain('Invite');
   });
 
+  // Money held for someone who is not on ProboCaller yet.
+  it('registers the PendingTransfer table', () => {
+    expect(names).toContain('PendingTransfer');
+  });
+
   it('has no duplicate entity classes', () => {
     expect(new Set(names).size).toBe(names.length);
   });

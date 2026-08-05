@@ -30,6 +30,7 @@ import { Message } from '../../messaging/message.entity';
 import { CallScreening } from '../../screening/call-screening.entity';
 import { Feedback } from '../../feedback/feedback.entity';
 import { Invite } from '../../invite/invite.entity';
+import { PendingTransfer } from '../../transfer/pending-transfer.entity';
 import { AdminInvite } from '../../admin/admin-invite.entity';
 import { AuditLog } from '../../audit/audit-log.entity';
 import { UserConsent } from '../../consent/user-consent.entity';
@@ -80,6 +81,7 @@ export const ENTITIES = [
   CallScreening,
   Feedback,
   Invite,
+  PendingTransfer,
   AdminInvite,
   AuditLog,
   UserConsent,

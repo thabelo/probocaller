@@ -133,6 +133,18 @@ export class UserController {
     return this.userService.addCredit(req.user.userId, body.amount);
   }
 
+  /**
+   * Badge a list of contacts as on/off ProboCaller in one round trip. The
+   * send-money picker runs over the whole phonebook, so per-contact lookups are
+   * not an option.
+   */
+  @UseGuards(AuthGuard('jwt'))
+  @Post('check-registered')
+  @ApiOperation({ summary: 'Which of these phone numbers are ProboCaller users' })
+  checkRegistered(@Body() body: { phoneNumbers?: string[] }) {
+    return this.userService.checkRegistered(body?.phoneNumbers ?? []);
+  }
+
   @Get('referral-code')
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth()
