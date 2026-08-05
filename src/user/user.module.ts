@@ -16,6 +16,8 @@ import { DataBrokerModule } from '../data-broker/data-broker.module';
 import { LookupModule } from '../lookup/lookup.module';
 import { JWT_SECRET } from '../app.module';
 import { Setting } from '../config/setting.entity';
+import { AvatarService } from './avatar.service';
+import { AvatarController } from './avatar.controller';
 
 @Module({
   imports: [
@@ -36,11 +38,12 @@ import { Setting } from '../config/setting.entity';
   ],
   providers: [
     UserService,
+    AvatarService,
     JwtStrategy,
     // Factory-provided so its numeric/clock constructor args aren't injected.
     { provide: ExternalLookupRateLimiter, useFactory: () => new ExternalLookupRateLimiter() },
   ],
-  controllers: [UserController],
+  controllers: [UserController, AvatarController],
   // Export the limiter too: UserController is also declared in AppModule's
   // controllers, so its dependencies must be resolvable in AppModule's scope.
   exports: [UserService, ExternalLookupRateLimiter],

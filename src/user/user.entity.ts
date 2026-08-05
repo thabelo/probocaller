@@ -114,4 +114,9 @@ export class User {
   // JwtStrategy.validate rejects tokens whose user has this populated.
   @Column({ type: 'timestamp', nullable: true, default: null })
   deactivatedAt: Date | null;
+
+  // Relative path of the optional profile photo, under uploads/. The bytes stay
+  // on disk; only the pointer lives here. Null means the user never set one.
+  @Column({ type: 'varchar', nullable: true, default: null })
+  avatarPath: string | null;
 }
