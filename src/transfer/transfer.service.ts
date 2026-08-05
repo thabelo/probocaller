@@ -4,6 +4,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, Repository, Not } from 'typeorm';
 import { User } from '../user/user.entity';
+import { isRegisteredAccount } from '../user/registered-account';
 import { PendingTransfer } from './pending-transfer.entity';
 import { toE164 } from '../auth/phone-variants';
 
@@ -49,7 +50,11 @@ export class TransferService {
       throw new BadRequestException('You cannot send to yourself.');
     }
 
-    const recipient = candidates.find((u) => u.id !== sender.id);
+    // A row in `users` is not proof of membership: uploading a phonebook creates
+    // one per contact. Paying such a row credits a wallet nobody has logged into
+    // and suppresses the SMS, so the money is never discovered. Treat it as a
+    // non-user and hold the funds until they actually sign up.
+    const recipient = candidates.find((u) => u.id !== sender.id && isRegisteredAccount(u));
 
     // Not on ProboCaller: debit the sender and HOLD the amount against the
     // number until they sign up. Crediting a placeholder account instead would

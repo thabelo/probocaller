@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import { User } from './user.entity';
+import { isRegisteredAccount } from './registered-account';
 import { LoginDto } from './dto/login.dto';
 import { SignupDto } from './dto/signup.dto';
 import { JwtService } from '@nestjs/jwt';
@@ -436,9 +437,13 @@ export class UserService {
       return asked.map((phoneNumber) => ({ phoneNumber, registered: false }));
     }
 
-    const found = await this.userRepository.find({
-      where: { phoneNumber: In([...variantToAsked.keys()]) },
-    });
+    const found = (
+      await this.userRepository.find({
+        where: { phoneNumber: In([...variantToAsked.keys()]) },
+      })
+      // Phonebook rows are not members. Badging one as a member skips the SMS
+      // and pays a wallet nobody has logged into.
+    ).filter(isRegisteredAccount);
 
     const hit = new Map<string, User>();
     for (const u of found) {

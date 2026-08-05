@@ -52,6 +52,27 @@ describe('TransferService — sending to a non-user', () => {
 
   const flat = () => saved.flat();
 
+  /**
+   * Uploading a phonebook creates a User row per contact, so a match in `users`
+   * does not mean the person signed up. Crediting that row pays a wallet nobody
+   * has ever logged into AND reports recipientOnProbo:true, so the app skips the
+   * SMS and the recipient is never told the money exists.
+   */
+  it('holds the money when the only match is a phonebook row, not a member', async () => {
+    userRepo.createQueryBuilder = jest.fn(() => ({
+      where: jest.fn().mockReturnThis(),
+      getMany: jest.fn(async () => [
+        { id: 348, phoneNumber: '0829998888', name: 'Unknown', referralCode: null, walletBalance: 0 },
+      ]),
+    }));
+    const res: any = await service.send(1, '0829998888', 25);
+    expect(res.recipientOnProbo).toBe(false);
+    const held = flat().find((r: any) => r?.recipientPhone !== undefined);
+    expect(held?.recipientPhone).toBe('+27829998888');
+    // the phonebook row must not have been paid
+    expect(flat().find((r: any) => r?.id === 348)).toBeUndefined();
+  });
+
   it('no longer refuses a recipient who is not on ProboCaller', async () => {
     await expect(service.send(1, '0829998888', 25)).resolves.toBeTruthy();
   });

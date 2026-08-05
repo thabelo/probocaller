@@ -38,7 +38,7 @@ describe('UserService.checkRegistered', () => {
   });
 
   it('reports which of the given numbers are on ProboCaller', async () => {
-    repo.find.mockResolvedValue([{ id: 5, phoneNumber: '+27821140092', name: 'Mpho' }]);
+    repo.find.mockResolvedValue([{ id: 5, phoneNumber: '+27821140092', name: 'Mpho', referralCode: 'PROBO-AAA1' }]);
     const out = await service.checkRegistered(['0821140092', '0829998888']);
     expect(out.find((r) => r.phoneNumber === '0821140092')?.registered).toBe(true);
     expect(out.find((r) => r.phoneNumber === '0829998888')?.registered).toBe(false);
@@ -49,13 +49,13 @@ describe('UserService.checkRegistered', () => {
    * must still match a contact saved as "082…" or the badge lies.
    */
   it('matches across stored number formats', async () => {
-    repo.find.mockResolvedValue([{ id: 5, phoneNumber: '+27821140092', name: 'Mpho' }]);
+    repo.find.mockResolvedValue([{ id: 5, phoneNumber: '+27821140092', name: 'Mpho', referralCode: 'PROBO-AAA1' }]);
     const out = await service.checkRegistered(['+27 82 114 0092']);
     expect(out[0].registered).toBe(true);
   });
 
   it('returns the display name for a registered contact', async () => {
-    repo.find.mockResolvedValue([{ id: 5, phoneNumber: '+27821140092', name: 'Mpho Ndlovu' }]);
+    repo.find.mockResolvedValue([{ id: 5, phoneNumber: '+27821140092', name: 'Mpho Ndlovu', referralCode: 'PROBO-AAA1' }]);
     const out = await service.checkRegistered(['0821140092']);
     expect(out[0].name).toBe('Mpho Ndlovu');
   });
@@ -63,6 +63,21 @@ describe('UserService.checkRegistered', () => {
   it('echoes the number exactly as asked, so the client can match rows back', async () => {
     const out = await service.checkRegistered(['082 114 0092']);
     expect(out[0].phoneNumber).toBe('082 114 0092');
+  });
+
+  /**
+   * Uploading your phonebook creates a User row per contact (addMultipleContacts),
+   * so the table is mostly people who never signed up. Badging those as members
+   * loses money: the app skips the SMS and the transfer credits a wallet nobody
+   * has ever logged into. A referral code is assigned on every real login/signup
+   * and never by the contact-directory path, so it is what separates the two.
+   */
+  it('does not treat a contact-directory row as a member', async () => {
+    repo.find.mockResolvedValue([
+      { id: 348, phoneNumber: '0825405921', name: 'Unknown', referralCode: null },
+    ]);
+    const out = await service.checkRegistered(['0825405921']);
+    expect(out[0].registered).toBe(false);
   });
 
   it('handles an empty list without hitting the database', async () => {
