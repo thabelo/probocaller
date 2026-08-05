@@ -261,6 +261,7 @@ describe('UserController — GET /user/rate (live platform rate for the app)', (
       findOne: jest.fn().mockImplementation(async (opts: any) => {
         if (opts.where.key === 'RATE_PER_SECOND') return settingVal.rate ?? null;
         if (opts.where.key === 'PLATFORM_CUT_RATE') return settingVal.cut ?? null;
+        if (opts.where.key === 'REFERRAL_COMMISSION_RATE') return settingVal.referral ?? null;
         return null;
       }),
     };
@@ -281,6 +282,23 @@ describe('UserController — GET /user/rate (live platform rate for the app)', (
     expect(res.ratePerSecond).toBe(0.002); // DEFAULT_RATE_PER_SECOND
     expect(res.platformCutRate).toBe(0.24);
     expect(res.userShare).toBeCloseTo(0.76, 6);
+  });
+
+  /**
+   * The referral share is quoted to users ("earn 3% of everything they make"),
+   * so the app has to be able to read the configured figure. Without it the
+   * copy is a guess that silently goes stale the moment an admin changes it.
+   */
+  it('exposes the admin-configured referral commission rate', async () => {
+    const c = make({ referral: { value: '0.05' } });
+    const res: any = await c.getRate();
+    expect(res.referralCommissionRate).toBe(0.05);
+  });
+
+  it('falls back to the default referral rate when unset', async () => {
+    const c = make({});
+    const res: any = await c.getRate();
+    expect(res.referralCommissionRate).toBe(0.03);
   });
 });
 

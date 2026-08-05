@@ -16,6 +16,7 @@ import { ExternalLookupRateLimiter } from './external-lookup-rate-limiter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Setting } from '../config/setting.entity';
+import { REFERRAL_RATE_KEY, parseCommissionRate } from '../referral/referral.service';
 
 @ApiTags('users')
 @Controller('user')
@@ -226,7 +227,11 @@ export class UserController {
     const cutSetting = await this.settingRepository.findOne({ where: { key: 'PLATFORM_CUT_RATE' } });
     const ratePerSecond = rateSetting ? parseFloat(rateSetting.value) || DEFAULT_RATE_PER_SECOND : DEFAULT_RATE_PER_SECOND;
     const platformCutRate = cutSetting ? parseFloat(cutSetting.value) || DEFAULT_PLATFORM_CUT_RATE : DEFAULT_PLATFORM_CUT_RATE;
-    return { ratePerSecond, platformCutRate, userShare: 1 - platformCutRate };
+    // Quoted to users as "earn N% of everything they make", so the app must be
+    // able to read it rather than compile the figure into its copy.
+    const referralSetting = await this.settingRepository.findOne({ where: { key: REFERRAL_RATE_KEY } });
+    const referralCommissionRate = parseCommissionRate(referralSetting?.value);
+    return { ratePerSecond, platformCutRate, userShare: 1 - platformCutRate, referralCommissionRate };
   }
 
   @Get(':phoneNumber')

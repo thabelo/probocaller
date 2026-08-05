@@ -1,6 +1,8 @@
 import { Test, TestingModule } from '@nestjs/testing';
+import { getRepositoryToken } from '@nestjs/typeorm';
 import { ReferralService } from './referral.service';
 import { TransactionService } from '../transaction/transaction.service';
+import { Setting } from '../config/setting.entity';
 import { User } from '../user/user.entity';
 
 /**
@@ -16,9 +18,14 @@ describe('ReferralService.payCommission', () => {
   let service: ReferralService;
   let tx: { log: jest.Mock };
   let manager: any;
-  const savedRateEnv = process.env.REFERRAL_COMMISSION_RATE;
+  let settingRepo: any;
+
+  /** Set the admin-configured rate for a test. */
+  const setRate = (value: string | null) =>
+    settingRepo.findOne.mockResolvedValue(value === null ? null : { key: 'REFERRAL_COMMISSION_RATE', value });
 
   beforeEach(async () => {
+    settingRepo = { findOne: jest.fn().mockResolvedValue(null) };
     tx = { log: jest.fn().mockResolvedValue(undefined) };
     manager = {
       findOne: jest.fn(),
@@ -28,14 +35,10 @@ describe('ReferralService.payCommission', () => {
       providers: [
         ReferralService,
         { provide: TransactionService, useValue: tx },
+        { provide: getRepositoryToken(Setting), useValue: settingRepo },
       ],
     }).compile();
     service = module.get(ReferralService);
-  });
-
-  afterEach(() => {
-    if (savedRateEnv === undefined) delete process.env.REFERRAL_COMMISSION_RATE;
-    else process.env.REFERRAL_COMMISSION_RATE = savedRateEnv;
   });
 
   // earner is referred by referrer (id 7); referrer wallet starts at 100.
@@ -124,8 +127,8 @@ describe('ReferralService.payCommission', () => {
     expect(tx.log).not.toHaveBeenCalled();
   });
 
-  it('REFERRAL_COMMISSION_RATE=0 disables commission entirely (no read, no write, no log)', async () => {
-    process.env.REFERRAL_COMMISSION_RATE = '0';
+  it('a configured rate of 0 disables commission entirely (no read, no write, no log)', async () => {
+    setRate('0');
     wireReferred(3, 7, 100);
 
     await service.payCommission(3, 10, manager);
@@ -134,8 +137,13 @@ describe('ReferralService.payCommission', () => {
     expect(manager.save).not.toHaveBeenCalled();
   });
 
-  it('rate is configurable via REFERRAL_COMMISSION_RATE', async () => {
-    process.env.REFERRAL_COMMISSION_RATE = '0.10';
+  /**
+   * The rate is operational policy, so it lives in the settings table and is
+   * changed from the admin panel — not baked into the deployment's environment,
+   * where changing it means a redeploy and the app can never be told.
+   */
+  it('reads the rate an admin configured, without a redeploy', async () => {
+    setRate('0.10');
     wireReferred(3, 7, 100);
 
     await service.payCommission(3, 10, manager);
@@ -146,7 +154,7 @@ describe('ReferralService.payCommission', () => {
   });
 
   it('invalid/out-of-range rate falls back to the 3% default', async () => {
-    process.env.REFERRAL_COMMISSION_RATE = 'not-a-number';
+    setRate('not-a-number');
     wireReferred(3, 7, 100);
 
     await service.payCommission(3, 10, manager);

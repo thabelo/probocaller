@@ -451,6 +451,7 @@ export class AdminService {
     const defaults = [
       { key: 'RATE_PER_SECOND', value: '0.002', description: 'Charge per second for business calls (USD)' },
       { key: 'PLATFORM_CUT_RATE', value: '0.24', description: 'Platform revenue share (0.24 = 24%)' },
+      { key: 'REFERRAL_COMMISSION_RATE', value: '0.03', description: 'Lifetime referral commission paid to the referrer, platform-funded (0.03 = 3%). Set to 0 to switch the programme off.' },
       { key: 'LEADS_BASE_FEE', value: '250', description: 'Data-certificate base fee (ZAR) charged per user (per lead)' },
       { key: 'LEADS_FREE_DAYS', value: '7', description: 'Authorisation days the per-user base fee covers before interest applies' },
       { key: 'LEADS_DAILY_RATE', value: '0.018', description: 'Compounding interest per day on the base fee beyond the free window (0.018 = 1.8%/day)' },

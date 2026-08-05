@@ -1,29 +1,47 @@
 import { Injectable } from '@nestjs/common';
-import { EntityManager } from 'typeorm';
+import { InjectRepository } from '@nestjs/typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { User } from '../user/user.entity';
 import { TransactionService } from '../transaction/transaction.service';
+import { Setting } from '../config/setting.entity';
 import { round4 } from '../common/round4';
 
-const DEFAULT_COMMISSION_RATE = 0.03;
+export const REFERRAL_RATE_KEY = 'REFERRAL_COMMISSION_RATE';
+export const DEFAULT_COMMISSION_RATE = 0.03;
 
 /**
- * Lifetime referral commission rate, from REFERRAL_COMMISSION_RATE.
- * Clamped to [0, 1); invalid values fall back to the 3% default. A value of 0
- * is a valid kill-switch: payCommission early-returns with zero ledger rows, so
- * ops can disable the programme without a deploy.
+ * Clamp a stored rate to something payable. Out of range or unparseable falls
+ * back to the default rather than paying a nonsense amount.
  */
-const resolveReferralCommissionRate = (): number => {
-  const raw = Number(process.env.REFERRAL_COMMISSION_RATE);
-  if (!Number.isFinite(raw) || raw < 0 || raw >= 1) return DEFAULT_COMMISSION_RATE;
-  return raw;
-};
+export function parseCommissionRate(raw: unknown): number {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0 || n >= 1) return DEFAULT_COMMISSION_RATE;
+  return n;
+}
 
 @Injectable()
 export class ReferralService {
-  constructor(private readonly transactionService: TransactionService) {}
+  constructor(
+    private readonly transactionService: TransactionService,
+    @InjectRepository(Setting)
+    private readonly settingRepository: Repository<Setting>,
+  ) {}
 
   /**
-   * Pay an EXTRA 3% (configurable) lifetime commission to the referrer of an
+   * The lifetime referral commission rate, as configured by an admin.
+   *
+   * Read from the settings table rather than the environment: this is
+   * operational policy that changes without a deploy, and the apps need to be
+   * able to show the real figure instead of a number compiled into their copy.
+   * A rate of 0 is a valid kill-switch — payCommission then writes no rows.
+   */
+  async getCommissionRate(): Promise<number> {
+    const setting = await this.settingRepository.findOne({ where: { key: REFERRAL_RATE_KEY } });
+    return parseCommissionRate(setting?.value);
+  }
+
+  /**
+   * Pay an EXTRA admin-configured lifetime commission to the referrer of an
    * earner who just received an activity earning. Platform-funded override: the
    * referee keeps 100% of their earning; this only credits the referrer.
    *
@@ -41,7 +59,7 @@ export class ReferralService {
     earnedAmount: number,
     manager: EntityManager,
   ): Promise<void> {
-    const rate = resolveReferralCommissionRate();
+    const rate = await this.getCommissionRate();
     if (earnedAmount <= 0 || rate <= 0) return;
 
     const earner = await manager.findOne(User, { where: { id: earnerId } });
