@@ -1,7 +1,8 @@
 import { Injectable, NotFoundException, ConflictException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Like, Repository } from 'typeorm';
+import { DataSource, In, Like, Repository } from 'typeorm';
 import { randomBytes } from 'crypto';
+import { phoneNumberVariants } from '../auth/phone-variants';
 import { Business } from './business.entity';
 import { normaliseCountryCode } from '../common/countries';
 import { normalisePhoneNumber } from '../common/phone';
@@ -320,8 +321,18 @@ export class BusinessService {
     numberPurposeLabel?: string;
     numberLabel?: string;
   } | null> {
+    // Numbers are stored in E.164, but lookups arrive in whichever form the
+    // caller had: the dialer sends the last 10 digits of the E.164 ("7…"),
+    // search and contacts send the national form ("0…"). Matching all
+    // equivalent representations up front is what the login path already does;
+    // without it a business searched as 0XXXXXXXXX resolved to nobody, because
+    // the suffix fallback below compares against "7…" and never matches.
+    const variants = phoneNumberVariants(phoneNumber);
     let num = await this.numberRepo.findOne({
-      where: { phoneNumber, active: true },
+      where: {
+        phoneNumber: variants.length > 1 ? In(variants) : phoneNumber,
+        active: true,
+      },
       relations: ['business'],
     });
     // Incoming-call lookups arrive as the caller's LAST 10 DIGITS (no country
@@ -432,6 +443,9 @@ export class BusinessService {
     website?: string;
     registrationNumber?: string;
     address?: string;
+    // Registration requires a logo; without this field the admin path could
+    // never satisfy the rule it inherits from register().
+    logoUrl?: string;
   }): Promise<Business> {
     return this.register(userId, data);
   }
@@ -450,6 +464,14 @@ export class BusinessService {
   async adminUpdateProfile(profileId: number, data: Partial<Business>): Promise<Business> {
     const profile = await this.businessRepo.findOne({ where: { id: profileId } });
     if (!profile) throw new NotFoundException('Business profile not found');
+    // Blanking the logo afterwards would reopen exactly what registration
+    // closed. Updates that leave it alone are untouched.
+    if ('logoUrl' in data) {
+      const next = String(data.logoUrl ?? '').trim();
+      if (!next || next === DEFAULT_BUSINESS_LOGO_URL) {
+        throw new BadRequestException('A business logo is required and cannot be removed.');
+      }
+    }
     const { id, userId, user, numbers, createdAt, updatedAt, ...safe } = data as any;
     Object.assign(profile, safe);
     return this.businessRepo.save(profile);

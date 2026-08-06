@@ -204,7 +204,7 @@ export class AdminController {
   @Post('businesses')
   @ApiOperation({ summary: 'Register a new business profile for a user (admin)' })
   async adminCreateBusiness(
-    @Body() body: { userId: number; companyName: string; industry: string; country: string; description?: string; contactPhone?: string; contactEmail?: string; website?: string; registrationNumber?: string; address?: string },
+    @Body() body: { userId: number; companyName: string; industry: string; country: string; description?: string; contactPhone?: string; contactEmail?: string; website?: string; registrationNumber?: string; address?: string; logoUrl?: string },
   ) {
     const { userId, ...data } = body;
     return this.businessService.adminRegisterBusiness(userId, data);

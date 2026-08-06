@@ -729,3 +729,132 @@ describe('BusinessService — registration requires a logo', () => {
     expect(businessRepo.save).toHaveBeenCalled();
   });
 });
+
+/**
+ * A business number is stored in E.164 (+27…), but lookups arrive in whatever
+ * form the caller had: the dialer sends the last 10 digits of the E.164
+ * ("7…"), while search and the contact list send the national form ("0…").
+ *
+ * The ad-hoc suffix match only ever handled the first: for +27000000001 the
+ * last 10 digits are "7000000001", so a search for "0000000001" — the same
+ * number — resolved to nobody and the business showed as Unknown.
+ */
+describe('BusinessService — a business number resolves in national form too', () => {
+  let service: BusinessService;
+  let numberRepo: ReturnType<typeof mockRepo>;
+
+  const row = {
+    id: 1,
+    phoneNumber: '+27000000001',
+    purpose: 'sales',
+    business: {
+      id: 1, companyName: 'Acme Leads Co', industry: 'insurance',
+      active: true, verified: true, logoUrl: '/business/logo/a.png',
+    },
+  };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BusinessService,
+        { provide: getRepositoryToken(Business), useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+        { provide: getRepositoryToken(ApiKey), useFactory: mockRepo },
+        { provide: getRepositoryToken(User), useFactory: mockRepo },
+        { provide: TransactionService, useFactory: mockTx },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(BusinessService);
+    numberRepo = module.get(getRepositoryToken(BusinessNumber));
+
+    // Only the stored E.164 form exists in the table.
+    numberRepo.findOne.mockImplementation(async (opts: any) => {
+      const cond = opts?.where?.phoneNumber;
+      if (cond === '+27000000001') return row;
+      if (cond?._type === 'in' && cond?._value?.includes('+27000000001')) return row;
+      return null;
+    });
+  });
+
+  it('resolves the national 0-form to the business', async () => {
+    const res = await service.resolveCallerIdentity('0000000001');
+    expect(res?.businessProfile?.companyName).toBe('Acme Leads Co');
+  });
+
+  it('still resolves the exact stored E.164 form', async () => {
+    const res = await service.resolveCallerIdentity('+27000000001');
+    expect(res?.businessProfile?.companyName).toBe('Acme Leads Co');
+  });
+});
+
+/**
+ * The admin path is the same rule.
+ *
+ * adminRegisterBusiness delegates to register(), so it inherited the logo
+ * requirement — but its parameter type had no logoUrl, so an admin could not
+ * supply one and every admin-created business would be refused. A rule that
+ * cannot be satisfied is a broken path, not an enforced rule.
+ *
+ * The update path matters too: allowing a logo to be blanked afterwards would
+ * reopen exactly the hole registration closed.
+ */
+describe('BusinessService — the admin paths obey the logo rule too', () => {
+  let service: BusinessService;
+  let businessRepo: ReturnType<typeof mockRepo>;
+  let userRepo: ReturnType<typeof mockRepo>;
+
+  const details = { companyName: 'Riverside', industry: 'insurance', country: 'ZA' };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BusinessService,
+        { provide: getRepositoryToken(Business), useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+        { provide: getRepositoryToken(ApiKey), useFactory: mockRepo },
+        { provide: getRepositoryToken(User), useFactory: mockRepo },
+        { provide: TransactionService, useFactory: mockTx },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(BusinessService);
+    businessRepo = module.get(getRepositoryToken(Business));
+    userRepo = module.get(getRepositoryToken(User));
+    businessRepo.create.mockImplementation((v: any) => v);
+    businessRepo.save.mockImplementation(async (v: any) => ({ id: 1, ...v }));
+    userRepo.findOne.mockResolvedValue({ id: 5, isBusiness: false });
+  });
+
+  it('lets an admin supply a logo, so the path is usable at all', async () => {
+    await service.adminRegisterBusiness(5, { ...details, logoUrl: '/business/logo/a.png' } as any);
+    expect(businessRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ logoUrl: '/business/logo/a.png' }),
+    );
+  });
+
+  it('still refuses an admin-created business with no logo', async () => {
+    await expect(service.adminRegisterBusiness(5, details as any)).rejects.toThrow(/logo/i);
+  });
+
+  it('refuses to blank an existing logo on update', async () => {
+    businessRepo.findOne.mockResolvedValue({ id: 3, logoUrl: '/business/logo/a.png' });
+    await expect(service.adminUpdateProfile(3, { logoUrl: '   ' } as any)).rejects.toThrow(/logo/i);
+    expect(businessRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('allows an update that replaces the logo with another one', async () => {
+    businessRepo.findOne.mockResolvedValue({ id: 3, logoUrl: '/business/logo/a.png' });
+    await service.adminUpdateProfile(3, { logoUrl: '/business/logo/b.png' } as any);
+    expect(businessRepo.save).toHaveBeenCalledWith(
+      expect.objectContaining({ logoUrl: '/business/logo/b.png' }),
+    );
+  });
+
+  /** Updates that don't touch the logo must not be caught by the guard. */
+  it('leaves an unrelated update alone', async () => {
+    businessRepo.findOne.mockResolvedValue({ id: 3, logoUrl: '/business/logo/a.png' });
+    await service.adminUpdateProfile(3, { companyName: 'Renamed' } as any);
+    expect(businessRepo.save).toHaveBeenCalled();
+  });
+});
