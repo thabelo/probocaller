@@ -200,8 +200,17 @@ export class BusinessService {
       );
     }
 
-    // Every business shows an image; fall back to the Probocaller logo.
-    const logoUrl = (data.logoUrl ?? '').trim() || DEFAULT_BUSINESS_LOGO_URL;
+    // A business is shown to the person being called as an icon and a name.
+    // Falling back to the shared Probocaller mark made every unbranded business
+    // look like every other one, which defeats the point of identifying a
+    // caller — so a new business must bring its own. The businesses that
+    // predate this rule keep the fallback; only registration is held to it.
+    const logoUrl = (data.logoUrl ?? '').trim();
+    if (!logoUrl || logoUrl === DEFAULT_BUSINESS_LOGO_URL) {
+      throw new BadRequestException(
+        'A business logo is required. Upload one to POST /business/logo and register with the URL it returns.',
+      );
+    }
 
     const profile = this.businessRepo.create({ ...data, country, logoUrl, userId });
     const saved = await this.businessRepo.save(profile);
@@ -297,7 +306,16 @@ export class BusinessService {
   async resolveCallerIdentity(phoneNumber: string): Promise<{
     isBusiness: boolean;
     businessId: number;
-    businessProfile?: { companyName: string; industry: string; description?: string; verified: boolean };
+    businessProfile?: {
+      companyName: string;
+      industry: string;
+      description?: string;
+      verified: boolean;
+      // Carried so the device can show WHO is calling as an icon, not just a
+      // name. Businesses registered before logos were required have none, so
+      // this stays optional and the app falls back to a generic mark.
+      logoUrl?: string;
+    };
     numberPurpose?: string;
     numberPurposeLabel?: string;
     numberLabel?: string;
@@ -338,6 +356,7 @@ export class BusinessService {
                 industry: biz.industry,
                 description: biz.description,
                 verified: biz.verified,
+                logoUrl: biz.logoUrl,
               },
             };
           }
@@ -355,6 +374,7 @@ export class BusinessService {
         industry: b.industry,
         description: b.description,
         verified: b.verified,
+        logoUrl: b.logoUrl,
       },
       numberPurpose: num.purpose,
       numberPurposeLabel: NUMBER_PURPOSES[num.purpose as keyof typeof NUMBER_PURPOSES] || num.purpose,

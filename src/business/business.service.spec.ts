@@ -332,7 +332,7 @@ describe('BusinessService — register requires a country', () => {
     userRepo.save.mockImplementation(async (x: any) => x);
   });
 
-  const base = { companyName: 'Acme', industry: 'insurance' };
+  const base = { companyName: 'Acme', industry: 'insurance', logoUrl: '/business/logo/acme.png' };
 
   it('persists the country, upper-cased', async () => {
     await service.register(7, { ...base, country: 'za' } as any);
@@ -360,14 +360,20 @@ describe('BusinessService — register requires a country', () => {
     expect(businessRepo.save).not.toHaveBeenCalled();
   });
 
-  it('gives a business with no image the default Probocaller logo', async () => {
-    await service.register(7, { ...base, country: 'ZA' } as any);
-    expect(businessRepo.create).toHaveBeenCalledWith(expect.objectContaining({ logoUrl: DEFAULT_BUSINESS_LOGO_URL }));
+  // Was: "gives a business with no image the default Probocaller logo".
+  // Sharing one mark between every unbranded business is not an identity, so
+  // registration now refuses instead of substituting it.
+  it('refuses a business with no image instead of substituting the default logo', async () => {
+    const { logoUrl, ...noLogo } = base;
+    await expect(service.register(7, { ...noLogo, country: 'ZA' } as any)).rejects.toThrow(/logo/i);
+    expect(businessRepo.create).not.toHaveBeenCalled();
   });
 
-  it('falls back to the default logo when the image is blank', async () => {
-    await service.register(7, { ...base, country: 'ZA', logoUrl: '   ' } as any);
-    expect(businessRepo.create).toHaveBeenCalledWith(expect.objectContaining({ logoUrl: DEFAULT_BUSINESS_LOGO_URL }));
+  it('refuses a blank image rather than falling back', async () => {
+    await expect(
+      service.register(7, { ...base, country: 'ZA', logoUrl: '   ' } as any),
+    ).rejects.toThrow(/logo/i);
+    expect(businessRepo.create).not.toHaveBeenCalled();
   });
 
   it('keeps a logo the caller provides', async () => {
@@ -592,5 +598,134 @@ describe('BusinessService — updateProfile persists the logo', () => {
 
     expect(row.logoUrl).toBe('/business/logo/new.png');
     expect(row.verified).toBe(false);
+  });
+});
+
+/**
+ * A business caller has to be recognisable at a glance, which means its logo
+ * has to reach the device. The caller-identity payload carried the company
+ * name, industry and verified flag but not the logo, so nothing in the app
+ * could render an icon even for a business that had uploaded one.
+ */
+describe('BusinessService — a business caller carries its logo', () => {
+  let service: BusinessService;
+  let numberRepo: ReturnType<typeof mockRepo>;
+  let businessRepo: ReturnType<typeof mockRepo>;
+  let userRepo: ReturnType<typeof mockRepo>;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BusinessService,
+        { provide: getRepositoryToken(Business), useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+        { provide: getRepositoryToken(ApiKey), useFactory: mockRepo },
+        { provide: getRepositoryToken(User), useFactory: mockRepo },
+        { provide: TransactionService, useFactory: mockTx },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(BusinessService);
+    numberRepo = module.get(getRepositoryToken(BusinessNumber));
+    businessRepo = module.get(getRepositoryToken(Business));
+    userRepo = module.get(getRepositoryToken(User));
+  });
+
+  it('returns the logo when the number has a business_number row', async () => {
+    numberRepo.findOne.mockResolvedValue({
+      id: 1,
+      phoneNumber: '+27831110000',
+      purpose: 'sales',
+      business: {
+        id: 4, companyName: 'Riverside Insurance', industry: 'insurance', active: true,
+        verified: true, description: 'Cover', logoUrl: '/business/logo/abc.png',
+      },
+    });
+    const res = await service.resolveCallerIdentity('+27831110000');
+    expect(res?.businessProfile?.logoUrl).toBe('/business/logo/abc.png');
+  });
+
+  /** The owner-number fallback must carry it too, or the same business looks
+   *  different depending on which of its numbers rang. */
+  it('returns the logo on the owner-number fallback path', async () => {
+    numberRepo.findOne.mockResolvedValue(null);
+    userRepo.findOne.mockResolvedValue({ id: 7, phoneNumber: '+27861110001', isBusiness: true });
+    businessRepo.findOne.mockResolvedValue({
+      id: 9, companyName: 'Alpha Funded Ltd', industry: 'finance',
+      verified: true, logoUrl: '/business/logo/def.png',
+    });
+    const res = await service.resolveCallerIdentity('7861110001');
+    expect(res?.businessProfile?.logoUrl).toBe('/business/logo/def.png');
+  });
+});
+
+/**
+ * A business now has to bring its own logo.
+ *
+ * The caller-ID screen shows a business as an icon and a name; falling back to
+ * the Probocaller mark made every unbranded business look identical to every
+ * other one, which is the opposite of identifying a caller. Registration
+ * therefore refuses to create a business without one.
+ *
+ * Only NEW registrations are held to this — the businesses that predate the
+ * rule keep working and keep the fallback.
+ */
+describe('BusinessService — registration requires a logo', () => {
+  let service: BusinessService;
+  let businessRepo: ReturnType<typeof mockRepo>;
+  let userRepo: ReturnType<typeof mockRepo>;
+
+  const details = {
+    companyName: 'Riverside Insurance',
+    industry: 'insurance',
+    country: 'ZA',
+  };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BusinessService,
+        { provide: getRepositoryToken(Business), useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+        { provide: getRepositoryToken(ApiKey), useFactory: mockRepo },
+        { provide: getRepositoryToken(User), useFactory: mockRepo },
+        { provide: TransactionService, useFactory: mockTx },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(BusinessService);
+    businessRepo = module.get(getRepositoryToken(Business));
+    userRepo = module.get(getRepositoryToken(User));
+    businessRepo.create.mockImplementation((v: any) => v);
+    businessRepo.save.mockImplementation(async (v: any) => ({ id: 1, ...v }));
+    userRepo.findOne.mockResolvedValue({ id: 5, isBusiness: false });
+  });
+
+  it('refuses to register a business with no logo', async () => {
+    await expect(service.register(5, details as any)).rejects.toThrow(/logo/i);
+    expect(businessRepo.save).not.toHaveBeenCalled();
+  });
+
+  it('refuses a blank logo rather than silently falling back', async () => {
+    await expect(
+      service.register(5, { ...details, logoUrl: '   ' } as any),
+    ).rejects.toThrow(/logo/i);
+    expect(businessRepo.save).not.toHaveBeenCalled();
+  });
+
+  /** The shared Probocaller mark is not an identity — it must not be accepted
+   *  as one just because a client sent it explicitly. */
+  it('refuses the default placeholder logo', async () => {
+    await expect(
+      service.register(5, { ...details, logoUrl: DEFAULT_BUSINESS_LOGO_URL } as any),
+    ).rejects.toThrow(/logo/i);
+  });
+
+  it('registers when a real logo is supplied', async () => {
+    await service.register(5, { ...details, logoUrl: '/business/logo/abc.png' } as any);
+    expect(businessRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ logoUrl: '/business/logo/abc.png' }),
+    );
+    expect(businessRepo.save).toHaveBeenCalled();
   });
 });
