@@ -89,36 +89,40 @@ describe('AirtimeService', () => {
     expect(provider.sendAirtime).not.toHaveBeenCalled();
   });
 
-  it('debits the wallet, sends airtime, and marks it delivered on success', async () => {
+  // Airtime is no longer sent automatically. redeem() reserves the money and
+  // queues the request; an admin tops the number up and resolves it in
+  // review(), which is where delivery and refunds are covered. These two tests
+  // previously asserted an auto-send through AIRTIME_PROVIDER that the service
+  // stopped doing — they now pin the reserve-and-queue behaviour instead.
+  it('debits the wallet and queues the request as pending', async () => {
     const user = buildUser(100);
     manager.findOne.mockResolvedValue(user);
-    provider.sendAirtime.mockResolvedValue({ providerRef: 'RLD-123', status: 'delivered' });
 
     const result = await service.redeem(1, dto);
 
-    // wallet debited by the amount
     expect(user.walletBalance).toBe(80);
-    // reserved as pending, then confirmed delivered with the provider ref
-    expect(provider.sendAirtime).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 20, network: 'MTN' }),
-    );
-    expect(result.status).toBe('delivered');
-    expect(result.providerRef).toBe('RLD-123');
-    // debit audit logged
-    expect(tx.log).toHaveBeenCalledWith(1, 'AIRTIME_REDEEMED', -20, expect.any(String), undefined, manager);
+    expect(result.status).toBe('pending');
+    expect(manager.save).toHaveBeenCalled();
   });
 
-  it('refunds the wallet and marks failed when the provider errors', async () => {
-    const user = buildUser(100);
-    manager.findOne.mockResolvedValue(user);
-    provider.sendAirtime.mockRejectedValue(new Error('provider down'));
+  it('reserves the money without contacting any provider', async () => {
+    manager.findOne.mockResolvedValue(buildUser(100));
 
-    await expect(service.redeem(1, dto)).rejects.toThrow();
+    await service.redeem(1, dto);
 
-    // debited then refunded → net zero
-    expect(user.walletBalance).toBe(100);
-    // refund audit logged
-    expect(tx.log).toHaveBeenCalledWith(1, 'AIRTIME_REFUNDED', 20, expect.any(String), undefined, manager);
+    // The debit is a reservation, not a purchase: nothing is sent until an
+    // admin confirms they topped the number up.
+    expect(provider.sendAirtime).not.toHaveBeenCalled();
+  });
+
+  it('records the debit against the user as an audit entry', async () => {
+    manager.findOne.mockResolvedValue(buildUser(100));
+
+    await service.redeem(1, dto);
+
+    expect(tx.log).toHaveBeenCalledWith(
+      1, 'AIRTIME_REDEEMED', -20, expect.any(String), undefined, manager,
+    );
   });
 
   it('locks the wallet row for the atomic debit', async () => {
