@@ -49,3 +49,26 @@ describe('AdminUpdateBusinessDto', () => {
     expect((await errorsFor({ country: 'South Africa' })).length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * The admin edit form has to be able to fix a business's logo.
+ *
+ * Registration now requires one, and twelve businesses predate that rule with
+ * no logo at all — an admin is the only one who can correct those. This DTO is
+ * a strict allow-list under forbidNonWhitelisted, so a field it omits is not
+ * merely ignored: the request is rejected outright.
+ */
+describe('AdminUpdateBusinessDto — the logo is editable', () => {
+  it('accepts a logo URL', async () => {
+    expect(await errorsFor({ logoUrl: '/business/logo/abc.png' })).toHaveLength(0);
+  });
+
+  it('accepts a full URL to an externally hosted logo', async () => {
+    expect(await errorsFor({ logoUrl: 'https://acme.co/logo.png' })).toHaveLength(0);
+  });
+
+  /** The service refuses a blank one; the DTO must let it through to be judged. */
+  it('lets a blank value reach the service, which is what rejects it', async () => {
+    expect(await errorsFor({ logoUrl: '' })).toHaveLength(0);
+  });
+});

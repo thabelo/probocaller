@@ -17,6 +17,13 @@ export class AdminUpdateBusinessDto {
   @IsOptional() @IsString() @MaxLength(80)
   registrationNumber?: string;
 
+  // Registration requires a logo, and the businesses that predate that rule
+  // have none — an admin is the only one who can correct those. Format is not
+  // validated here: a blank must reach the service, which is what refuses it.
+  @ApiProperty({ required: false })
+  @IsOptional() @IsString() @MaxLength(300)
+  logoUrl?: string;
+
   // ISO 3166-1 alpha-2, mirroring the Business entity — required for a NEW
   // registration (derived from the user's phone by the mobile app) but the
   // admin edit form must be able to view/correct it too.

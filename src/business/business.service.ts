@@ -213,7 +213,12 @@ export class BusinessService {
       );
     }
 
-    const profile = this.businessRepo.create({ ...data, country, logoUrl, userId });
+    // Forms send display labels ("Insurance", "Banking & Finance") while the
+    // stored rows are lowercase. Normalising here keeps grouping and filtering
+    // by industry from splitting the same industry across cases.
+    const industry = String(data.industry ?? '').trim().toLowerCase();
+
+    const profile = this.businessRepo.create({ ...data, country, industry, logoUrl, userId });
     const saved = await this.businessRepo.save(profile);
 
     const user = await this.userRepo.findOne({ where: { id: userId } });

@@ -858,3 +858,57 @@ describe('BusinessService — the admin paths obey the logo rule too', () => {
     expect(businessRepo.save).toHaveBeenCalled();
   });
 });
+
+/**
+ * Industry is stored canonically.
+ *
+ * The mobile form sends display labels ("Insurance", "Banking & Finance") and
+ * the web dashboard sends its own list, while the twelve businesses already in
+ * production are lowercase. Nothing normalised, so grouping and filtering by
+ * industry would split the same industry across cases the moment a business
+ * registered from either form.
+ */
+describe('BusinessService — industry is normalised at the boundary', () => {
+  let service: BusinessService;
+  let businessRepo: ReturnType<typeof mockRepo>;
+  let userRepo: ReturnType<typeof mockRepo>;
+
+  const base = { companyName: 'Acme', country: 'ZA', logoUrl: '/business/logo/a.png' };
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BusinessService,
+        { provide: getRepositoryToken(Business), useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+        { provide: getRepositoryToken(ApiKey), useFactory: mockRepo },
+        { provide: getRepositoryToken(User), useFactory: mockRepo },
+        { provide: TransactionService, useFactory: mockTx },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(BusinessService);
+    businessRepo = module.get(getRepositoryToken(Business));
+    userRepo = module.get(getRepositoryToken(User));
+    businessRepo.create.mockImplementation((v: any) => v);
+    businessRepo.save.mockImplementation(async (v: any) => ({ id: 1, ...v }));
+    userRepo.findOne.mockResolvedValue({ id: 7, isBusiness: false });
+  });
+
+  it('stores a display-cased industry in the same form as the existing rows', async () => {
+    await service.register(7, { ...base, industry: 'Insurance' } as any);
+    expect(businessRepo.create).toHaveBeenCalledWith(expect.objectContaining({ industry: 'insurance' }));
+  });
+
+  it('trims stray whitespace', async () => {
+    await service.register(7, { ...base, industry: '  Banking & Finance  ' } as any);
+    expect(businessRepo.create).toHaveBeenCalledWith(
+      expect.objectContaining({ industry: 'banking & finance' }),
+    );
+  });
+
+  it('leaves an already-canonical industry alone', async () => {
+    await service.register(7, { ...base, industry: 'insurance' } as any);
+    expect(businessRepo.create).toHaveBeenCalledWith(expect.objectContaining({ industry: 'insurance' }));
+  });
+});
