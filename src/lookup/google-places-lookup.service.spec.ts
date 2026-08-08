@@ -34,6 +34,36 @@ describe('GooglePlacesLookupService', () => {
     expect(calledUrl).toContain('inputtype=phonenumber');
   });
 
+  // Google Places listings are publicly editable and a closed/defunct listing's
+  // name field is unvetted (it may be stale or vandalized) — the field is
+  // already requested via `fields=name,business_status` but was never read, so
+  // a closed business's raw name was shown as a live caller's identity anyway.
+  it('does not surface a name for a permanently closed listing', async () => {
+    process.env.GOOGLE_MAPS_API_KEY = 'k';
+    (global as any).fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: 'OK',
+        candidates: [{ name: 'This businesses is Closed', business_status: 'CLOSED_PERMANENTLY' }],
+      }),
+    });
+    const res = await new GooglePlacesLookupService().lookup('+27820000000');
+    expect(res).toBeNull();
+  });
+
+  it('does not surface a name for a temporarily closed listing', async () => {
+    process.env.GOOGLE_MAPS_API_KEY = 'k';
+    (global as any).fetch = jest.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: 'OK',
+        candidates: [{ name: 'Some Cafe', business_status: 'CLOSED_TEMPORARILY' }],
+      }),
+    });
+    const res = await new GooglePlacesLookupService().lookup('+27115292888');
+    expect(res).toBeNull();
+  });
+
   it('returns null when Google finds no candidates', async () => {
     process.env.GOOGLE_MAPS_API_KEY = 'k';
     (global as any).fetch = jest.fn().mockResolvedValue({

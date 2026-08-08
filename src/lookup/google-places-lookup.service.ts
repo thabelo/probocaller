@@ -45,8 +45,17 @@ export class GooglePlacesLookupService implements NumberIntelligenceProvider {
       if (!res.ok) return null;
 
       const data: any = await res.json();
-      const name = data?.candidates?.[0]?.name || undefined;
+      const candidate = data?.candidates?.[0];
+      const name = candidate?.name || undefined;
       if (!name) return null;
+
+      // A closed listing's name is unvetted (Places listings are publicly
+      // editable, so a defunct/vandalized entry's text may be stale or
+      // misleading) and the business itself can't be called back — showing it
+      // as a live caller's identity is worse than showing nothing.
+      if (candidate?.business_status === 'CLOSED_PERMANENTLY' || candidate?.business_status === 'CLOSED_TEMPORARILY') {
+        return null;
+      }
 
       return { callerName: name };
     } catch {
