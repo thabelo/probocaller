@@ -430,8 +430,10 @@ export class CallService {
           );
 
           // Lifetime referral commission: if the receiver was referred, pay
-          // their referrer an EXTRA 3% on these earnings inside the SAME tx.
-          await this.referralService.payCommission(receiverUser.id, userEarnings, m);
+          // their referrer an EXTRA 3% of the PLATFORM's OWN cut (not the
+          // receiver's earnings) inside the SAME tx. Platform-funded: the
+          // receiver's credited amount above is unaffected.
+          await this.referralService.payCommission(receiverUser.id, platformCut, m);
 
           earnedForReceiver = userEarnings;
           receiverId = receiverUser.id;

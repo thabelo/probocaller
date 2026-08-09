@@ -175,8 +175,10 @@ export class PayToContactService {
       );
 
       // Lifetime referral commission: if this earner was referred, pay their
-      // referrer an EXTRA 3% on these earnings inside the SAME transaction.
-      await this.referralService.payCommission(request.userId, userEarnings, m);
+      // referrer an EXTRA 3% of the PLATFORM's OWN fee (not the earner's
+      // earnings) inside the SAME transaction. Platform-funded: the earner's
+      // credited amount above is unaffected.
+      await this.referralService.payCommission(request.userId, platformFee, m);
 
       // Route the skimmed fee to the platform wallet (when configured) so the
       // ledger balances: bid == user earnings + platform fee.

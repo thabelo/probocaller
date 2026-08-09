@@ -17,6 +17,7 @@ export class SubmitFicaDto {
   @IsString() @MinLength(4) idNumber: string;
   @IsOptional() @IsIn(['sa_id', 'passport']) idType?: string;
   @IsString() @MinLength(4) residentialAddress: string;
+  @IsOptional() @IsString() countryCode?: string;
 }
 
 @ApiTags('fica')
@@ -48,9 +49,15 @@ export class FicaController {
   }
 
   @Get('requirements')
-  @ApiOperation({ summary: 'List required FICA documents' })
+  @ApiOperation({ summary: 'List required FICA documents (defaults to South Africa)' })
   requirements() {
     return this.fica.getRequirements();
+  }
+
+  @Get('requirements/:countryCode')
+  @ApiOperation({ summary: 'List required FICA documents for a specific country' })
+  requirementsForCountry(@Param('countryCode') countryCode: string) {
+    return this.fica.getRequirements(countryCode);
   }
 
   @Get('status')

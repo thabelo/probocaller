@@ -602,6 +602,17 @@ describe('ProfileService', () => {
       expect(result.totalCost).toBe(2);
     });
 
+    it('splits the user earning using the admin-configured PLATFORM_CUT_RATE, not the hardcoded 24%', async () => {
+      wireMatches(100, 5, 1); // costForUser = 5
+      (service as any).settingRepo.findOne.mockImplementation(async ({ where }: any) =>
+        where.key === 'PLATFORM_CUT_RATE' ? { value: '0.10' } : null);
+      const result = await service.purchaseLeads(7, {
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100,
+      });
+      // platformCut = 5 * 0.10 = 0.5, userEarning = 4.5 (the old hardcoded 24% would give 3.8).
+      expect(result.totalEarnedByUsers).toBeCloseTo(4.5, 6);
+    });
+
     it('caps the compounding factor at maxMultiplier (base fee can never run away)', async () => {
       wireMatches(100, 0, 1); // 1 match, zero data cost → isolate the base fee
       (service as any).settingRepo.findOne.mockImplementation(async ({ where }: any) =>
@@ -749,13 +760,14 @@ describe('ProfileService', () => {
       expect(savedEntityClasses).toContain(DataAccessLog);
     });
 
-    it('pays a referral commission on each shared owner’s DATA_EARN via the same manager', async () => {
+    it('pays a referral commission on the PLATFORM CUT (not the user earning) via the same manager', async () => {
       // costForUser = 5, platformCut = 5*0.24 = 1.2, userEarning = 3.8.
-      // The single matched profile is owned by userId 100.
+      // The single matched profile is owned by userId 100. Commission is
+      // platform-funded: computed from platformCut (1.2), not userEarning (3.8).
       wireMatches(100, 5, 1);
       await service.purchaseLeads(7, { filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100 });
 
-      expect(referral.payCommission).toHaveBeenCalledWith(100, 3.8, managerSpy);
+      expect(referral.payCommission).toHaveBeenCalledWith(100, 1.2, managerSpy);
     });
 
     it('Backend H6 — locks the BUSINESS wallet row with pessimistic_write inside the txn (prevents concurrent over-spend)', async () => {

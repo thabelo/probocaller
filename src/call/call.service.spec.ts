@@ -420,7 +420,7 @@ describe('CallService — completeCall reward integrity', () => {
     expect(earn[earn.length - 1]).toBe(manager);
   });
 
-  it('pays the receiver’s referrer a 3% commission on the CALL_EARN via the same manager', async () => {
+  it('pays the receiver’s referrer a 3% commission on the PLATFORM CUT (not the user earnings) via the same manager', async () => {
     const business = mockUser({ id: 2, isBusiness: true, walletBalance: 100 });
     const earner   = mockUser({ id: 1, isBusiness: false, walletBalance: 0 });
     const call = { id: 53, fromUserId: 1, toUserId: 2, status: 'initiated', ratePerSecond: 0.002 };
@@ -428,9 +428,11 @@ describe('CallService — completeCall reward integrity', () => {
     callRepo.findOne.mockResolvedValue(call);
     wireWallets(business, earner, call);
 
-    await service.completeCall(2, 53, 1000); // userEarnings = 1.52
+    await service.completeCall(2, 53, 1000); // businessCost = 2.0, platformCut = 0.48, userEarnings = 1.52
 
-    expect(referral.payCommission).toHaveBeenCalledWith(1, 1.52, manager);
+    // Commission is platform-funded: it's computed from the PLATFORM's own cut
+    // (0.48), not from the receiver's take-home earnings (1.52).
+    expect(referral.payCommission).toHaveBeenCalledWith(1, 0.48, manager);
   });
 
   it('F15: the earnings notification is in ZAR (R…), not dollars', async () => {

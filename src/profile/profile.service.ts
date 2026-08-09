@@ -21,6 +21,7 @@ const DEFAULT_LEADS_BASE_FEE = 250;
 const DEFAULT_LEADS_FREE_DAYS = 7;       // the base fee covers this authorisation window
 const DEFAULT_LEADS_DAILY_RATE = 0.018;  // compounding interest per day beyond the free window
 const DEFAULT_LEADS_MAX_MULTIPLIER = 3;  // cap so the compounded base fee can't run away
+const DEFAULT_PLATFORM_CUT_RATE = 0.24;  // admin-configurable share of the leads (data) cost the platform keeps
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpsertProfileFieldDto } from './dto/upsert-profile-field.dto';
 import { QueryAudienceDto, SaveAudienceDto } from './dto/query-audience.dto';
@@ -81,6 +82,14 @@ export class ProfileService {
       dailyRate: Number.isFinite(rate) && rate >= 0 ? rate : DEFAULT_LEADS_DAILY_RATE,
       maxMultiplier: Number.isFinite(cap) && cap >= 1 ? cap : DEFAULT_LEADS_MAX_MULTIPLIER,
     };
+  }
+
+  // Admin-configurable platform cut on the leads (data) cost — the same Setting
+  // row read live by call.service.ts / user.controller.ts, so a Pricing-page
+  // change here takes effect immediately everywhere it's used.
+  private async getPlatformCutRate(): Promise<number> {
+    const s = await this.settingRepo.findOne({ where: { key: 'PLATFORM_CUT_RATE' } });
+    return s ? parseFloat(s.value) || DEFAULT_PLATFORM_CUT_RATE : DEFAULT_PLATFORM_CUT_RATE;
   }
 
   // Single source of truth for the base-fee period multiplier: the base fee
@@ -456,6 +465,9 @@ export class ProfileService {
     const compoundFactor = this.leadsBaseFeeFactor(periodDays, { freeDays, dailyRate, maxMultiplier });
     const effectiveBaseFee = parseFloat((baseFee * compoundFactor).toFixed(6));
 
+    // Admin-configurable platform cut on the leads (data) cost (defaults to 24%).
+    const platformCutRate = await this.getPlatformCutRate();
+
     // H6 bugfix — wrap the wallet-mutating loop in a single transaction with
     // a pessimistic_write lock on the caller's wallet row, so two parallel
     // purchaseLeads calls from the same business can't both read the same
@@ -501,7 +513,7 @@ export class ProfileService {
         lockedBiz.walletBalance = parseFloat((Number(lockedBiz.walletBalance) - effectiveBaseFee).toFixed(6));
         baseFeeTotal = parseFloat((baseFeeTotal + effectiveBaseFee).toFixed(6));
 
-        const platformCut = parseFloat((costForUser * 0.24).toFixed(6));
+        const platformCut = parseFloat((costForUser * platformCutRate).toFixed(6));
         const userEarning = parseFloat((costForUser - platformCut).toFixed(6));
 
         lockedBiz.walletBalance = parseFloat((Number(lockedBiz.walletBalance) - costForUser).toFixed(6));
@@ -546,8 +558,10 @@ export class ProfileService {
         }));
 
         // Lifetime referral commission: if this data-owner was referred, pay
-        // their referrer an EXTRA 3% on this earning inside the SAME manager/tx.
-        await this.referralService.payCommission(profile.userId, userEarning, manager);
+        // their referrer an EXTRA 3% of the PLATFORM's OWN cut (not the
+        // data-owner's earning) inside the SAME manager/tx. Platform-funded:
+        // the data-owner's credited amount above is unaffected.
+        await this.referralService.payCommission(profile.userId, platformCut, manager);
 
         const leadData: Record<string, any> = {};
         for (const k of sharableKeys) leadData[k] = profile.data[k];

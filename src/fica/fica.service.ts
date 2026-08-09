@@ -11,18 +11,17 @@ import * as path from 'path';
 import { extensionForMime } from '../common/mime-extension';
 import { FicaSubmission, FicaStatus } from './entities/fica-submission.entity';
 import { FicaDocument, FicaDocType } from './entities/fica-document.entity';
+import { getCountryFicaConfig } from './fica-country-config';
 
 const ALLOWED_MIME = new Set(['application/pdf', 'image/jpeg', 'image/jpg', 'image/png']);
 const MAX_BYTES = 10 * 1024 * 1024;
 
-export const REQUIRED_DOCS: { key: FicaDocType; label: string }[] = [
-  // SA KYC needs BOTH sides: the back carries the barcode and issue details a
-  // reviewer checks against the front.
-  { key: 'id_front',         label: 'ID document — front' },
-  { key: 'id_back',          label: 'ID document — back' },
-  { key: 'proof_of_address', label: 'Proof of address (utility bill, < 3 months)' },
-  { key: 'selfie',           label: 'Selfie holding your ID' },
-];
+/**
+ * The SA tailored document set — kept exported (and equal, by construction)
+ * to fica-country-config's ZA config, since other files still import it.
+ * Per-country requirements now live in fica-country-config.ts.
+ */
+export const REQUIRED_DOCS: { key: FicaDocType; label: string }[] = getCountryFicaConfig('ZA').documents;
 
 /** Still accepted on upload, though no longer requested. See FicaDocType. */
 const LEGACY_DOCS: FicaDocType[] = ['id_document'];
@@ -39,6 +38,7 @@ export interface SubmitFicaInput {
   idNumber: string;
   idType?: string;
   residentialAddress: string;
+  countryCode?: string;
 }
 
 @Injectable()
@@ -60,14 +60,16 @@ export class FicaService {
    * Public so the rule lives in one place: the auto-advance to "pending" and any
    * caller checking readiness must not drift apart.
    */
-  isSubmissionComplete(present: Set<string>): boolean {
-    return REQUIRED_DOCS.every(
+  isSubmissionComplete(present: Set<string>, countryCode?: string): boolean {
+    const config = getCountryFicaConfig(countryCode);
+    return config.documents.every(
       (r) => present.has(r.key) || (SATISFIED_BY[r.key] ?? []).some((alt) => present.has(alt)),
     );
   }
 
-  getRequirements() {
-    return { documents: REQUIRED_DOCS };
+  getRequirements(countryCode?: string) {
+    const config = getCountryFicaConfig(countryCode);
+    return { documents: config.documents, countryCode: config.countryCode, tailored: config.tailored };
   }
 
   /** True iff the user has any approved FICA submission. */
@@ -109,7 +111,14 @@ export class FicaService {
       }
     }
 
-    const target = existing ?? this.submissionRepo.create({ userId, status: 'draft' });
+    // countryCode is set once at creation and immutable after that — see class doc.
+    const target =
+      existing ??
+      this.submissionRepo.create({
+        userId,
+        status: 'draft',
+        countryCode: getCountryFicaConfig(dto.countryCode).countryCode,
+      });
     target.fullName = dto.fullName;
     target.idNumber = dto.idNumber;
     target.idType = dto.idType ?? 'sa_id';
@@ -130,15 +139,17 @@ export class FicaService {
     }
     if (file.size > MAX_BYTES) throw new BadRequestException('File exceeds 10 MB.');
 
-    const accepted = [...REQUIRED_DOCS.map((d) => d.key), ...LEGACY_DOCS];
-    if (!accepted.includes(documentType)) {
-      throw new BadRequestException(`Invalid documentType "${documentType}".`);
-    }
-
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId, userId } });
     if (!submission) throw new NotFoundException('FICA submission not found.');
     if (!ACTIVE.includes(submission.status)) {
       throw new ForbiddenException(`Cannot upload to a "${submission.status}" submission.`);
+    }
+
+    // Accepted document types depend on the submission's OWN country.
+    const config = getCountryFicaConfig(submission.countryCode);
+    const accepted = [...config.documents.map((d) => d.key), ...LEGACY_DOCS];
+    if (!accepted.includes(documentType)) {
+      throw new BadRequestException(`Invalid documentType "${documentType}".`);
     }
 
     // Replace existing of same type
@@ -177,7 +188,7 @@ export class FicaService {
     if (submission.status !== 'draft') return submission;
     const docs = await this.documentRepo.find({ where: { submissionId: submission.id } });
     const present = new Set(docs.map((d) => d.documentType));
-    const allPresent = this.isSubmissionComplete(present);
+    const allPresent = this.isSubmissionComplete(present, submission.countryCode);
     if (allPresent) {
       submission.status = 'pending';
       submission.submittedAt = new Date();

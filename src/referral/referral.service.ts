@@ -42,32 +42,38 @@ export class ReferralService {
 
   /**
    * Pay an EXTRA admin-configured lifetime commission to the referrer of an
-   * earner who just received an activity earning. Platform-funded override: the
-   * referee keeps 100% of their earning; this only credits the referrer.
+   * earner who just received an activity earning. Platform-funded: the
+   * referee keeps 100% of their earning; this only credits the referrer, and
+   * the commission is carved out of the PLATFORM's OWN cut of the underlying
+   * transaction (e.g. its cut of a call/lead/pay-to-contact charge) — NOT out
+   * of the referee's take-home earnings, which are entirely unaffected.
+   *
+   * `commissionBase` is therefore the platform's own cut of the transaction
+   * that produced the earning, not the earner's credited wallet amount.
    *
    * MUST be called with the caller's EntityManager so the wallet credit and the
    * REFERRAL_COMMISSION ledger row join the caller's transaction — atomic with
    * the earning event, never partial.
    *
-   * No-ops (return early, zero rows) when: commission is disabled or the earning
+   * No-ops (return early, zero rows) when: commission is disabled or the base
    * is non-positive; the earner is not referred; the referrer is the earner
    * (defence in depth); the rounded commission is zero; or the referrer row is
    * gone.
    */
   async payCommission(
     earnerId: number,
-    earnedAmount: number,
+    commissionBase: number,
     manager: EntityManager,
   ): Promise<void> {
     const rate = await this.getCommissionRate();
-    if (earnedAmount <= 0 || rate <= 0) return;
+    if (commissionBase <= 0 || rate <= 0) return;
 
     const earner = await manager.findOne(User, { where: { id: earnerId } });
     if (!earner || !earner.referredBy) return;
     const referrerId = earner.referredBy;
     if (referrerId === earnerId) return; // self-referral defence
 
-    const commission = round4(earnedAmount * rate);
+    const commission = round4(commissionBase * rate);
     if (commission <= 0) return;
 
     const referrer = await manager.findOne(User, {

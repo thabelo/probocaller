@@ -217,7 +217,7 @@ describe('PayToContactService.settle', () => {
     await expect(service.settle(7)).rejects.toThrow();
   });
 
-  it('pays the referrer a referral commission on the user earnings via the same manager', async () => {
+  it('pays the referrer a referral commission on the PLATFORM FEE (not the user earnings) via the same manager', async () => {
     const request: any = { id: 7, userId: 9, escrowAmount: 40, escrowStatus: 'held' };
     const user: any = { id: 9, walletBalance: 0 };
 
@@ -225,10 +225,12 @@ describe('PayToContactService.settle', () => {
       .mockImplementationOnce(async () => ({ ...request }))
       .mockImplementationOnce(async () => ({ ...user }));
 
-    await service.settle(7); // 30% default fee -> user earns 28
+    await service.settle(7); // 30% default fee -> platformFee = 12, user earns 28
 
-    // payCommission(earnerId, earnedAmount, manager) — same tx as the earning.
-    expect(referral.payCommission).toHaveBeenCalledWith(9, 28, manager);
+    // payCommission(earnerId, commissionBase, manager) — same tx as the
+    // earning. Commission is platform-funded: computed from platformFee (12),
+    // not the user's earnings (28).
+    expect(referral.payCommission).toHaveBeenCalledWith(9, 12, manager);
   });
 });
 

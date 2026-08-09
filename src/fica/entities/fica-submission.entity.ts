@@ -20,6 +20,16 @@ export class FicaSubmission {
   @Column({ default: 'draft' })
   status: FicaStatus;
 
+  /**
+   * Country whose FICA document set this submission was created against
+   * (see src/fica/fica-country-config.ts). Set once at creation and
+   * immutable afterwards — the uploaded documents were validated against
+   * this country's config, so letting it change later would let mismatched
+   * documents count toward a different jurisdiction's requirements.
+   */
+  @Column({ default: 'ZA' })
+  countryCode: string;
+
   @Column()
   fullName: string;
 
