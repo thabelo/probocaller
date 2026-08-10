@@ -274,5 +274,34 @@ describe('SmsLogService (admin filtered / stats)', () => {
       expect(topSenders.map((s) => s.count)).toEqual([3, 1, 1]);
       expect(topSenders.find((s) => s.address === S3)).toEqual({ address: S3, count: 1, blocked: 1 });
     });
+
+    it('groups byKeyword desc, excluding null/empty matches', async () => {
+      await seed([
+        { userId: 3, address: S1, category: 'newSender', decision: 'blocked', matchedKeyword: 'otp', createdAt: new Date('2026-01-04T10:00:00Z') },
+        { userId: 3, address: S2, category: 'newSender', decision: 'blocked', matchedKeyword: 'otp', createdAt: new Date('2026-01-04T11:00:00Z') },
+        { userId: 3, address: S3, category: 'newSender', decision: 'blocked', matchedKeyword: 'otp', createdAt: new Date('2026-01-04T12:00:00Z') },
+        { userId: 3, address: S1, category: 'newSender', decision: 'blocked', matchedKeyword: 'bank', createdAt: new Date('2026-01-04T13:00:00Z') },
+        { userId: 3, address: S2, category: 'newSender', decision: 'blocked', matchedKeyword: 'bank', createdAt: new Date('2026-01-04T14:00:00Z') },
+        { userId: 3, address: S3, category: 'newSender', decision: 'blocked', matchedKeyword: 'prize', createdAt: new Date('2026-01-04T15:00:00Z') },
+      ]);
+
+      const { byKeyword } = await service.statsFor({} as any);
+      // The 5 original rows have a null matchedKeyword and must be excluded.
+      expect(byKeyword).toEqual([
+        { keyword: 'otp', count: 3 },
+        { keyword: 'bank', count: 2 },
+        { keyword: 'prize', count: 1 },
+      ]);
+    });
+
+    it('byKeyword respects an active filter (only counts matching rows)', async () => {
+      await seed([
+        { userId: 3, address: S1, category: 'newSender', decision: 'blocked', matchedKeyword: 'otp', createdAt: new Date('2026-01-04T10:00:00Z') },
+        { userId: 3, address: S2, category: 'business', decision: 'paid', matchedKeyword: 'otp', createdAt: new Date('2026-01-04T11:00:00Z') },
+      ]);
+
+      const { byKeyword } = await service.statsFor({ category: 'newSender' } as any);
+      expect(byKeyword).toEqual([{ keyword: 'otp', count: 1 }]);
+    });
   });
 });

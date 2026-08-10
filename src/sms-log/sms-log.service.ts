@@ -57,6 +57,7 @@ export class SmsLogService {
     byCategory: Record<string, number>;
     overTime: Array<{ date: string; blocked: number; paid: number; free: number }>;
     topSenders: Array<{ address: string; count: number; blocked: number }>;
+    byKeyword: Array<{ keyword: string; count: number }>;
   }> {
     const rows = await this.applyFilters(this.repo.createQueryBuilder('s'), q)
       .orderBy('s.createdAt', 'ASC')
@@ -66,10 +67,13 @@ export class SmsLogService {
     const byCategory: Record<string, number> = { contacts: 0, business: 0, newSender: 0, unknown: 0 };
     const days = new Map<string, { date: string; blocked: number; paid: number; free: number }>();
     const senders = new Map<string, { address: string; count: number; blocked: number }>();
+    const keywords = new Map<string, number>();
 
     for (const r of rows) {
       if (r.decision in byDecision) byDecision[r.decision] += 1;
       if (r.category in byCategory) byCategory[r.category] += 1;
+
+      if (r.matchedKeyword) keywords.set(r.matchedKeyword, (keywords.get(r.matchedKeyword) ?? 0) + 1);
 
       const date = new Date(r.createdAt).toISOString().slice(0, 10);
       const bucket = days.get(date) ?? { date, blocked: 0, paid: 0, free: 0 };
@@ -86,8 +90,12 @@ export class SmsLogService {
 
     const overTime = [...days.values()].sort((a, b) => a.date.localeCompare(b.date));
     const topSenders = [...senders.values()].sort((a, b) => b.count - a.count).slice(0, 10);
+    const byKeyword = [...keywords.entries()]
+      .map(([keyword, count]) => ({ keyword, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 15);
 
-    return { byDecision, byCategory, overTime, topSenders };
+    return { byDecision, byCategory, overTime, topSenders, byKeyword };
   }
 
   /** Shared where clauses for findFiltered + statsFor. */
