@@ -22,8 +22,13 @@ const round4 = (n: number) => parseFloat(n.toFixed(4));
 
 const DEFAULT_FEE_RATE = 0.3;
 
-/** Platform fee rate, from PAY_TO_CONTACT_FEE_RATE; clamped to [0, 1). */
-const resolveFeeRate = (): number => {
+/**
+ * Platform fee rate, from PAY_TO_CONTACT_FEE_RATE; clamped to [0, 1). Exported
+ * so the app's GET /user/rate can surface the SAME live rate used at
+ * settlement — without it, the client's pre-ring earnings estimate silently
+ * drifts from what the user is actually paid whenever an admin changes it.
+ */
+export const resolveFeeRate = (): number => {
   const raw = Number(process.env.PAY_TO_CONTACT_FEE_RATE);
   if (!Number.isFinite(raw) || raw < 0 || raw >= 1) return DEFAULT_FEE_RATE;
   return raw;
@@ -54,7 +59,7 @@ export class PayToContactService {
    * precision) and the earnings absorb any rounding remainder so the two parts
    * always sum back to the full charge.
    */
-  splitEscrow(amount: number, feeRate = 0.3): EscrowSplit {
+  splitEscrow(amount: number, feeRate = DEFAULT_FEE_RATE): EscrowSplit {
     if (!(amount > 0)) {
       throw new BadRequestException('Bid amount must be greater than zero.');
     }

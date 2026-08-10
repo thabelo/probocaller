@@ -17,6 +17,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Setting } from '../config/setting.entity';
 import { REFERRAL_RATE_KEY, parseCommissionRate } from '../referral/referral.service';
+import { resolveFeeRate } from '../pay-to-contact/pay-to-contact.service';
 
 @ApiTags('users')
 @Controller('user')
@@ -231,7 +232,19 @@ export class UserController {
     // able to read it rather than compile the figure into its copy.
     const referralSetting = await this.settingRepository.findOne({ where: { key: REFERRAL_RATE_KEY } });
     const referralCommissionRate = parseCommissionRate(referralSetting?.value);
-    return { ratePerSecond, platformCutRate, userShare: 1 - platformCutRate, referralCommissionRate };
+    // Pay-to-Contact's platform fee is admin-configurable via
+    // PAY_TO_CONTACT_FEE_RATE (env, not a Setting row — see PayToContactService).
+    // The client's pre-ring earnings estimate must read the SAME live value the
+    // server actually settles with, or it silently drifts the moment an admin
+    // changes it.
+    const payToContactFeeRate = resolveFeeRate();
+    return {
+      ratePerSecond,
+      platformCutRate,
+      userShare: 1 - platformCutRate,
+      referralCommissionRate,
+      payToContactFeeRate,
+    };
   }
 
   @Get(':phoneNumber')

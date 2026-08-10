@@ -300,6 +300,35 @@ describe('UserController — GET /user/rate (live platform rate for the app)', (
     const res: any = await c.getRate();
     expect(res.referralCommissionRate).toBe(0.03);
   });
+
+  /**
+   * Pay-to-Contact earnings estimate (client-side, pre-ring) must track the
+   * SAME admin-configurable rate the server actually settles with
+   * (PAY_TO_CONTACT_FEE_RATE), or the estimate silently drifts from what the
+   * user is actually paid the moment an admin changes it.
+   */
+  describe('payToContactFeeRate', () => {
+    const savedFeeRate = process.env.PAY_TO_CONTACT_FEE_RATE;
+
+    afterEach(() => {
+      if (savedFeeRate === undefined) delete process.env.PAY_TO_CONTACT_FEE_RATE;
+      else process.env.PAY_TO_CONTACT_FEE_RATE = savedFeeRate;
+    });
+
+    it('exposes the admin-configured PAY_TO_CONTACT_FEE_RATE', async () => {
+      process.env.PAY_TO_CONTACT_FEE_RATE = '0.35';
+      const c = make({});
+      const res: any = await c.getRate();
+      expect(res.payToContactFeeRate).toBe(0.35);
+    });
+
+    it('falls back to the default fee rate when unset', async () => {
+      delete process.env.PAY_TO_CONTACT_FEE_RATE;
+      const c = make({});
+      const res: any = await c.getRate();
+      expect(res.payToContactFeeRate).toBe(0.3);
+    });
+  });
 });
 
 // Free, explicit opt-in: the client calls this after the business onboarding.
