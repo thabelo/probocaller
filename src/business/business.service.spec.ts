@@ -9,6 +9,57 @@ import { ApiKey } from './api-key.entity';
 import { User } from '../user/user.entity';
 import { TransactionService } from '../transaction/transaction.service';
 
+/**
+ * Device-sync source for GET /business-numbers/sync (business-number-sync.controller.ts).
+ * Devices cache this list to recognize "business" category SMS senders locally
+ * without a network call per message.
+ */
+describe('BusinessService — getVerifiedActiveNumbers (device sync source)', () => {
+  let service: BusinessService;
+  let numberRepo: ReturnType<typeof mockRepo>;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        BusinessService,
+        { provide: getRepositoryToken(Business), useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+        { provide: getRepositoryToken(ApiKey), useFactory: mockRepo },
+        { provide: getRepositoryToken(User), useFactory: mockRepo },
+        { provide: TransactionService, useFactory: mockTx },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(BusinessService);
+    numberRepo = module.get(getRepositoryToken(BusinessNumber));
+  });
+
+  it('returns only active numbers of verified businesses, normalised', async () => {
+    numberRepo.find.mockResolvedValue([
+      { phoneNumber: '072 123 4567', active: true, business: { verified: true } },
+      { phoneNumber: '+27829998888', active: true, business: { verified: true } },
+    ]);
+
+    const numbers = await service.getVerifiedActiveNumbers();
+
+    expect(numberRepo.find).toHaveBeenCalledWith({
+      where: { active: true, business: { verified: true } },
+      relations: ['business'],
+    });
+    expect(numbers).toEqual(['+27721234567', '+27829998888']);
+  });
+
+  it('excludes inactive numbers and unverified businesses (enforced via the where clause)', async () => {
+    // The repo call itself filters these out; this just confirms an empty
+    // result set is handled cleanly.
+    numberRepo.find.mockResolvedValue([]);
+
+    const numbers = await service.getVerifiedActiveNumbers();
+
+    expect(numbers).toEqual([]);
+  });
+});
+
 const mockRepo = () => ({
   find: jest.fn(), findOne: jest.fn(), create: jest.fn(), save: jest.fn(),
   increment: jest.fn(), update: jest.fn(),

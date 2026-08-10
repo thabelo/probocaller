@@ -80,6 +80,38 @@ export class User {
   @Column({ type: 'simple-json', default: '[]' })
   allowedCallWindows: { dayOfWeek: number; startTime: string; endTime: string }[];
 
+  // SMS-permission preset name (one of the six tiers) or 'custom'. Independent
+  // sibling of the call-permission columns above — see data-broker/sms-policy.ts.
+  @Column({ default: 'all_paid_biz' })
+  smsPermissionMode: string;
+
+  // The base tier the user selected for SMS; custom per-category rules are
+  // overrides layered on top.
+  @Column({ default: 'all_paid_biz' })
+  smsBasePreset: string;
+
+  // Four-category SMS policy (see data-broker/sms-policy.ts). Each: free | paid | blocked.
+  @Column({ default: 'free' })
+  contactsSmsPolicy: string; // in your device contacts
+
+  @Column({ default: 'paid' })
+  businessSmsPolicy: string; // an identified business
+
+  @Column({ default: 'free' })
+  newSmsPolicy: string; // first-time sender (has a sender ID, not a contact)
+
+  @Column({ default: 'free' })
+  unknownSmsPolicy: string; // no sender ID
+
+  // Saved custom SMS rules: standalone named four-category policies beside the
+  // six tiers in one radio group. Fully independent of customCallRules.
+  @Column({ type: 'jsonb', default: () => "'[]'" })
+  customSmsRules: { id: string; name: string; contacts: string; business: string; newSender: string; unknown: string }[];
+
+  // Which custom SMS rule is active ('' = the smsBasePreset tier is active).
+  @Column({ default: '' })
+  selectedCustomSmsRuleId: string;
+
   @Column({ default: false })
   dataShareEnabled: boolean;
 

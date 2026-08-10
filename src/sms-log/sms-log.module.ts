@@ -1,0 +1,20 @@
+import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { PassportModule } from '@nestjs/passport';
+import { SmsLog } from './sms-log.entity';
+import { SmsLogService } from './sms-log.service';
+import { SmsLogController } from './sms-log.controller';
+import { AdminSmsLogController } from './admin-sms-log.controller';
+import { AdminGuard } from '../admin/admin.guard';
+import { User } from '../user/user.entity';
+
+@Module({
+  imports: [
+    TypeOrmModule.forFeature([SmsLog, User]),
+    PassportModule.register({ defaultStrategy: 'jwt' }),
+  ],
+  controllers: [SmsLogController, AdminSmsLogController],
+  providers: [SmsLogService, AdminGuard],
+  exports: [SmsLogService],
+})
+export class SmsLogModule {}

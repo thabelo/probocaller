@@ -37,6 +37,9 @@ import { UserConsent } from '../../consent/user-consent.entity';
 import { ErrorLog } from '../../error-log/error-log.entity';
 import { SuppressionEntry } from '../../suppression/suppression.entity';
 import { ReverseLookupEvent } from '../../lookup/reverse-lookup-event.entity';
+import { ScamKeyword } from '../../scam-keyword/scam-keyword.entity';
+import { WhitelistedNumber } from '../../business-whitelist/business-whitelist.entity';
+import { SmsLog } from '../../sms-log/sms-log.entity';
 
 /**
  * Canonical list of every persisted TypeORM entity.
@@ -88,4 +91,7 @@ export const ENTITIES = [
   ErrorLog,
   SuppressionEntry,
   ReverseLookupEvent,
+  ScamKeyword,
+  WhitelistedNumber,
+  SmsLog,
 ];

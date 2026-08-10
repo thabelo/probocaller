@@ -9,6 +9,7 @@ import { RequestCallPermissionDto } from './dto/request-call-permission.dto';
 import { PayToContactService } from '../pay-to-contact/pay-to-contact.service';
 import { ProfileService } from '../profile/profile.service';
 import { presetFor, policyForPreset, CallPolicy } from '../call/call-policy';
+import { presetForSms, policyForSmsPreset, SmsPolicy } from './sms-policy';
 
 // Legacy callPermissionMode values → new preset names (mapped on save).
 const LEGACY_MODE_ALIAS: Record<string, string> = {
@@ -39,6 +40,14 @@ export class DataBrokerService {
       newCaller: (user.newCallPolicy || 'free') as any,
       unknown: (user.unknownCallPolicy || 'free') as any,
     };
+    // SMS permissions — independent, parallel sibling of the call policy above
+    // (see sms-policy.ts). No shared columns or state with the call block.
+    const smsPolicy: SmsPolicy = {
+      contacts: (user.contactsSmsPolicy || 'free') as any,
+      business: (user.businessSmsPolicy || 'paid') as any,
+      newSender: (user.newSmsPolicy || 'free') as any,
+      unknown: (user.unknownSmsPolicy || 'free') as any,
+    };
     return {
       // Preset name is always derived from the four categories, so it never drifts.
       callPermissionMode: presetFor(policy),
@@ -53,6 +62,15 @@ export class DataBrokerService {
       newCallPolicy: policy.newCaller,
       unknownCallPolicy: policy.unknown,
       allowedCallWindows: user.allowedCallWindows || [],
+      // SMS permissions (see sms-policy.ts) — same shape, independent storage.
+      smsPermissionMode: presetForSms(smsPolicy),
+      smsBasePreset: user.smsBasePreset || 'all_paid_biz',
+      customSmsRules: user.customSmsRules || [],
+      selectedCustomSmsRuleId: user.selectedCustomSmsRuleId || '',
+      contactsSmsPolicy: smsPolicy.contacts,
+      businessSmsPolicy: smsPolicy.business,
+      newSmsPolicy: smsPolicy.newSender,
+      unknownSmsPolicy: smsPolicy.unknown,
       dataShareEnabled: user.dataShareEnabled,
       dataCategories: user.dataCategories || [],
       incognitoEnabled: user.incognitoEnabled,
@@ -70,6 +88,14 @@ export class DataBrokerService {
       business: (user.businessCallPolicy || 'paid') as any,
       newCaller: (user.newCallPolicy || 'free') as any,
       unknown: (user.unknownCallPolicy || 'free') as any,
+    };
+    // SMS permissions — independent, parallel resolution. Never reads or
+    // writes any call-policy column.
+    const smsPolicy: SmsPolicy = {
+      contacts: (user.contactsSmsPolicy || 'free') as any,
+      business: (user.businessSmsPolicy || 'paid') as any,
+      newSender: (user.newSmsPolicy || 'free') as any,
+      unknown: (user.unknownSmsPolicy || 'free') as any,
     };
     // Replace the saved custom-rule list (create/rename/delete come in as the
     // full new list). Names are required and must be unique.
@@ -134,6 +160,69 @@ export class DataBrokerService {
     user.newCallPolicy = policy.newCaller;
     user.unknownCallPolicy = policy.unknown;
     user.callPermissionMode = presetFor(policy);
+
+    // --- SMS permissions: same structure as the call block above, fully
+    // independent storage/state (see sms-policy.ts). ---
+
+    // Replace the saved custom SMS-rule list. Names required, unique within
+    // customSmsRules only (a call rule and an SMS rule may share a name).
+    if (dto.customSmsRules !== undefined) {
+      const seenSms = new Set<string>();
+      for (const rule of dto.customSmsRules) {
+        const name = (rule.name || '').trim();
+        if (!name) throw new BadRequestException('Every custom SMS rule needs a name');
+        const key = name.toLowerCase();
+        if (seenSms.has(key)) throw new BadRequestException(`Duplicate custom SMS rule name: ${name}`);
+        seenSms.add(key);
+      }
+      user.customSmsRules = dto.customSmsRules;
+      // If the active SMS rule was just deleted, fall back to the base preset tier.
+      const selectedSms = user.selectedCustomSmsRuleId || '';
+      if (selectedSms && !dto.customSmsRules.some((r) => r.id === selectedSms)) {
+        user.selectedCustomSmsRuleId = '';
+        const base = policyForSmsPreset(user.smsBasePreset || 'all_paid_biz');
+        if (base) Object.assign(smsPolicy, base);
+      }
+    }
+
+    if (dto.smsPermissionMode !== undefined) {
+      const preset = policyForSmsPreset(dto.smsPermissionMode);
+      if (preset) {
+        // Picking a preset tier resets all categories, becomes the new base, and
+        // deselects any active custom rule (the rule itself is kept).
+        Object.assign(smsPolicy, preset);
+        user.smsBasePreset = dto.smsPermissionMode;
+        user.selectedCustomSmsRuleId = '';
+      }
+    }
+
+    // Select a custom SMS rule ('' reverts to the base preset tier).
+    if (dto.selectedCustomSmsRuleId !== undefined) {
+      if (dto.selectedCustomSmsRuleId === '') {
+        user.selectedCustomSmsRuleId = '';
+        const base = policyForSmsPreset(user.smsBasePreset || 'all_paid_biz');
+        if (base) Object.assign(smsPolicy, base);
+      } else {
+        const rules = user.customSmsRules || [];
+        const rule = rules.find((r) => r.id === dto.selectedCustomSmsRuleId);
+        if (!rule) throw new BadRequestException('Unknown custom SMS rule');
+        user.selectedCustomSmsRuleId = rule.id;
+        smsPolicy.contacts = rule.contacts as any;
+        smsPolicy.business = rule.business as any;
+        smsPolicy.newSender = rule.newSender as any;
+        smsPolicy.unknown = rule.unknown as any;
+      }
+    }
+
+    if (dto.contactsSmsPolicy !== undefined) smsPolicy.contacts = dto.contactsSmsPolicy as any;
+    if (dto.businessSmsPolicy !== undefined) smsPolicy.business = dto.businessSmsPolicy as any;
+    if (dto.newSmsPolicy !== undefined) smsPolicy.newSender = dto.newSmsPolicy as any;
+    if (dto.unknownSmsPolicy !== undefined) smsPolicy.unknown = dto.unknownSmsPolicy as any;
+    user.contactsSmsPolicy = smsPolicy.contacts;
+    user.businessSmsPolicy = smsPolicy.business;
+    user.newSmsPolicy = smsPolicy.newSender;
+    user.unknownSmsPolicy = smsPolicy.unknown;
+    user.smsPermissionMode = presetForSms(smsPolicy);
 
     if (dto.allowedCallWindows !== undefined) user.allowedCallWindows = dto.allowedCallWindows;
     if (dto.dataShareEnabled !== undefined) user.dataShareEnabled = dto.dataShareEnabled;

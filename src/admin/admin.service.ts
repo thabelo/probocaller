@@ -450,6 +450,7 @@ export class AdminService {
   async seedDefaultConfig(): Promise<void> {
     const defaults = [
       { key: 'RATE_PER_SECOND', value: '0.002', description: 'Charge per second for business calls (USD)' },
+      { key: 'SMS_RATE_PER_MESSAGE', value: '0.05', description: 'Flat charge per SMS message (USD)' },
       { key: 'PLATFORM_CUT_RATE', value: '0.24', description: 'Platform revenue share (0.24 = 24%)' },
       { key: 'REFERRAL_COMMISSION_RATE', value: '0.03', description: 'Lifetime referral commission paid to the referrer, platform-funded (0.03 = 3%). Set to 0 to switch the programme off.' },
       { key: 'LEADS_BASE_FEE', value: '250', description: 'Data-certificate base fee (ZAR) charged per user (per lead)' },

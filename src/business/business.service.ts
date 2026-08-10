@@ -10,6 +10,7 @@ import { BusinessNumber, NUMBER_PURPOSES } from './business-number.entity';
 import { ApiKey } from './api-key.entity';
 import { User } from '../user/user.entity';
 import { TransactionService } from '../transaction/transaction.service';
+import { normalizeNumber } from '../suppression/number-hash';
 
 /**
  * The Probocaller-branded placeholder logo every business gets when its owner
@@ -563,6 +564,20 @@ export class BusinessService {
     if (!key) throw new NotFoundException('API key not found');
     key.revoked = true;
     return this.apiKeyRepo.save(key);
+  }
+
+  /**
+   * Device-sync source for GET /business-numbers/sync: every active phone
+   * number belonging to a VERIFIED business, normalised. Devices cache this
+   * list to recognize "business" category SMS senders locally without a
+   * network call per message.
+   */
+  async getVerifiedActiveNumbers(): Promise<string[]> {
+    const rows = await this.numberRepo.find({
+      where: { active: true, business: { verified: true } },
+      relations: ['business'],
+    });
+    return rows.map((r) => normalizeNumber(r.phoneNumber));
   }
 
   /** Record a billed /leads call against a key (call count + spend + last used). */

@@ -57,3 +57,62 @@ describe('UpdatePrivacyPreferencesDto — call-policy fields', () => {
     expect((await errorsFor({ unknownCallPolicy: 'maybe' })).length).toBeGreaterThan(0);
   });
 });
+
+// Independent, sibling validation for SMS-policy fields — no legacy aliases,
+// no shared shape with the call-policy fields above.
+describe('UpdatePrivacyPreferencesDto — SMS-policy fields', () => {
+  it('accepts each of the six SMS tier presets', async () => {
+    for (const mode of ['all_messages', 'all_paid_biz', 'contacts_paid_biz', 'paid_all', 'contacts_only', 'dnd', 'custom']) {
+      expect(await errorsFor({ smsPermissionMode: mode })).toHaveLength(0);
+    }
+  });
+
+  it('rejects a legacy call-mode alias for smsPermissionMode (no legacy SMS aliases)', async () => {
+    expect((await errorsFor({ smsPermissionMode: 'everyone' })).length).toBeGreaterThan(0);
+  });
+
+  it('accepts the four custom SMS category policies', async () => {
+    expect(await errorsFor({
+      contactsSmsPolicy: 'free', businessSmsPolicy: 'paid', newSmsPolicy: 'paid', unknownSmsPolicy: 'blocked',
+    })).toHaveLength(0);
+  });
+
+  it('accepts a list of named custom SMS rules plus a selection id', async () => {
+    expect(await errorsFor({
+      customSmsRules: [
+        { id: 'r1', name: 'Work hours', contacts: 'free', business: 'blocked', newSender: 'free', unknown: 'free' },
+        { id: 'r2', name: 'Strict', contacts: 'paid', business: 'blocked', newSender: 'blocked', unknown: 'blocked' },
+      ],
+      selectedCustomSmsRuleId: 'r2',
+    })).toHaveLength(0);
+  });
+
+  it('accepts clearing the SMS selection with an empty id', async () => {
+    expect(await errorsFor({ selectedCustomSmsRuleId: '' })).toHaveLength(0);
+  });
+
+  it('rejects a non-array customSmsRules', async () => {
+    expect((await errorsFor({ customSmsRules: 'Work hours' })).length).toBeGreaterThan(0);
+  });
+
+  it('rejects an SMS rule with an invalid category policy', async () => {
+    expect((await errorsFor({
+      customSmsRules: [{ id: 'r1', name: 'Bad', contacts: 'sometimes', business: 'paid', newSender: 'free', unknown: 'free' }],
+    })).length).toBeGreaterThan(0);
+  });
+
+  it('rejects an SMS rule missing its id or name', async () => {
+    expect((await errorsFor({
+      customSmsRules: [{ name: 'No id', contacts: 'free', business: 'paid', newSender: 'free', unknown: 'free' }],
+    })).length).toBeGreaterThan(0);
+    expect((await errorsFor({
+      customSmsRules: [{ id: 'r1', contacts: 'free', business: 'paid', newSender: 'free', unknown: 'free' }],
+    })).length).toBeGreaterThan(0);
+  });
+
+  it('rejects an unknown SMS category policy value', async () => {
+    expect((await errorsFor({ contactsSmsPolicy: 'whatever' })).length).toBeGreaterThan(0);
+    expect((await errorsFor({ newSmsPolicy: 'sometimes' })).length).toBeGreaterThan(0);
+    expect((await errorsFor({ unknownSmsPolicy: 'maybe' })).length).toBeGreaterThan(0);
+  });
+});

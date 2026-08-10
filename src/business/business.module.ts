@@ -10,6 +10,7 @@ import { BusinessController } from './business.controller';
 import { BusinessLogoController } from './business-logo.controller';
 import { BusinessLogoService } from './business-logo.service';
 import { LeadsController } from './leads.controller';
+import { BusinessNumberSyncController } from './business-number-sync.controller';
 import { ApiKeyGuard } from './api-key.guard';
 import { ProfileModule } from '../profile/profile.module';
 import { TransactionModule } from '../transaction/transaction.module';
@@ -21,7 +22,7 @@ import { TransactionModule } from '../transaction/transaction.module';
     ProfileModule,
     TransactionModule,
   ],
-  controllers: [BusinessController, BusinessLogoController, LeadsController],
+  controllers: [BusinessController, BusinessLogoController, LeadsController, BusinessNumberSyncController],
   providers: [BusinessService, BusinessLogoService, ApiKeyGuard],
   exports: [BusinessService],
 })

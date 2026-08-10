@@ -35,7 +35,6 @@ import { DataMigrationModule } from './migration/data-migration.module';
 import { DataMigrationService } from './migration/data-migration.service';
 
 import { LookupModule } from './lookup/lookup.module';
-import { ScamShieldModule } from './scam-shield/scam-shield.module';
 import { SubscriptionModule } from './subscription/subscription.module';
 import { ScreeningModule } from './screening/screening.module';
 import { CallScreening } from './screening/call-screening.entity';
@@ -58,6 +57,9 @@ import { BlockedKeyword } from './blocked-keyword/blocked-keyword.entity';
 import { BlockedKeywordModule } from './blocked-keyword/blocked-keyword.module';
 import { SmsDeletionLog } from './sms-deletion-log/sms-deletion-log.entity';
 import { SmsDeletionLogModule } from './sms-deletion-log/sms-deletion-log.module';
+import { ScamKeywordModule } from './scam-keyword/scam-keyword.module';
+import { BusinessWhitelistModule } from './business-whitelist/business-whitelist.module';
+import { SmsLogModule } from './sms-log/sms-log.module';
 import { SpamReport } from './spam-report/spam-report.entity';
 import { SpamReportModule } from './spam-report/spam-report.module';
 import { ReportedSms } from './reported-sms/reported-sms.entity';
@@ -170,7 +172,6 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
     TransactionModule,
     DataMigrationModule,
     LookupModule,
-    ScamShieldModule,
     SubscriptionModule,
     ScreeningModule,
     ReportModule,
@@ -180,6 +181,9 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
     KybModule,
     BlockedKeywordModule,
     SmsDeletionLogModule,
+    ScamKeywordModule,
+    BusinessWhitelistModule,
+    SmsLogModule,
     SpamReportModule,
     ReportedSmsModule,
     FeedbackModule,
