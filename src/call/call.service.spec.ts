@@ -435,6 +435,23 @@ describe('CallService — completeCall reward integrity', () => {
     expect(referral.payCommission).toHaveBeenCalledWith(1, 0.48, manager);
   });
 
+  // Regression: the CALL_CHARGE ledger description must be in ZAR (R…), like
+  // the CALL_EARN side of the same transaction (F15 below) — not dollars.
+  it('the CALL_CHARGE ledger description is in ZAR (R…), not dollars', async () => {
+    const business = mockUser({ id: 2, isBusiness: true, walletBalance: 100 });
+    const earner   = mockUser({ id: 1, isBusiness: false, walletBalance: 0 });
+    const call = { id: 57, fromUserId: 1, toUserId: 2, status: 'initiated', ratePerSecond: 0.002 };
+    callRepo.findOne.mockResolvedValue(call);
+    wireWallets(business, earner, call);
+
+    await service.completeCall(2, 57, 1000);
+
+    const charge = txService.log.mock.calls.find((c: any[]) => c[1] === 'CALL_CHARGE');
+    const description = charge[3];
+    expect(description).toContain('R');
+    expect(description).not.toContain('$');
+  });
+
   it('F15: the earnings notification is in ZAR (R…), not dollars', async () => {
     const business = mockUser({ id: 2, isBusiness: true, walletBalance: 100 });
     const earner   = mockUser({ id: 1, isBusiness: false, walletBalance: 0 });

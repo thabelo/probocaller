@@ -164,6 +164,23 @@ describe('ReferralService.payCommission', () => {
     );
   });
 
+  // Regression: the description used to hardcode the literal "3%" no matter
+  // what rate was actually configured — lying to the user the moment an admin
+  // changed REFERRAL_COMMISSION_RATE via PUT /admin/config. It must reflect
+  // the ACTUAL configured rate.
+  it('describes the commission using the ACTUAL configured rate, not a hardcoded 3%', async () => {
+    setRate('0.05');
+    wireReferred(3, 7, 100);
+
+    await service.payCommission(3, 10, manager);
+
+    expect(tx.log).toHaveBeenCalledWith(
+      7, 'REFERRAL_COMMISSION', 0.5, expect.stringContaining('5%'), undefined, manager,
+    );
+    const description = tx.log.mock.calls[0][3];
+    expect(description).not.toContain('3%');
+  });
+
   it('rounds the commission to 4 decimal places', async () => {
     wireReferred(3, 7, 0);
     // 1.52 * 0.03 = 0.0456 exactly at 4dp

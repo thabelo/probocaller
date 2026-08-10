@@ -398,7 +398,7 @@ export class UserService {
     }
     user.walletBalance = parseFloat((Number(user.walletBalance) + amt).toFixed(4));
     await this.userRepository.save(user);
-    await this.transactionService.log(userId, 'CREDIT_ADDED', amount, `Wallet top-up of $${amount.toFixed(2)}`);
+    await this.transactionService.log(userId, 'CREDIT_ADDED', amount, `Wallet top-up of R${amount.toFixed(2)}`);
     return user;
   }
 

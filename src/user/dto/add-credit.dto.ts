@@ -7,7 +7,7 @@ import { ApiProperty } from '@nestjs/swagger';
 const MAX_TOPUP_AMOUNT = 1000;
 
 export class AddCreditDto {
-  @ApiProperty({ example: 10, description: 'Amount to add (positive, in USD)' })
+  @ApiProperty({ example: 10, description: 'Amount to add (positive, in ZAR)' })
   @IsNumber({ maxDecimalPlaces: 4 })
   @IsPositive()
   @Max(MAX_TOPUP_AMOUNT)

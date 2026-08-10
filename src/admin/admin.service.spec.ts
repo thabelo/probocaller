@@ -65,6 +65,20 @@ describe('AdminService — addCredit (ADMIN_CREDIT / ADMIN_DEBIT reward path)', 
     await expect(service.addCredit(999, 5)).rejects.toBeInstanceOf(NotFoundException);
   });
 
+  // Regression: this is the same Rand-denominated wallet as everywhere else
+  // (call earnings, top-ups). The admin adjustment ledger description must
+  // never say "$".
+  it('logs the credit/debit description in ZAR (R…), not dollars', async () => {
+    const user = { id: 1, name: 'A', walletBalance: 10 } as User;
+    userRepo.findOne.mockResolvedValue(user);
+
+    await service.addCredit(1, 5);
+
+    expect(txService.log).toHaveBeenCalledWith(1, 'ADMIN_CREDIT', 5, expect.stringContaining('R5.00'));
+    const [, , , description] = txService.log.mock.calls[0];
+    expect(description).not.toContain('$');
+  });
+
   // Regression: a zero (or non-finite) adjustment is never a real credit/debit.
   // The old code logged it as an ADMIN_DEBIT of $0.00 — a misleading no-op
   // ledger entry. It must be rejected and write nothing.

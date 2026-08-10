@@ -88,7 +88,7 @@ export class ReferralService {
       referrerId,
       'REFERRAL_COMMISSION',
       commission,
-      `Referral commission (3%) from user #${earnerId}`,
+      `Referral commission (${Math.round(rate * 100)}%) from user #${earnerId}`,
       undefined,
       manager,
     );

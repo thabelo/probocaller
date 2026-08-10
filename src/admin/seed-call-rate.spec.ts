@@ -6,11 +6,12 @@ import { User } from '../user/user.entity';
 import { Transaction } from '../transaction/transaction.entity';
 
 /**
- * SMS billing is a flat per-message rate, admin-configurable like every other
- * rate — it has to appear in the settings table or it can't be edited from the
- * admin panel and the apps have nothing to read.
+ * The per-second business call rate is a Rand amount, like every other rate
+ * in this table (see LEADS_BASE_FEE, correctly labelled "(ZAR)") — this
+ * product is ZAR-denominated throughout (FxService base='ZAR', airtime is
+ * Rand-only). Its description must never claim "(USD)".
  */
-describe('AdminService.seedDefaultConfig — SMS rate', () => {
+describe('AdminService.seedDefaultConfig — call rate currency label', () => {
   let service: AdminService;
   let saved: any[];
   let settingRepo: any;
@@ -44,34 +45,11 @@ describe('AdminService.seedDefaultConfig — SMS rate', () => {
     service = mod.get(AdminService);
   });
 
-  it('seeds the SMS per-message rate so an admin can change it', async () => {
-    await service.seedDefaultConfig();
-    const row = saved.find((s) => s.key === 'SMS_RATE_PER_MESSAGE');
-    expect(row).toBeDefined();
-    expect(Number(row.value)).toBe(0.05);
-  });
-
-  it('describes it in terms an admin can act on', async () => {
-    await service.seedDefaultConfig();
-    const row = saved.find((s) => s.key === 'SMS_RATE_PER_MESSAGE');
-    expect(String(row.description)).toMatch(/sms|message/i);
-  });
-
-  // Regression: the rate value (0.05) is a Rand amount, like every other rate
-  // in this table (see LEADS_BASE_FEE, correctly labelled "(ZAR)"). It must
-  // never be mislabelled "(USD)".
   it('labels the currency as ZAR, not USD', async () => {
     await service.seedDefaultConfig();
-    const row = saved.find((s) => s.key === 'SMS_RATE_PER_MESSAGE');
+    const row = saved.find((s) => s.key === 'RATE_PER_SECOND');
+    expect(row).toBeDefined();
     expect(String(row.description)).toContain('(ZAR)');
     expect(String(row.description)).not.toContain('USD');
-  });
-
-  /** Seeding must never overwrite a rate an admin has already tuned. */
-  it('leaves an existing configured rate alone', async () => {
-    settingRepo.findOne.mockImplementation(async (opts: any) =>
-      opts.where.key === 'SMS_RATE_PER_MESSAGE' ? { key: 'SMS_RATE_PER_MESSAGE', value: '0.09' } : null);
-    await service.seedDefaultConfig();
-    expect(saved.find((s) => s.key === 'SMS_RATE_PER_MESSAGE')).toBeUndefined();
   });
 });

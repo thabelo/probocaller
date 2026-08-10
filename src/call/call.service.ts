@@ -408,7 +408,7 @@ export class CallService {
           businessRow.id,
           'CALL_CHARGE',
           -businessCost,
-          `${duration}s call to ${payParty?.phoneNumber || 'user'} — rate $${rate}/s`,
+          `${duration}s call to ${payParty?.phoneNumber || 'user'} — rate R${rate}/s`,
           callId,
           m,
         );

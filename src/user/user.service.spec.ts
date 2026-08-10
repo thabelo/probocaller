@@ -531,6 +531,19 @@ describe('UserService', () => {
       }
       expect(repo.save).not.toHaveBeenCalled();
     });
+
+    // Regression: this wallet is Rand-denominated everywhere else it's touched
+    // (call earnings notifications, profile balances, airtime redemptions).
+    // The top-up ledger description must say "R", never "$".
+    it('logs the top-up description in ZAR (R…), not dollars', async () => {
+      repo.findOne.mockResolvedValue({ id: 7, isBusiness: true, walletBalance: 100 });
+
+      await service.addCredit(7, 10);
+
+      expect(tx.log).toHaveBeenCalledWith(7, 'CREDIT_ADDED', 10, expect.stringContaining('R10.00'));
+      const [, , , description] = tx.log.mock.calls[0];
+      expect(description).not.toContain('$');
+    });
   });
 });
 
