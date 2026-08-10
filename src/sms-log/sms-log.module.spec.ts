@@ -4,6 +4,7 @@ import { SmsLogModule } from './sms-log.module';
 import { SmsLogService } from './sms-log.service';
 import { SmsLogController } from './sms-log.controller';
 import { AdminSmsLogController } from './admin-sms-log.controller';
+import { AdminSmsLogsController } from './admin-sms-logs.controller';
 import { SmsLog } from './sms-log.entity';
 import { User } from '../user/user.entity';
 
@@ -25,5 +26,6 @@ describe('SmsLogModule wiring', () => {
     expect(moduleRef.get(SmsLogService)).toBeInstanceOf(SmsLogService);
     expect(moduleRef.get(SmsLogController)).toBeInstanceOf(SmsLogController);
     expect(moduleRef.get(AdminSmsLogController)).toBeInstanceOf(AdminSmsLogController);
+    expect(moduleRef.get(AdminSmsLogsController)).toBeInstanceOf(AdminSmsLogsController);
   });
 });

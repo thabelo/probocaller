@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsIn, Length, Matches } from 'class-validator';
+import { IsString, IsNotEmpty, IsIn, IsOptional, Length, MaxLength, Matches } from 'class-validator';
 
 export class CreateSmsLogDto {
   @IsString()
@@ -18,4 +18,12 @@ export class CreateSmsLogDto {
 
   @IsIn(['free', 'paid', 'blocked'])
   decision: string;
+
+  // The scam keyword/pattern that matched this message, when the block was
+  // driven by keyword matching. Omitted for policy-only blocks or allowed
+  // messages.
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  matchedKeyword?: string;
 }

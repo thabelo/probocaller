@@ -36,6 +36,12 @@ export class SmsLog {
   @Column()
   decision: string;
 
+  // The scam keyword/pattern that matched this message, when the block was
+  // driven by keyword matching. Null when no keyword matched (policy-only
+  // blocks or allowed messages).
+  @Column({ type: 'varchar', nullable: true })
+  matchedKeyword: string | null;
+
   @CreateDateColumn()
   createdAt: Date;
 }

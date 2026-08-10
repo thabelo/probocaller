@@ -5,6 +5,7 @@ import { SmsLog } from './sms-log.entity';
 import { SmsLogService } from './sms-log.service';
 import { SmsLogController } from './sms-log.controller';
 import { AdminSmsLogController } from './admin-sms-log.controller';
+import { AdminSmsLogsController } from './admin-sms-logs.controller';
 import { AdminGuard } from '../admin/admin.guard';
 import { User } from '../user/user.entity';
 
@@ -13,7 +14,7 @@ import { User } from '../user/user.entity';
     TypeOrmModule.forFeature([SmsLog, User]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
   ],
-  controllers: [SmsLogController, AdminSmsLogController],
+  controllers: [SmsLogController, AdminSmsLogController, AdminSmsLogsController],
   providers: [SmsLogService, AdminGuard],
   exports: [SmsLogService],
 })

@@ -74,6 +74,38 @@ describe('CreateSmsLogDto', () => {
     expect((await validate(dto)).length).toBeGreaterThan(0);
   });
 
+  it('accepts an optional matchedKeyword', async () => {
+    const dto = plainToInstance(CreateSmsLogDto, {
+      address: '+27821234567',
+      bodyHash: validHash,
+      category: 'newSender',
+      decision: 'blocked',
+      matchedKeyword: 'otp',
+    });
+    expect(await validate(dto)).toHaveLength(0);
+  });
+
+  it('is valid without a matchedKeyword (optional)', async () => {
+    const dto = plainToInstance(CreateSmsLogDto, {
+      address: '+27821234567',
+      bodyHash: validHash,
+      category: 'contacts',
+      decision: 'free',
+    });
+    expect(await validate(dto)).toHaveLength(0);
+  });
+
+  it('rejects a matchedKeyword longer than 100 chars', async () => {
+    const dto = plainToInstance(CreateSmsLogDto, {
+      address: '+27821234567',
+      bodyHash: validHash,
+      category: 'newSender',
+      decision: 'blocked',
+      matchedKeyword: 'a'.repeat(101),
+    });
+    expect((await validate(dto)).length).toBeGreaterThan(0);
+  });
+
   it('rejects a missing address', async () => {
     const dto = plainToInstance(CreateSmsLogDto, {
       bodyHash: validHash,
