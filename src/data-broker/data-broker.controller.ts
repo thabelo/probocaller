@@ -4,6 +4,8 @@ import { AuthGuard } from '@nestjs/passport';
 import { DataBrokerService } from './data-broker.service';
 import { UpdatePrivacyPreferencesDto } from './dto/update-privacy-preferences.dto';
 import { RequestCallPermissionDto } from './dto/request-call-permission.dto';
+import { CALL_PRESETS } from '../call/call-policy';
+import { SMS_PRESETS } from './sms-policy';
 
 @ApiTags('data-broker')
 @ApiBearerAuth()
@@ -11,6 +13,18 @@ import { RequestCallPermissionDto } from './dto/request-call-permission.dto';
 @UseGuards(AuthGuard('jwt'))
 export class DataBrokerController {
   constructor(private readonly dataBrokerService: DataBrokerService) {}
+
+  // Read-only, canonical definitions of what each named preset MEANS. The
+  // mobile app previously hardcoded these (callPolicy.ts / smsPolicy.ts) with
+  // no server source; this reuses the SAME CALL_PRESETS / SMS_PRESETS
+  // constants already used to validate/persist a user's chosen preset (see
+  // presetFor/policyForPreset in call-policy.ts and their sms-policy.ts
+  // equivalents), so the two can never drift apart.
+  @Get('policy-presets')
+  @ApiOperation({ summary: 'Get the canonical call/SMS policy preset definitions (category → free|paid|blocked)' })
+  policyPresets() {
+    return { call: CALL_PRESETS, sms: SMS_PRESETS };
+  }
 
   @Get('preferences')
   @ApiOperation({ summary: 'Get your privacy & data-broker preferences' })

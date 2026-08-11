@@ -22,6 +22,14 @@ export class WithdrawalController {
     return this.service.listMine(req.user.userId);
   }
 
+  // Declared before any future ':id'-style GET route so 'config' can't be
+  // swallowed as an id param.
+  @Get('config')
+  @ApiOperation({ summary: 'Get withdrawal config (pending-request cap) used to enforce POST /withdrawals' })
+  config() {
+    return this.service.getConfig();
+  }
+
   @Post()
   @ApiOperation({ summary: 'Request a withdrawal (requires FICA approved + bank account)' })
   create(@Request() req, @Body() dto: CreateWithdrawalDto) {

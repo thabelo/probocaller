@@ -16,10 +16,20 @@ export interface FicaCountryDocConfig {
   countryCode: string;
   documents: { key: FicaDocType; label: string }[];
   tailored: boolean;
+  requiredFields: string[];
 }
 
 const PROOF_OF_ADDRESS_LABEL = 'Proof of address (utility bill, < 3 months)';
 const SELFIE_LABEL = 'Selfie holding your ID';
+
+/**
+ * Required personal-info fields (as opposed to uploaded documents). The
+ * mobile app previously hardcoded these with no server source; every
+ * country uses the same 3 fields today, mirroring how KYB's
+ * businessInfoFields[].required is server-driven rather than assumed
+ * client-side.
+ */
+const DEFAULT_REQUIRED_FIELDS = ['fullName', 'idNumber', 'address'];
 
 /** South Africa keeps exactly today's 4-document requirement, unchanged. */
 const ZA_CONFIG: FicaCountryDocConfig = {
@@ -31,6 +41,7 @@ const ZA_CONFIG: FicaCountryDocConfig = {
     { key: 'proof_of_address', label: PROOF_OF_ADDRESS_LABEL },
     { key: 'selfie', label: SELFIE_LABEL },
   ],
+  requiredFields: DEFAULT_REQUIRED_FIELDS,
 };
 
 /** Every non-ZA country: one combined ID document instead of front+back. */
@@ -43,6 +54,7 @@ function genericConfig(countryCode: string): FicaCountryDocConfig {
       { key: 'proof_of_address', label: PROOF_OF_ADDRESS_LABEL },
       { key: 'selfie', label: SELFIE_LABEL },
     ],
+    requiredFields: DEFAULT_REQUIRED_FIELDS,
   };
 }
 

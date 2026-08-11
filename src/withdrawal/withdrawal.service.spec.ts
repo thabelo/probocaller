@@ -164,4 +164,20 @@ describe('WithdrawalService — pending withdrawal cap', () => {
     withdrawalRepo.count.mockResolvedValue(1);
     await expect(service.request(1, 10)).rejects.toThrow(/pending withdrawal/i);
   });
+
+  /**
+   * The mobile app previously hardcoded this cap client-side with no server
+   * source. getConfig() exposes the SAME cap value request() enforces, so
+   * GET /withdrawals/config (controller) and request()'s ForbiddenException
+   * can never drift apart.
+   */
+  it('getConfig() exposes the default pending cap', async () => {
+    await build();
+    expect(service.getConfig()).toEqual({ pendingCap: 3 });
+  });
+
+  it('getConfig() honours the WITHDRAWAL_PENDING_CAP env override', async () => {
+    await build('7');
+    expect(service.getConfig()).toEqual({ pendingCap: 7 });
+  });
 });

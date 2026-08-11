@@ -50,4 +50,17 @@ describe('getCountryFicaConfig', () => {
   it('throws for a code that fails ISO validation', () => {
     expect(() => getCountryFicaConfig('XX')).toThrow(BadRequestException);
   });
+
+  /**
+   * requiredFields makes the client's previously-hardcoded
+   * "fullName/idNumber/address are always required" assumption queryable
+   * server-side, matching current behaviour exactly for every country.
+   */
+  it('includes requiredFields on the ZA config', () => {
+    expect(getCountryFicaConfig('ZA').requiredFields).toEqual(['fullName', 'idNumber', 'address']);
+  });
+
+  it('includes requiredFields on the generic fallback config', () => {
+    expect(getCountryFicaConfig('NG').requiredFields).toEqual(['fullName', 'idNumber', 'address']);
+  });
 });

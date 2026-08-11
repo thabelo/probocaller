@@ -69,7 +69,12 @@ export class FicaService {
 
   getRequirements(countryCode?: string) {
     const config = getCountryFicaConfig(countryCode);
-    return { documents: config.documents, countryCode: config.countryCode, tailored: config.tailored };
+    return {
+      documents: config.documents,
+      countryCode: config.countryCode,
+      tailored: config.tailored,
+      requiredFields: config.requiredFields,
+    };
   }
 
   /** True iff the user has any approved FICA submission. */

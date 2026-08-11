@@ -69,6 +69,22 @@ describe('FicaService — country-aware requirements', () => {
       expect(tailored).toBe(false);
       expect(documents.map((d) => d.key)).toEqual(['id_document', 'proof_of_address', 'selfie']);
     });
+
+    /**
+     * The mobile app hardcoded fullName/idNumber/address as always-required
+     * personal-info fields with no server source — inconsistent with KYB's
+     * server-driven businessInfoFields[].required. requiredFields makes the
+     * existing behaviour (all 3 always required) queryable per country.
+     */
+    it('includes requiredFields for the default ZA config', () => {
+      const { requiredFields } = service.getRequirements();
+      expect(requiredFields).toEqual(['fullName', 'idNumber', 'address']);
+    });
+
+    it('includes requiredFields for a non-ZA country', () => {
+      const { requiredFields } = service.getRequirements('NG');
+      expect(requiredFields).toEqual(['fullName', 'idNumber', 'address']);
+    });
   });
 
   describe('submit() — countryCode persistence', () => {

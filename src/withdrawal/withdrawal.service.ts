@@ -9,6 +9,15 @@ import { BankAccountService } from '../bank-account/bank-account.service';
 import { FicaService } from '../fica/fica.service';
 import { TransactionService } from '../transaction/transaction.service';
 
+// Cap on concurrent pending withdrawals per user. Default 3; override via
+// WITHDRAWAL_PENDING_CAP. Read live (not cached) so it can be reconfigured
+// without a restart-sensitive test setup, and shared between the
+// enforcement in request() and the read-only GET /withdrawals/config
+// endpoint so the two can never drift apart.
+export function getWithdrawalPendingCap(): number {
+  return Number(process.env.WITHDRAWAL_PENDING_CAP ?? 3);
+}
+
 @Injectable()
 export class WithdrawalService {
   constructor(
@@ -22,6 +31,13 @@ export class WithdrawalService {
     private readonly dataSource: DataSource,
   ) {}
 
+  // Read-only view of the withdrawal config used to enforce request(). Backs
+  // GET /withdrawals/config so the mobile app can read this instead of
+  // hardcoding it client-side.
+  getConfig(): { pendingCap: number } {
+    return { pendingCap: getWithdrawalPendingCap() };
+  }
+
   async request(userId: number, amount: number): Promise<Withdrawal> {
     if (!(amount > 0)) throw new BadRequestException('Amount must be greater than zero.');
 
@@ -32,10 +48,9 @@ export class WithdrawalService {
     const account = await this.bank.getByUser(userId);
     if (!account) throw new ForbiddenException('Add a bank account before withdrawing.');
 
-    // Cap concurrent pending withdrawals per user. Default 3; override via
-    // WITHDRAWAL_PENDING_CAP. Prevents a user from flooding the admin queue
-    // and from holding arbitrary amounts of wallet balance in escrow.
-    const cap = Number(process.env.WITHDRAWAL_PENDING_CAP ?? 3);
+    // Prevents a user from flooding the admin queue and from holding
+    // arbitrary amounts of wallet balance in escrow.
+    const cap = getWithdrawalPendingCap();
     const pending = await this.repo.count({ where: { userId, status: 'pending' } });
     if (pending >= cap) {
       throw new ForbiddenException(
