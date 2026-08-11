@@ -12,11 +12,13 @@ import { Setting } from '../config/setting.entity';
 import { ProfileService } from './profile.service';
 import { ProfileController } from './profile.controller';
 import { ReferralModule } from '../referral/referral.module';
+import { ConfigModule } from '../config/config.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([ProfileField, UserProfile, DataAccessLog, DataCertificate, BusinessAudience, User, Business, Transaction, Setting]),
     ReferralModule,
+    ConfigModule,
   ],
   providers: [ProfileService],
   controllers: [ProfileController],

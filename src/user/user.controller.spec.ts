@@ -14,9 +14,10 @@ describe('UserController — findUser caller-ID lookup: permittedForYou', () => 
     };
     const lookupService: any = { resolveExternalName: jest.fn().mockResolvedValue(null) };
     const externalLookupLimiter: any = { tryAcquire: jest.fn().mockReturnValue(true) };
-    const settingRepo: any = { findOne: jest.fn().mockResolvedValue({ key: 'RATE_PER_SECOND', value: '0.15' }) };
-    const controller = new UserController(userService, businessService, transactionService, dataBrokerService, lookupService, externalLookupLimiter, settingRepo);
-    return { controller, userService, businessService, dataBrokerService, lookupService, externalLookupLimiter, settingRepo };
+    const settingRepo: any = { findOne: jest.fn().mockResolvedValue(null) };
+    const settingsReader: any = { getNumber: jest.fn().mockResolvedValue(0.15) };
+    const controller = new UserController(userService, businessService, transactionService, dataBrokerService, lookupService, externalLookupLimiter, settingRepo, settingsReader);
+    return { controller, userService, businessService, dataBrokerService, lookupService, externalLookupLimiter, settingRepo, settingsReader };
   };
 
   // Requests from an app build that supports the non-cacheable external-name flag.
@@ -103,9 +104,9 @@ describe('UserController — findUser caller-ID lookup: permittedForYou', () => 
     expect(res.ratePerSecond).toBe(0.15);
   });
 
-  it('falls back to the default rate when the setting is absent, and omits it for personal callers', async () => {
-    const { controller, userService, businessService, dataBrokerService, settingRepo } = makeController();
-    settingRepo.findOne.mockResolvedValue(null); // no RATE_PER_SECOND row
+  it('uses the LIVE RATE_PER_SECOND from the settings reader, and omits it for personal callers', async () => {
+    const { controller, userService, businessService, dataBrokerService, settingsReader } = makeController();
+    settingsReader.getNumber.mockResolvedValue(0.2); // a non-default live rate
     userService.findOrCreatePlaceholder.mockResolvedValue(businessCallerUser);
     businessService.resolveCallerIdentity.mockResolvedValue({
       isBusiness: true, businessId: 3,
@@ -114,7 +115,8 @@ describe('UserController — findUser caller-ID lookup: permittedForYou', () => 
     dataBrokerService.isBusinessCallerAllowed.mockResolvedValue(true);
 
     const biz: any = await controller.findUser('5091234567', { user: { userId: 5 } } as any);
-    expect(biz.ratePerSecond).toBe(0.002); // server default, not a client guess
+    expect(biz.ratePerSecond).toBe(0.2); // reflects the live setting, not a hardcoded literal
+    expect(settingsReader.getNumber).toHaveBeenCalledWith('RATE_PER_SECOND');
 
     userService.findOrCreatePlaceholder.mockResolvedValue({ ...businessCallerUser, phoneNumber: '5551112222' });
     businessService.resolveCallerIdentity.mockResolvedValue(null);
@@ -256,32 +258,48 @@ describe('UserController — findUser caller-ID lookup: permittedForYou', () => 
 // not a hardcoded client constant. GET /user/rate exposes the live platform rate
 // and split to any authenticated user for that purpose.
 describe('UserController — GET /user/rate (live platform rate for the app)', () => {
+  // settingVal supplies raw numbers for the SettingsReaderService-backed rates
+  // (RATE_PER_SECOND, PLATFORM_CUT_RATE, SMS_RATE_PER_MESSAGE,
+  // PAY_TO_CONTACT_FEE_RATE) — these mirror seedDefaultConfig's bootstrap
+  // defaults purely as TEST-FIXTURE convenience; the app itself no longer has
+  // a fallback and would throw if a row were genuinely missing (seeding
+  // guarantees it isn't). REFERRAL_COMMISSION_RATE is still read directly off
+  // the Setting repository (unchanged, not part of this dedup).
   const make = (settingVal: any) => {
     const settingRepo: any = {
       findOne: jest.fn().mockImplementation(async (opts: any) => {
-        if (opts.where.key === 'RATE_PER_SECOND') return settingVal.rate ?? null;
-        if (opts.where.key === 'PLATFORM_CUT_RATE') return settingVal.cut ?? null;
         if (opts.where.key === 'REFERRAL_COMMISSION_RATE') return settingVal.referral ?? null;
         return null;
       }),
     };
-    return new UserController({} as any, {} as any, {} as any, {} as any, {} as any, {} as any, settingRepo);
+    const settingsReader: any = {
+      getNumber: jest.fn().mockImplementation(async (key: string) => {
+        if (key === 'RATE_PER_SECOND') return settingVal.rate ?? 0.002;
+        if (key === 'PLATFORM_CUT_RATE') return settingVal.cut ?? 0.24;
+        if (key === 'SMS_RATE_PER_MESSAGE') return settingVal.smsRate ?? 0.05;
+        if (key === 'PAY_TO_CONTACT_FEE_RATE') return settingVal.payToContactFeeRate ?? 0.3;
+        throw new Error(`unexpected setting key in test: ${key}`);
+      }),
+    };
+    return new UserController({} as any, {} as any, {} as any, {} as any, {} as any, {} as any, settingRepo, settingsReader);
   };
 
   it('returns the live rate, platform cut and derived user share', async () => {
-    const c = make({ rate: { value: '0.15' }, cut: { value: '0.24' } });
+    const c = make({ rate: 0.15, cut: 0.24 });
     const res: any = await c.getRate();
     expect(res.ratePerSecond).toBe(0.15);
     expect(res.platformCutRate).toBe(0.24);
     expect(res.userShare).toBeCloseTo(0.76, 6); // 1 - cut
   });
 
-  it('falls back to platform defaults when settings are absent', async () => {
-    const c = make({});
+  // Regression: these must come from the shared SettingsReaderService, not a
+  // hardcoded literal baked back into the controller.
+  it('reads ratePerSecond and platformCutRate from the settings reader, not a hardcoded literal', async () => {
+    const c = make({ rate: 0.2, cut: 0.5 });
     const res: any = await c.getRate();
-    expect(res.ratePerSecond).toBe(0.002); // DEFAULT_RATE_PER_SECOND
-    expect(res.platformCutRate).toBe(0.24);
-    expect(res.userShare).toBeCloseTo(0.76, 6);
+    expect(res.ratePerSecond).toBe(0.2);
+    expect(res.platformCutRate).toBe(0.5);
+    expect(res.userShare).toBeCloseTo(0.5, 6);
   });
 
   /**
@@ -304,29 +322,28 @@ describe('UserController — GET /user/rate (live platform rate for the app)', (
   /**
    * Pay-to-Contact earnings estimate (client-side, pre-ring) must track the
    * SAME admin-configurable rate the server actually settles with
-   * (PAY_TO_CONTACT_FEE_RATE), or the estimate silently drifts from what the
-   * user is actually paid the moment an admin changes it.
+   * (PAY_TO_CONTACT_FEE_RATE, now a Setting row, not process.env), or the
+   * estimate silently drifts from what the user is actually paid the moment
+   * an admin changes it.
    */
   describe('payToContactFeeRate', () => {
-    const savedFeeRate = process.env.PAY_TO_CONTACT_FEE_RATE;
-
-    afterEach(() => {
-      if (savedFeeRate === undefined) delete process.env.PAY_TO_CONTACT_FEE_RATE;
-      else process.env.PAY_TO_CONTACT_FEE_RATE = savedFeeRate;
-    });
-
     it('exposes the admin-configured PAY_TO_CONTACT_FEE_RATE', async () => {
-      process.env.PAY_TO_CONTACT_FEE_RATE = '0.35';
-      const c = make({});
+      const c = make({ payToContactFeeRate: 0.35 });
       const res: any = await c.getRate();
       expect(res.payToContactFeeRate).toBe(0.35);
     });
+  });
 
-    it('falls back to the default fee rate when unset', async () => {
-      delete process.env.PAY_TO_CONTACT_FEE_RATE;
-      const c = make({});
+  /**
+   * The SMS composer's per-message cost estimate must reflect the ADMIN-set
+   * SMS_RATE_PER_MESSAGE setting (billing's real source), not a hardcoded
+   * client constant that can silently drift the moment an admin changes it.
+   */
+  describe('smsRatePerMessage', () => {
+    it('exposes the admin-configured SMS_RATE_PER_MESSAGE', async () => {
+      const c = make({ smsRate: 0.08 });
       const res: any = await c.getRate();
-      expect(res.payToContactFeeRate).toBe(0.3);
+      expect(res.smsRatePerMessage).toBe(0.08);
     });
   });
 });
@@ -336,7 +353,7 @@ describe('UserController — POST /user/business-opt-in', () => {
   it('delegates to the service for the authenticated user only', async () => {
     const userService: any = { enableBusinessMode: jest.fn().mockResolvedValue({ businessOptIn: true }) };
     const controller = new UserController(
-      userService, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+      userService, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
     );
 
     const res: any = await controller.enableBusinessMode({ user: { userId: 42 } } as any);
@@ -351,7 +368,7 @@ describe('UserController — POST /user/business-opt-out', () => {
   it('delegates to the service for the authenticated user only', async () => {
     const userService: any = { disableBusinessMode: jest.fn().mockResolvedValue({ businessOptIn: false }) };
     const controller = new UserController(
-      userService, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
+      userService, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
     );
 
     const res: any = await controller.disableBusinessMode({ user: { userId: 42 } } as any);
@@ -401,11 +418,11 @@ describe('UserController — findUser latency', () => {
     };
     const lookupService: any = { resolveExternalName: jest.fn().mockResolvedValue(null) };
     const externalLookupLimiter: any = { tryAcquire: jest.fn().mockReturnValue(true) };
-    const settingRepo: any = { findOne: track('rate', { key: 'RATE_PER_SECOND', value: '0.15' }) };
+    const settingsReader: any = { getNumber: track('rate', 0.15) };
 
     const controller = new UserController(
       userService, businessService, {} as any, dataBrokerService,
-      lookupService, externalLookupLimiter, settingRepo,
+      lookupService, externalLookupLimiter, {} as any, settingsReader,
     );
 
     const result = await Promise.race([

@@ -1,31 +1,38 @@
-import { Test } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
+import 'reflect-metadata';
 import { SmsLogModule } from './sms-log.module';
 import { SmsLogService } from './sms-log.service';
 import { SmsLogController } from './sms-log.controller';
 import { AdminSmsLogController } from './admin-sms-log.controller';
 import { AdminSmsLogsController } from './admin-sms-logs.controller';
-import { SmsLog } from './sms-log.entity';
-import { User } from '../user/user.entity';
+import { AdminGuard } from '../admin/admin.guard';
+import { BusinessModule } from '../business/business.module';
+import { ReferralModule } from '../referral/referral.module';
+import { TransactionModule } from '../transaction/transaction.module';
+import { ConfigModule } from '../config/config.module';
 
 /**
- * Compiles the module the way Nest does, so a missing provider (e.g.
- * AdminGuard's User repository) fails here rather than only at boot.
+ * SmsLogModule now imports BusinessModule/ReferralModule/TransactionModule/
+ * ConfigModule (for SMS billing — mirrors CallService's business-call money
+ * move), which pulls in a much larger real dependency graph (ProfileModule,
+ * several TypeORM repositories, …) that needs a live DataSource to actually
+ * compile. Metadata inspection (same pattern as business.module.spec.ts)
+ * verifies the wiring declaratively without needing a live database.
  */
 describe('SmsLogModule wiring', () => {
-  it('constructs the service and both controllers from the module definition', async () => {
-    const moduleRef = await Test.createTestingModule({
-      imports: [SmsLogModule],
-    })
-      .overrideProvider(getRepositoryToken(SmsLog))
-      .useValue({ find: jest.fn(), create: jest.fn(), save: jest.fn() })
-      .overrideProvider(getRepositoryToken(User))
-      .useValue({ findOne: jest.fn() })
-      .compile();
+  it('declares the service, both controllers, the admin guard, and the billing module imports', () => {
+    const imports = Reflect.getMetadata('imports', SmsLogModule) || [];
+    const providers = Reflect.getMetadata('providers', SmsLogModule) || [];
+    const controllers = Reflect.getMetadata('controllers', SmsLogModule) || [];
+    const exportsList = Reflect.getMetadata('exports', SmsLogModule) || [];
 
-    expect(moduleRef.get(SmsLogService)).toBeInstanceOf(SmsLogService);
-    expect(moduleRef.get(SmsLogController)).toBeInstanceOf(SmsLogController);
-    expect(moduleRef.get(AdminSmsLogController)).toBeInstanceOf(AdminSmsLogController);
-    expect(moduleRef.get(AdminSmsLogsController)).toBeInstanceOf(AdminSmsLogsController);
+    expect(providers).toContain(SmsLogService);
+    expect(providers).toContain(AdminGuard);
+    expect(controllers).toEqual(
+      expect.arrayContaining([SmsLogController, AdminSmsLogController, AdminSmsLogsController]),
+    );
+    expect(imports).toEqual(
+      expect.arrayContaining([BusinessModule, ReferralModule, TransactionModule, ConfigModule]),
+    );
+    expect(exportsList).toContain(SmsLogService);
   });
 });

@@ -11,6 +11,7 @@ import { Business } from '../business/business.entity';
 import { User } from '../user/user.entity';
 import { TransactionService } from '../transaction/transaction.service';
 import { ReferralService } from '../referral/referral.service';
+import { SettingsReaderService } from '../config/settings-reader.service';
 
 export interface EscrowSplit {
   businessCharge: number;
@@ -19,20 +20,6 @@ export interface EscrowSplit {
 }
 
 const round4 = (n: number) => parseFloat(n.toFixed(4));
-
-const DEFAULT_FEE_RATE = 0.3;
-
-/**
- * Platform fee rate, from PAY_TO_CONTACT_FEE_RATE; clamped to [0, 1). Exported
- * so the app's GET /user/rate can surface the SAME live rate used at
- * settlement — without it, the client's pre-ring earnings estimate silently
- * drifts from what the user is actually paid whenever an admin changes it.
- */
-export const resolveFeeRate = (): number => {
-  const raw = Number(process.env.PAY_TO_CONTACT_FEE_RATE);
-  if (!Number.isFinite(raw) || raw < 0 || raw >= 1) return DEFAULT_FEE_RATE;
-  return raw;
-};
 
 /** Platform wallet that collects fees, from PAY_TO_CONTACT_PLATFORM_USER_ID. */
 const resolvePlatformUserId = (): number | null => {
@@ -50,7 +37,19 @@ export class PayToContactService {
     private readonly tx: TransactionService,
     private readonly referralService: ReferralService,
     private readonly ds: DataSource,
+    private readonly settingsReader: SettingsReaderService,
   ) {}
+
+  /**
+   * Platform fee rate, from the admin-configurable PAY_TO_CONTACT_FEE_RATE
+   * setting (bootstrap default 0.3, seeded by AdminService.seedDefaultConfig).
+   * Exposed so the app's GET /user/rate can surface the SAME live rate used at
+   * settlement — without it, the client's pre-ring earnings estimate silently
+   * drifts from what the user is actually paid whenever an admin changes it.
+   */
+  resolveFeeRate(): Promise<number> {
+    return this.settingsReader.getNumber('PAY_TO_CONTACT_FEE_RATE');
+  }
 
   /**
    * Divide a staked bid when a paid call is approved.
@@ -59,7 +58,7 @@ export class PayToContactService {
    * precision) and the earnings absorb any rounding remainder so the two parts
    * always sum back to the full charge.
    */
-  splitEscrow(amount: number, feeRate = DEFAULT_FEE_RATE): EscrowSplit {
+  splitEscrow(amount: number, feeRate: number): EscrowSplit {
     if (!(amount > 0)) {
       throw new BadRequestException('Bid amount must be greater than zero.');
     }
@@ -136,7 +135,7 @@ export class PayToContactService {
    * the request and the user wallet; CALL_EARN joins the same transaction.
    */
   async settle(requestId: number, feeRate?: number): Promise<CallPermissionRequest> {
-    const rate = feeRate ?? resolveFeeRate();
+    const rate = feeRate ?? await this.resolveFeeRate();
     return this.ds.transaction(async (m) => {
       const request = await m.findOne(CallPermissionRequest, {
         where: { id: requestId },

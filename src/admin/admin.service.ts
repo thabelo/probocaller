@@ -457,6 +457,7 @@ export class AdminService {
       { key: 'LEADS_FREE_DAYS', value: '7', description: 'Authorisation days the per-user base fee covers before interest applies' },
       { key: 'LEADS_DAILY_RATE', value: '0.018', description: 'Compounding interest per day on the base fee beyond the free window (0.018 = 1.8%/day)' },
       { key: 'LEADS_MAX_MULTIPLIER', value: '3', description: 'Cap on the compounded base-fee multiplier so long windows can’t run away (3 = at most 3× the base fee)' },
+      { key: 'PAY_TO_CONTACT_FEE_RATE', value: '0.3', description: 'Platform fee rate on pay-to-contact requests (0.3 = 30%)' },
     ];
     for (const def of defaults) {
       const existing = await this.settingRepository.findOne({ where: { key: def.key } });

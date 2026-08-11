@@ -12,6 +12,7 @@ import { AuditService } from '../audit/audit.service';
 const mockRepo = () => ({
   findOne: jest.fn(),
   save: jest.fn(async (e: any) => e),
+  create: jest.fn((e: any) => e),
   count: jest.fn(),
   find: jest.fn(),
 });
@@ -89,6 +90,56 @@ describe('AdminService — addCredit (ADMIN_CREDIT / ADMIN_DEBIT reward path)', 
     await expect(service.addCredit(1, 0)).rejects.toBeInstanceOf(BadRequestException);
     expect(txService.log).not.toHaveBeenCalled();
     expect(userRepo.save).not.toHaveBeenCalled();
+  });
+});
+
+// PAY_TO_CONTACT_FEE_RATE used to be read from process.env, inconsistent with
+// every other money-affecting rate (RATE_PER_SECOND, PLATFORM_CUT_RATE, …),
+// which all live in the settings table seeded here. Bringing it into the same
+// seed makes '0.3' the ONLY place its bootstrap default is hardcoded, and
+// makes it admin-editable via the same PUT /admin/config every other rate uses.
+describe('AdminService — seedDefaultConfig', () => {
+  let service: AdminService;
+  let settingRepo: ReturnType<typeof mockRepo>;
+
+  beforeEach(async () => {
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AdminService,
+        { provide: getRepositoryToken(User),     useFactory: mockRepo },
+        { provide: getRepositoryToken(CallLog),  useFactory: mockRepo },
+        { provide: getRepositoryToken(Setting),  useFactory: mockRepo },
+        { provide: getRepositoryToken(Business), useFactory: mockRepo },
+        { provide: TransactionService, useValue: { log: jest.fn() } },
+        { provide: AuditService, useValue: { record: jest.fn() } },
+      ],
+    }).compile();
+
+    service = module.get(AdminService);
+    settingRepo = module.get(getRepositoryToken(Setting));
+    settingRepo.findOne.mockResolvedValue(null); // nothing seeded yet
+  });
+
+  it('seeds PAY_TO_CONTACT_FEE_RATE at 0.3 alongside the other default settings', async () => {
+    await service.seedDefaultConfig();
+
+    const saved = settingRepo.save.mock.calls.map((c: any[]) => c[0]);
+    const feeRateRow = saved.find((s: any) => s.key === 'PAY_TO_CONTACT_FEE_RATE');
+    expect(feeRateRow).toBeDefined();
+    expect(feeRateRow.value).toBe('0.3');
+    expect(feeRateRow.description).toBe(
+      'Platform fee rate on pay-to-contact requests (0.3 = 30%)',
+    );
+  });
+
+  it('does not overwrite an existing PAY_TO_CONTACT_FEE_RATE row', async () => {
+    settingRepo.findOne.mockImplementation(async ({ where }: any) =>
+      where.key === 'PAY_TO_CONTACT_FEE_RATE' ? { key: where.key, value: '0.5' } : null);
+
+    await service.seedDefaultConfig();
+
+    const savedKeys = settingRepo.save.mock.calls.map((c: any[]) => c[0].key);
+    expect(savedKeys).not.toContain('PAY_TO_CONTACT_FEE_RATE');
   });
 });
 

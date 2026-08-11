@@ -17,7 +17,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Setting } from '../config/setting.entity';
 import { REFERRAL_RATE_KEY, parseCommissionRate } from '../referral/referral.service';
-import { resolveFeeRate } from '../pay-to-contact/pay-to-contact.service';
+import { SettingsReaderService } from '../config/settings-reader.service';
 
 @ApiTags('users')
 @Controller('user')
@@ -31,6 +31,7 @@ export class UserController {
     private readonly externalLookupLimiter: ExternalLookupRateLimiter,
     @InjectRepository(Setting)
     private readonly settingRepository: Repository<Setting>,
+    private readonly settingsReader: SettingsReaderService,
   ) {}
 
   // ── Admin-only: returns the full user list with PII. ──────────────────
@@ -222,28 +223,31 @@ export class UserController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Get the live platform per-second rate and revenue split' })
   async getRate() {
-    const DEFAULT_RATE_PER_SECOND = 0.002;
-    const DEFAULT_PLATFORM_CUT_RATE = 0.24;
-    const rateSetting = await this.settingRepository.findOne({ where: { key: 'RATE_PER_SECOND' } });
-    const cutSetting = await this.settingRepository.findOne({ where: { key: 'PLATFORM_CUT_RATE' } });
-    const ratePerSecond = rateSetting ? parseFloat(rateSetting.value) || DEFAULT_RATE_PER_SECOND : DEFAULT_RATE_PER_SECOND;
-    const platformCutRate = cutSetting ? parseFloat(cutSetting.value) || DEFAULT_PLATFORM_CUT_RATE : DEFAULT_PLATFORM_CUT_RATE;
+    // Every money-affecting rate below is read live from the settings table via
+    // the shared SettingsReaderService — no hardcoded fallback constant here,
+    // so this can never silently drift from what billing actually charges.
+    const [ratePerSecond, platformCutRate, smsRatePerMessage, payToContactFeeRate] = await Promise.all([
+      this.settingsReader.getNumber('RATE_PER_SECOND'),
+      this.settingsReader.getNumber('PLATFORM_CUT_RATE'),
+      this.settingsReader.getNumber('SMS_RATE_PER_MESSAGE'),
+      // Pay-to-Contact's platform fee is admin-configurable via the
+      // PAY_TO_CONTACT_FEE_RATE setting row (see PayToContactService). The
+      // client's pre-ring earnings estimate must read the SAME live value the
+      // server actually settles with, or it silently drifts the moment an
+      // admin changes it.
+      this.settingsReader.getNumber('PAY_TO_CONTACT_FEE_RATE'),
+    ]);
     // Quoted to users as "earn N% of everything they make", so the app must be
     // able to read it rather than compile the figure into its copy.
     const referralSetting = await this.settingRepository.findOne({ where: { key: REFERRAL_RATE_KEY } });
     const referralCommissionRate = parseCommissionRate(referralSetting?.value);
-    // Pay-to-Contact's platform fee is admin-configurable via
-    // PAY_TO_CONTACT_FEE_RATE (env, not a Setting row — see PayToContactService).
-    // The client's pre-ring earnings estimate must read the SAME live value the
-    // server actually settles with, or it silently drifts the moment an admin
-    // changes it.
-    const payToContactFeeRate = resolveFeeRate();
     return {
       ratePerSecond,
       platformCutRate,
       userShare: 1 - platformCutRate,
       referralCommissionRate,
       payToContactFeeRate,
+      smsRatePerMessage,
     };
   }
 
@@ -252,19 +256,18 @@ export class UserController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Find user by phone (caller-ID lookup, auth required)' })
   async findUser(@Param('phoneNumber') phoneNumber: string, @Request() req) {
-    // Live platform rate — the same RATE_PER_SECOND setting billing uses — so
-    // the ringing UI can show the caller's real per-second rate instead of a
-    // stale client-side constant.
-    const DEFAULT_RATE_PER_SECOND = 0.002;
+    // Live platform rate — the same RATE_PER_SECOND setting billing uses (via
+    // the shared SettingsReaderService, no hardcoded fallback here) — so the
+    // ringing UI can show the caller's real per-second rate instead of a stale
+    // client-side constant.
     // These three depend only on the phone number, so they go out together.
     // Run one after another they stacked three round trips onto the ringing
     // overlay, which sits on "Looking up caller…" until this returns.
-    const [rateSetting, user, callerIdentity] = await Promise.all([
-      this.settingRepository.findOne({ where: { key: 'RATE_PER_SECOND' } }),
+    const [RATE_PER_SECOND, user, callerIdentity] = await Promise.all([
+      this.settingsReader.getNumber('RATE_PER_SECOND'),
       this.userService.findOrCreatePlaceholder(phoneNumber),
       this.businessService.resolveCallerIdentity(phoneNumber),
     ]);
-    const RATE_PER_SECOND = rateSetting ? parseFloat(rateSetting.value) || DEFAULT_RATE_PER_SECOND : DEFAULT_RATE_PER_SECOND;
 
     // Fall back to the user's own business profile when calling from an unregistered number
     const fallbackProfile = (!callerIdentity && user.isBusiness)

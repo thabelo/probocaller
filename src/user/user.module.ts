@@ -16,6 +16,7 @@ import { DataBrokerModule } from '../data-broker/data-broker.module';
 import { LookupModule } from '../lookup/lookup.module';
 import { JWT_SECRET } from '../app.module';
 import { Setting } from '../config/setting.entity';
+import { ConfigModule } from '../config/config.module';
 import { AvatarService } from './avatar.service';
 import { AvatarController } from './avatar.controller';
 
@@ -35,6 +36,7 @@ import { AvatarController } from './avatar.controller';
     TransferModule,
     forwardRef(() => DataBrokerModule),
     LookupModule,
+    ConfigModule,
   ],
   providers: [
     UserService,

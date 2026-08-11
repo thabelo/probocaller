@@ -1,29 +1,136 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { SelectQueryBuilder } from 'typeorm';
 import { SmsLog } from './sms-log.entity';
 import { CreateSmsLogDto } from './dto/create-sms-log.dto';
 import { QuerySmsLogsDto } from './dto/query-sms-logs.dto';
 import { normalizeNumber } from '../suppression/number-hash';
+import { Business } from '../business/business.entity';
+import { User } from '../user/user.entity';
+import { BusinessService } from '../business/business.service';
+import { ReferralService } from '../referral/referral.service';
+import { TransactionService } from '../transaction/transaction.service';
+import { SettingsReaderService } from '../config/settings-reader.service';
 
 @Injectable()
 export class SmsLogService {
   constructor(
     @InjectRepository(SmsLog)
     private readonly repo: Repository<SmsLog>,
+    private readonly businessService: BusinessService,
+    private readonly referralService: ReferralService,
+    private readonly transactionService: TransactionService,
+    private readonly settingsReader: SettingsReaderService,
+    private readonly dataSource: DataSource,
   ) {}
 
-  async create(userId: number, dto: CreateSmsLogDto): Promise<SmsLog> {
-    const log = this.repo.create({
+  /**
+   * Persist the log row, unconditionally — inside the billing transaction's
+   * manager when one is given (so it commits atomically with the money move),
+   * or via the plain repository otherwise.
+   */
+  private saveLog(userId: number, dto: CreateSmsLogDto, manager?: EntityManager): Promise<SmsLog> {
+    const data = {
       userId,
       address: normalizeNumber(dto.address),
       bodyHash: dto.bodyHash,
       category: dto.category,
       decision: dto.decision,
       matchedKeyword: dto.matchedKeyword ?? null,
+    };
+    if (manager) {
+      return manager.save(SmsLog, manager.create(SmsLog, data));
+    }
+    return this.repo.save(this.repo.create(data));
+  }
+
+  /**
+   * Log every SMS the device evaluates. Billing ONLY applies to a business
+   * SMS the client's policy decided to charge for (category:'business' +
+   * decision:'paid') — mirrors CallService.completeCall's business-call money
+   * move: the business (sender) pays, the receiving user earns, the platform
+   * takes its cut, and the receiver's referrer (if any) is paid a lifetime
+   * commission carved out of the platform's own cut. Every other
+   * category/decision combination just logs the row — no money moves.
+   */
+  async create(userId: number, dto: CreateSmsLogDto): Promise<SmsLog> {
+    if (dto.category !== 'business' || dto.decision !== 'paid') {
+      return this.saveLog(userId, dto);
+    }
+
+    // Should normally always resolve — the client only sets category:'business'
+    // for numbers it already recognises as business via the synced
+    // /business-numbers/sync list — but never block the log write if it doesn't.
+    const identity = await this.businessService.resolveCallerIdentity(dto.address);
+    if (!identity) {
+      return this.saveLog(userId, dto);
+    }
+
+    return this.dataSource.transaction(async (manager) => {
+      const business = await manager.findOne(Business, { where: { id: identity.businessId } });
+      if (!business) {
+        return this.saveLog(userId, dto, manager);
+      }
+
+      const owner = await manager.findOne(User, {
+        where: { id: business.userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!owner) {
+        return this.saveLog(userId, dto, manager);
+      }
+
+      const smsRatePerMessage = await this.settingsReader.getNumber('SMS_RATE_PER_MESSAGE');
+      const platformCutRate = await this.settingsReader.getNumber('PLATFORM_CUT_RATE');
+
+      // Cap the charge at the funds the business actually holds — the message
+      // was already delivered, so it can never be blocked after the fact; a
+      // business with 0 balance just gets a 0-cost message. Mirrors
+      // CallService.completeCall's floor.
+      const available = Math.max(0, Number(owner.walletBalance));
+      const businessCost = Math.min(smsRatePerMessage, available);
+      const platformCut = parseFloat((businessCost * platformCutRate).toFixed(6));
+      const userEarnings = parseFloat((businessCost - platformCut).toFixed(6));
+
+      owner.walletBalance = parseFloat((available - businessCost).toFixed(6));
+      await manager.save(User, owner);
+      await this.transactionService.log(
+        owner.id,
+        'SMS_CHARGE',
+        -businessCost,
+        `Business SMS to a user — rate R${smsRatePerMessage}/msg`,
+        undefined,
+        manager,
+        business.id,
+      );
+
+      const receiver = await manager.findOne(User, {
+        where: { id: userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (receiver) {
+        receiver.walletBalance = parseFloat((Number(receiver.walletBalance) + userEarnings).toFixed(6));
+        await manager.save(User, receiver);
+        await this.transactionService.log(
+          receiver.id,
+          'SMS_EARN',
+          userEarnings,
+          `Earned from a business SMS from ${business.companyName || 'business'}`,
+          undefined,
+          manager,
+          business.id,
+        );
+
+        // Lifetime referral commission: if the receiver was referred, pay their
+        // referrer an EXTRA admin-configured % of the PLATFORM's OWN cut (not
+        // the receiver's earnings) inside the SAME tx. Platform-funded: the
+        // receiver's credited amount above is unaffected.
+        await this.referralService.payCommission(receiver.id, platformCut, manager);
+      }
+
+      return this.saveLog(userId, dto, manager);
     });
-    return this.repo.save(log);
   }
 
   findAllForUser(userId: number): Promise<SmsLog[]> {

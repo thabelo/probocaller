@@ -21,12 +21,12 @@ const DEFAULT_LEADS_BASE_FEE = 250;
 const DEFAULT_LEADS_FREE_DAYS = 7;       // the base fee covers this authorisation window
 const DEFAULT_LEADS_DAILY_RATE = 0.018;  // compounding interest per day beyond the free window
 const DEFAULT_LEADS_MAX_MULTIPLIER = 3;  // cap so the compounded base fee can't run away
-const DEFAULT_PLATFORM_CUT_RATE = 0.24;  // admin-configurable share of the leads (data) cost the platform keeps
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpsertProfileFieldDto } from './dto/upsert-profile-field.dto';
 import { QueryAudienceDto, SaveAudienceDto } from './dto/query-audience.dto';
 import { AdminUpdateDataBrokerDto } from './dto/admin-data-broker.dto';
 import { ReferralService } from '../referral/referral.service';
+import { SettingsReaderService } from '../config/settings-reader.service';
 
 const TIER_THRESHOLDS = { basic: 0, silver: 25, gold: 50, platinum: 75 };
 
@@ -58,6 +58,7 @@ export class ProfileService {
     private certRepo: Repository<DataCertificate>,
     @InjectRepository(Setting)
     private settingRepo: Repository<Setting>,
+    private readonly settingsReader: SettingsReaderService,
     private readonly referralService: ReferralService,
     private readonly dataSource: DataSource,
   ) {}
@@ -87,9 +88,8 @@ export class ProfileService {
   // Admin-configurable platform cut on the leads (data) cost — the same Setting
   // row read live by call.service.ts / user.controller.ts, so a Pricing-page
   // change here takes effect immediately everywhere it's used.
-  private async getPlatformCutRate(): Promise<number> {
-    const s = await this.settingRepo.findOne({ where: { key: 'PLATFORM_CUT_RATE' } });
-    return s ? parseFloat(s.value) || DEFAULT_PLATFORM_CUT_RATE : DEFAULT_PLATFORM_CUT_RATE;
+  private getPlatformCutRate(): Promise<number> {
+    return this.settingsReader.getNumber('PLATFORM_CUT_RATE');
   }
 
   // Single source of truth for the base-fee period multiplier: the base fee

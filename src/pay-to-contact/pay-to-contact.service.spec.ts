@@ -6,6 +6,13 @@ import { CallPermissionRequest } from '../data-broker/call-permission-request.en
 import { User } from '../user/user.entity';
 import { TransactionService } from '../transaction/transaction.service';
 import { ReferralService } from '../referral/referral.service';
+import { SettingsReaderService } from '../config/settings-reader.service';
+
+// Mirrors seedDefaultConfig's PAY_TO_CONTACT_FEE_RATE default (0.3), sourced
+// from the shared SettingsReaderService instead of process.env.
+const mockSettingsReader = (rate = 0.3) => ({
+  getNumber: jest.fn(async (_key: string): Promise<number> => rate),
+});
 
 /**
  * Pay-to-Contact — economic core (Cycle 1).
@@ -21,11 +28,11 @@ import { ReferralService } from '../referral/referral.service';
 describe('PayToContactService.splitEscrow', () => {
   // splitEscrow is pure; deps are irrelevant here so we pass mocks.
   const service = new PayToContactService(
-    {} as any, {} as any, {} as any, {} as any, {} as any,
+    {} as any, {} as any, {} as any, {} as any, {} as any, {} as any,
   );
 
-  it('splits a bid into platform fee and user earnings at the default 30% rate', () => {
-    const result = service.splitEscrow(100);
+  it('splits a bid into platform fee and user earnings at a 30% rate', () => {
+    const result = service.splitEscrow(100, 0.3);
     expect(result).toEqual({
       businessCharge: 100,
       platformFee: 30,
@@ -50,8 +57,8 @@ describe('PayToContactService.splitEscrow', () => {
   });
 
   it('rejects a non-positive bid', () => {
-    expect(() => service.splitEscrow(0)).toThrow();
-    expect(() => service.splitEscrow(-5)).toThrow();
+    expect(() => service.splitEscrow(0, 0.3)).toThrow();
+    expect(() => service.splitEscrow(-5, 0.3)).toThrow();
   });
 });
 
@@ -89,6 +96,7 @@ describe('PayToContactService.stake', () => {
         { provide: getRepositoryToken(User), useValue: {} },
         { provide: TransactionService, useValue: tx },
         { provide: ReferralService, useValue: referral },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
         { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
@@ -172,6 +180,7 @@ describe('PayToContactService.settle', () => {
         { provide: getRepositoryToken(User), useValue: {} },
         { provide: TransactionService, useValue: tx },
         { provide: ReferralService, useValue: referral },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
         { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
@@ -237,8 +246,9 @@ describe('PayToContactService.settle', () => {
 /**
  * Pay-to-Contact — fee config & platform ledger (follow-up).
  *
- * The platform fee rate is configurable via PAY_TO_CONTACT_FEE_RATE (default
- * 0.3). When PAY_TO_CONTACT_PLATFORM_USER_ID is set, the skimmed fee is credited
+ * The platform fee rate is configurable via the shared settings table
+ * (PAY_TO_CONTACT_FEE_RATE, default 0.3, seeded by AdminService.seedDefaultConfig).
+ * When PAY_TO_CONTACT_PLATFORM_USER_ID is set, the skimmed fee is credited
  * to that platform wallet and recorded as a PLATFORM_FEE ledger row inside the
  * same transaction — so bid == user earnings + platform fee always balances.
  */
@@ -247,16 +257,17 @@ describe('PayToContactService.settle — fee config & platform ledger', () => {
   let manager: any;
   let tx: { log: jest.Mock };
   let referral: { payCommission: jest.Mock };
-  const savedFeeRate = process.env.PAY_TO_CONTACT_FEE_RATE;
+  let settingsReader: { getNumber: jest.Mock };
   const savedPlatformId = process.env.PAY_TO_CONTACT_PLATFORM_USER_ID;
 
-  beforeEach(async () => {
+  const setup = async (feeRate = 0.3) => {
     manager = {
       findOne: jest.fn(),
       save: jest.fn().mockImplementation(async (a: any, b?: any) => b ?? a),
     };
     tx = { log: jest.fn().mockResolvedValue(undefined) };
     referral = { payCommission: jest.fn().mockResolvedValue(undefined) };
+    settingsReader = mockSettingsReader(feeRate);
     const dataSource = {
       transaction: jest.fn().mockImplementation(async (cb: any) => cb(manager)),
     };
@@ -267,21 +278,20 @@ describe('PayToContactService.settle — fee config & platform ledger', () => {
         { provide: getRepositoryToken(User), useValue: {} },
         { provide: TransactionService, useValue: tx },
         { provide: ReferralService, useValue: referral },
+        { provide: SettingsReaderService, useValue: settingsReader },
         { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
     service = module.get(PayToContactService);
-  });
+  };
 
   afterEach(() => {
-    if (savedFeeRate === undefined) delete process.env.PAY_TO_CONTACT_FEE_RATE;
-    else process.env.PAY_TO_CONTACT_FEE_RATE = savedFeeRate;
     if (savedPlatformId === undefined) delete process.env.PAY_TO_CONTACT_PLATFORM_USER_ID;
     else process.env.PAY_TO_CONTACT_PLATFORM_USER_ID = savedPlatformId;
   });
 
-  it('uses the fee rate from PAY_TO_CONTACT_FEE_RATE when no rate is passed', async () => {
-    process.env.PAY_TO_CONTACT_FEE_RATE = '0.5';
+  it('uses the fee rate from the settings table (PAY_TO_CONTACT_FEE_RATE) when no rate is passed', async () => {
+    await setup(0.5);
     delete process.env.PAY_TO_CONTACT_PLATFORM_USER_ID;
 
     manager.findOne
@@ -297,7 +307,7 @@ describe('PayToContactService.settle — fee config & platform ledger', () => {
   });
 
   it('credits the platform wallet and logs PLATFORM_FEE when a platform account is configured', async () => {
-    delete process.env.PAY_TO_CONTACT_FEE_RATE; // default 0.3
+    await setup(0.3); // default
     process.env.PAY_TO_CONTACT_PLATFORM_USER_ID = '99';
 
     manager.findOne
@@ -353,6 +363,7 @@ describe('PayToContactService.refund', () => {
         { provide: getRepositoryToken(User), useValue: {} },
         { provide: TransactionService, useValue: tx },
         { provide: ReferralService, useValue: referral },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
         { provide: DataSource, useValue: dataSource },
       ],
     }).compile();

@@ -12,6 +12,7 @@ import { Transaction } from '../transaction/transaction.entity';
 import { DataCertificate } from './data-certificate.entity';
 import { Setting } from '../config/setting.entity';
 import { ReferralService } from '../referral/referral.service';
+import { SettingsReaderService } from '../config/settings-reader.service';
 import { DataSource } from 'typeorm';
 
 const mockRepo = () => ({
@@ -21,6 +22,12 @@ const mockRepo = () => ({
   save: jest.fn(),
   update: jest.fn(),
   count: jest.fn().mockResolvedValue(0),
+});
+
+// Mirrors seedDefaultConfig's PLATFORM_CUT_RATE default (0.24), sourced from
+// the shared SettingsReaderService instead of a hardcoded fallback constant.
+const mockSettingsReader = () => ({
+  getNumber: jest.fn(async (_key: string): Promise<number> => 0.24),
 });
 
 const mockField = (overrides = {}): ProfileField =>
@@ -47,6 +54,7 @@ describe('ProfileService', () => {
         { provide: getRepositoryToken(Transaction), useFactory: mockRepo },
         { provide: getRepositoryToken(DataCertificate), useFactory: mockRepo },
         { provide: getRepositoryToken(Setting), useFactory: mockRepo },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
         { provide: ReferralService, useValue: { payCommission: jest.fn().mockResolvedValue(undefined) } },
         // DataSource is required by purchaseLeads' transaction wrapper. Other
         // tests don't exercise it; a no-op stub keeps DI satisfied.
@@ -419,6 +427,7 @@ describe('ProfileService', () => {
           { provide: getRepositoryToken(Transaction),     useFactory: mockRepo },
           { provide: getRepositoryToken(DataCertificate), useFactory: mockRepo },
           { provide: getRepositoryToken(Setting),         useFactory: mockRepo },
+          { provide: SettingsReaderService,               useFactory: mockSettingsReader },
           { provide: ReferralService,                     useValue: referral },
           { provide: DataSource,                          useValue: dsMock },
         ],
@@ -604,8 +613,7 @@ describe('ProfileService', () => {
 
     it('splits the user earning using the admin-configured PLATFORM_CUT_RATE, not the hardcoded 24%', async () => {
       wireMatches(100, 5, 1); // costForUser = 5
-      (service as any).settingRepo.findOne.mockImplementation(async ({ where }: any) =>
-        where.key === 'PLATFORM_CUT_RATE' ? { value: '0.10' } : null);
+      (service as any).settingsReader.getNumber.mockResolvedValue(0.10);
       const result = await service.purchaseLeads(7, {
         filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100,
       });

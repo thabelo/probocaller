@@ -8,13 +8,14 @@ import { Business } from '../business/business.entity';
 import { BusinessNumber } from '../business/business-number.entity';
 import { Campaign } from '../campaign/campaign.entity';
 import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { Setting } from '../config/setting.entity';
 import { TransactionService } from '../transaction/transaction.service';
 import { DataBrokerService } from '../data-broker/data-broker.service';
 import { ReferralService } from '../referral/referral.service';
+import { SettingsReaderService } from '../config/settings-reader.service';
 import { DataSource } from 'typeorm';
 
 const DEFAULT_RATE = 0.002;
+const DEFAULT_CUT = 0.24;
 
 const mockUser = (overrides: Partial<User> = {}): User =>
   ({
@@ -38,8 +39,15 @@ const mockRepo = () => ({
   find: jest.fn(),
 });
 
-const mockSettingRepo = () => ({
-  findOne: jest.fn().mockResolvedValue(null), // returns null → use default rate
+// Mirrors seedDefaultConfig's defaults so existing scenarios (which don't care
+// about a specific rate) keep behaving exactly as before, now sourced from the
+// shared SettingsReaderService instead of a raw Setting repository.
+const mockSettingsReader = () => ({
+  getNumber: jest.fn(async (key: string): Promise<number> => {
+    if (key === 'RATE_PER_SECOND') return DEFAULT_RATE;
+    if (key === 'PLATFORM_CUT_RATE') return DEFAULT_CUT;
+    throw new Error(`unexpected setting key in test: ${key}`);
+  }),
 });
 
 // A spy-able EntityManager whose save returns the saved entity, matching how
@@ -53,7 +61,7 @@ describe('CallService — LOW_FUNDS blocking', () => {
   let service: CallService;
   let userRepo: ReturnType<typeof mockRepo>;
   let callRepo: ReturnType<typeof mockRepo>;
-  let settingRepo: ReturnType<typeof mockSettingRepo>;
+  let settingsReader: ReturnType<typeof mockSettingsReader>;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -64,7 +72,7 @@ describe('CallService — LOW_FUNDS blocking', () => {
         { provide: getRepositoryToken(User),       useFactory: mockRepo },
         { provide: getRepositoryToken(Business),   useFactory: mockRepo },
         { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
-        { provide: getRepositoryToken(Setting),    useFactory: mockSettingRepo },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
         { provide: TransactionService, useValue: { log: jest.fn() } },
         { provide: DataBrokerService,  useValue: { hasApproval: jest.fn().mockResolvedValue(true), isFreeWhitelisted: jest.fn().mockResolvedValue(false) } },
         { provide: ReferralService, useValue: { payCommission: jest.fn().mockResolvedValue(undefined) } },
@@ -75,7 +83,7 @@ describe('CallService — LOW_FUNDS blocking', () => {
     service    = module.get(CallService);
     userRepo   = module.get(getRepositoryToken(User));
     callRepo   = module.get(getRepositoryToken(CallLog));
-    settingRepo = module.get(getRepositoryToken(Setting));
+    settingsReader = module.get(SettingsReaderService);
   });
 
   // ─── Scenario 1: Caller (business) has empty wallet ──────────────────────────
@@ -265,6 +273,7 @@ describe('CallService — completeCall reward integrity', () => {
   let txService: { log: jest.Mock };
   let referral: { payCommission: jest.Mock };
   let manager: ReturnType<typeof makeManager>;
+  let settingsReader: ReturnType<typeof mockSettingsReader>;
 
   // Wire the wallet rows. completeCall first reads the caller (toUserId) via the
   // repository to gate on isBusiness, then re-reads BOTH wallet rows with write
@@ -295,7 +304,7 @@ describe('CallService — completeCall reward integrity', () => {
         { provide: getRepositoryToken(User),       useFactory: mockRepo },
         { provide: getRepositoryToken(Business),   useFactory: mockRepo },
         { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
-        { provide: getRepositoryToken(Setting),    useFactory: mockSettingRepo },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
         { provide: TransactionService, useValue: txService },
         { provide: DataBrokerService,  useValue: { hasApproval: jest.fn().mockResolvedValue(true), isFreeWhitelisted: jest.fn().mockResolvedValue(false) } },
         { provide: ReferralService, useValue: referral },
@@ -306,6 +315,7 @@ describe('CallService — completeCall reward integrity', () => {
     service  = module.get(CallService);
     userRepo = module.get(getRepositoryToken(User));
     callRepo = module.get(getRepositoryToken(CallLog));
+    settingsReader = module.get(SettingsReaderService);
   });
 
   // Regression: a long call must not be able to charge the business beyond the
@@ -355,6 +365,25 @@ describe('CallService — completeCall reward integrity', () => {
     expect(result.platformCut + result.userEarnings).toBeCloseTo(result.cost, 6);
     expect(business.walletBalance).toBeCloseTo(98.0, 6);
     expect(earner.walletBalance).toBeCloseTo(1.52, 6);
+  });
+
+  // The platform cut must come from the shared SettingsReaderService (i.e. the
+  // live admin-configured PLATFORM_CUT_RATE row), not a hardcoded constant —
+  // otherwise an admin's rate change would silently not apply.
+  it('splits using the LIVE PLATFORM_CUT_RATE from the settings reader, not a hardcoded 24%', async () => {
+    const business = mockUser({ id: 2, isBusiness: true, walletBalance: 100 });
+    const earner   = mockUser({ id: 1, isBusiness: false, walletBalance: 0 });
+    const call = { id: 58, fromUserId: 1, toUserId: 2, status: 'initiated', ratePerSecond: 0.002 };
+
+    callRepo.findOne.mockResolvedValue(call);
+    wireWallets(business, earner, call);
+    settingsReader.getNumber.mockImplementation(async (key: string): Promise<number> =>
+      key === 'PLATFORM_CUT_RATE' ? 0.10 : DEFAULT_RATE);
+
+    const result = await service.completeCall(2, 58, 1000); // $2.00 gross
+
+    expect(result.platformCut).toBeCloseTo(0.20, 6);  // 2.00 * 0.10 (not 0.48 @ 24%)
+    expect(result.userEarnings).toBeCloseTo(1.80, 6);
   });
 
   // Regression (free-call whitelist money leak): a call whose ratePerSecond is a
@@ -526,7 +555,7 @@ describe('CallService — per-business attribution', () => {
         { provide: getRepositoryToken(Business),       useFactory: mockRepo },
         { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
         { provide: getRepositoryToken(Campaign),       useFactory: mockRepo },
-        { provide: getRepositoryToken(Setting),        useFactory: mockSettingRepo },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
         { provide: TransactionService, useValue: { log: jest.fn() } },
         { provide: DataBrokerService,  useValue: { hasApproval: jest.fn().mockResolvedValue(true), isFreeWhitelisted: jest.fn().mockResolvedValue(false) } },
         { provide: ReferralService, useValue: { payCommission: jest.fn() } },
@@ -624,7 +653,7 @@ describe('CallService — per-business attribution', () => {
           { provide: getRepositoryToken(User),           useFactory: mockRepo },
           { provide: getRepositoryToken(Business),       useFactory: mockRepo },
           { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
-          { provide: getRepositoryToken(Setting),        useFactory: mockSettingRepo },
+          { provide: SettingsReaderService, useFactory: mockSettingsReader },
           { provide: TransactionService, useValue: { log: jest.fn() } },
           { provide: DataBrokerService,  useValue: dataBroker },
           { provide: ReferralService, useValue: { payCommission: jest.fn() } },
@@ -655,6 +684,19 @@ describe('CallService — per-business attribution', () => {
       await svc.initiateCall(7, '+27829999999');
       expect(cRepo.create).toHaveBeenCalledWith(
         expect.objectContaining({ status: 'initiated', ratePerSecond: DEFAULT_RATE }),
+      );
+    });
+
+    // The per-second rate must come from the LIVE RATE_PER_SECOND setting via
+    // the shared reader, not a hardcoded constant — otherwise an admin's rate
+    // change wouldn't take effect on new calls.
+    it('uses the LIVE RATE_PER_SECOND from the settings reader, not a hardcoded 0.002', async () => {
+      dataBroker.isFreeWhitelisted.mockResolvedValue(false);
+      (svc as any).settingsReader.getNumber.mockImplementation(async (key: string) =>
+        key === 'RATE_PER_SECOND' ? 0.05 : 0.24);
+      await svc.initiateCall(7, '+27829999999');
+      expect(cRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 'initiated', ratePerSecond: 0.05 }),
       );
     });
   });
@@ -706,7 +748,7 @@ describe('CallService — a business is billed only when the user allows the cal
         { provide: getRepositoryToken(User),       useFactory: mockRepo },
         { provide: getRepositoryToken(Business),   useFactory: mockRepo },
         { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
-        { provide: getRepositoryToken(Setting),    useFactory: mockSettingRepo },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
         { provide: TransactionService, useValue: { log: jest.fn() } },
         { provide: DataBrokerService,  useValue: { hasApproval, isFreeWhitelisted: jest.fn().mockResolvedValue(false) } },
         { provide: ReferralService, useValue: { payCommission: jest.fn().mockResolvedValue(undefined) } },
@@ -778,7 +820,7 @@ describe('CallService — incoming direction: the RECIPIENT user\'s permission i
         { provide: getRepositoryToken(User),       useFactory: mockRepo },
         { provide: getRepositoryToken(Business),   useFactory: mockRepo },
         { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
-        { provide: getRepositoryToken(Setting),    useFactory: mockSettingRepo },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
         { provide: TransactionService, useValue: { log: jest.fn() } },
         { provide: DataBrokerService,  useValue: { hasApproval, isFreeWhitelisted: jest.fn().mockResolvedValue(false) } },
         { provide: ReferralService, useValue: { payCommission: jest.fn().mockResolvedValue(undefined) } },

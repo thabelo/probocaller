@@ -3,6 +3,12 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { SmsLogService } from './sms-log.service';
 import { SmsLog } from './sms-log.entity';
+import { Business } from '../business/business.entity';
+import { User } from '../user/user.entity';
+import { BusinessService } from '../business/business.service';
+import { ReferralService } from '../referral/referral.service';
+import { TransactionService } from '../transaction/transaction.service';
+import { SettingsReaderService } from '../config/settings-reader.service';
 
 /**
  * Per-user SMS activity log. `create` never receives or stores message
@@ -12,6 +18,11 @@ import { SmsLog } from './sms-log.entity';
 describe('SmsLogService', () => {
   let service: SmsLogService;
   let repo: any;
+  let businessService: { resolveCallerIdentity: jest.Mock };
+  let referralService: { payCommission: jest.Mock };
+  let transactionService: { log: jest.Mock };
+  let settingsReader: { getNumber: jest.Mock };
+  let dataSource: { transaction: jest.Mock };
 
   beforeEach(async () => {
     repo = {
@@ -19,11 +30,21 @@ describe('SmsLogService', () => {
       save: jest.fn(async (data) => ({ id: 1, createdAt: new Date(), ...data })),
       find: jest.fn(),
     };
+    businessService = { resolveCallerIdentity: jest.fn().mockResolvedValue(null) };
+    referralService = { payCommission: jest.fn().mockResolvedValue(undefined) };
+    transactionService = { log: jest.fn().mockResolvedValue(undefined) };
+    settingsReader = { getNumber: jest.fn() };
+    dataSource = { transaction: jest.fn() };
 
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
         SmsLogService,
         { provide: getRepositoryToken(SmsLog), useValue: repo },
+        { provide: BusinessService, useValue: businessService },
+        { provide: ReferralService, useValue: referralService },
+        { provide: TransactionService, useValue: transactionService },
+        { provide: SettingsReaderService, useValue: settingsReader },
+        { provide: DataSource, useValue: dataSource },
       ],
     }).compile();
     service = mod.get(SmsLogService);
@@ -55,8 +76,8 @@ describe('SmsLogService', () => {
       const dto = {
         address: '+27821234567',
         bodyHash: 'b'.repeat(32),
-        category: 'business',
-        decision: 'paid',
+        category: 'contacts',
+        decision: 'free',
       } as any;
 
       const log = await service.create(1, dto);
@@ -146,7 +167,8 @@ describe('SmsLogService (admin filtered / stats)', () => {
     });
     await ds.initialize();
     repo = ds.getRepository(SmsLog);
-    service = new SmsLogService(repo);
+    // Filtering/stats never bill, so the billing dependencies are irrelevant here.
+    service = new SmsLogService(repo, {} as any, {} as any, {} as any, {} as any, {} as any);
 
     // 5 rows, 3 users' worth of senders, spread across 3 UTC days.
     await seed([
@@ -303,5 +325,168 @@ describe('SmsLogService (admin filtered / stats)', () => {
       const { byKeyword } = await service.statsFor({ category: 'newSender' } as any);
       expect(byKeyword).toEqual([{ keyword: 'otp', count: 1 }]);
     });
+  });
+});
+
+/**
+ * SMS billing — mirrors CallService.completeCall's business-call money move
+ * exactly: the business (sender) pays, the receiving user earns, the
+ * platform takes its cut, and the receiver's referrer (if any) is paid a
+ * lifetime commission on the platform's own cut. Billing only ever applies
+ * to category:'business' + decision:'paid' — every other combination just
+ * logs the row with no money movement.
+ */
+describe('SmsLogService — SMS billing (business, paid)', () => {
+  let service: SmsLogService;
+  let repo: any;
+  let businessService: { resolveCallerIdentity: jest.Mock };
+  let referralService: { payCommission: jest.Mock };
+  let transactionService: { log: jest.Mock };
+  let settingsReader: { getNumber: jest.Mock };
+  let manager: any;
+  let dataSource: { transaction: jest.Mock };
+
+  const dto = (overrides = {}) => ({
+    address: '+27821234567',
+    bodyHash: 'a'.repeat(32),
+    category: 'business',
+    decision: 'paid',
+    ...overrides,
+  } as any);
+
+  const identity = { isBusiness: true, businessId: 4 };
+
+  beforeEach(async () => {
+    repo = {
+      create: jest.fn((data) => data),
+      save: jest.fn(async (data) => ({ id: 1, createdAt: new Date(), ...data })),
+    };
+    businessService = { resolveCallerIdentity: jest.fn().mockResolvedValue(identity) };
+    referralService = { payCommission: jest.fn().mockResolvedValue(undefined) };
+    transactionService = { log: jest.fn().mockResolvedValue(undefined) };
+    settingsReader = {
+      getNumber: jest.fn(async (key: string) => {
+        if (key === 'SMS_RATE_PER_MESSAGE') return 0.05;
+        if (key === 'PLATFORM_CUT_RATE') return 0.24;
+        throw new Error(`unexpected setting key in test: ${key}`);
+      }),
+    };
+    manager = {
+      findOne: jest.fn(),
+      save: jest.fn().mockImplementation(async (_e: any, x: any) => x),
+      create: jest.fn((_e: any, data: any) => data),
+    };
+    dataSource = { transaction: jest.fn().mockImplementation(async (cb: any) => cb(manager)) };
+
+    const mod: TestingModule = await Test.createTestingModule({
+      providers: [
+        SmsLogService,
+        { provide: getRepositoryToken(SmsLog), useValue: repo },
+        { provide: BusinessService, useValue: businessService },
+        { provide: ReferralService, useValue: referralService },
+        { provide: TransactionService, useValue: transactionService },
+        { provide: SettingsReaderService, useValue: settingsReader },
+        { provide: DataSource, useValue: dataSource },
+      ],
+    }).compile();
+    service = mod.get(SmsLogService);
+  });
+
+  const wireEntities = (business: any, owner: any, receiver: any) => {
+    manager.findOne.mockImplementation(async (entity: any, opts: any) => {
+      if (entity === Business) return business;
+      if (entity === User) return opts.where.id === owner.id ? owner : opts.where.id === receiver.id ? receiver : null;
+      return null;
+    });
+  };
+
+  it('charges the business owner, credits the receiver, and pays the referral commission', async () => {
+    const business = { id: 4, userId: 20, companyName: 'Acme' };
+    const owner = { id: 20, walletBalance: 100 };
+    const receiver = { id: 42, walletBalance: 0, referredBy: 7 };
+    wireEntities(business, owner, receiver);
+
+    const log = await service.create(42, dto());
+
+    // businessCost = 0.05, platformCut = 0.012, userEarnings = 0.038
+    expect(owner.walletBalance).toBeCloseTo(99.95, 6);
+    expect(receiver.walletBalance).toBeCloseTo(0.038, 6);
+    expect(transactionService.log).toHaveBeenCalledWith(
+      20, 'SMS_CHARGE', -0.05, expect.any(String), undefined, manager, 4,
+    );
+    expect(transactionService.log).toHaveBeenCalledWith(
+      42, 'SMS_EARN', expect.closeTo(0.038, 6), expect.any(String), undefined, manager, 4,
+    );
+    expect(referralService.payCommission).toHaveBeenCalledWith(42, expect.closeTo(0.012, 6), manager);
+    expect(log.userId).toBe(42);
+  });
+
+  it('the CHARGE ledger description is in ZAR (R…), not dollars', async () => {
+    const business = { id: 4, userId: 20, companyName: 'Acme' };
+    const owner = { id: 20, walletBalance: 100 };
+    const receiver = { id: 42, walletBalance: 0 };
+    wireEntities(business, owner, receiver);
+
+    await service.create(42, dto());
+
+    const charge = transactionService.log.mock.calls.find((c: any[]) => c[1] === 'SMS_CHARGE');
+    expect(charge[3]).toContain('R');
+    expect(charge[3]).not.toContain('$');
+  });
+
+  it('floors the charge at the owner’s available balance (never goes negative)', async () => {
+    const business = { id: 4, userId: 20, companyName: 'Acme' };
+    const owner = { id: 20, walletBalance: 0.01 }; // less than the 0.05 SMS rate
+    const receiver = { id: 42, walletBalance: 0 };
+    wireEntities(business, owner, receiver);
+
+    await service.create(42, dto());
+
+    expect(owner.walletBalance).toBe(0); // charged only what was available
+    // platformCut = 0.01 * 0.24 = 0.0024, userEarnings = 0.0076
+    expect(receiver.walletBalance).toBeCloseTo(0.0076, 6);
+  });
+
+  it('does NOT move money for a business SMS that is not decision:paid', async () => {
+    const log = await service.create(42, dto({ decision: 'free' }));
+
+    expect(businessService.resolveCallerIdentity).not.toHaveBeenCalled();
+    expect(dataSource.transaction).not.toHaveBeenCalled();
+    expect(transactionService.log).not.toHaveBeenCalled();
+    expect(log.userId).toBe(42);
+  });
+
+  it('does NOT move money for a paid SMS whose category is not business', async () => {
+    const log = await service.create(42, dto({ category: 'newSender' }));
+
+    expect(businessService.resolveCallerIdentity).not.toHaveBeenCalled();
+    expect(dataSource.transaction).not.toHaveBeenCalled();
+    expect(transactionService.log).not.toHaveBeenCalled();
+    expect(log.userId).toBe(42);
+  });
+
+  it('logs the row with no billing when the sender does not resolve to a business (defensive)', async () => {
+    businessService.resolveCallerIdentity.mockResolvedValue(null);
+
+    const log = await service.create(42, dto());
+
+    expect(dataSource.transaction).not.toHaveBeenCalled();
+    expect(transactionService.log).not.toHaveBeenCalled();
+    expect(log.userId).toBe(42);
+    expect(log.category).toBe('business');
+  });
+
+  it('still creates the SmsLog row when billing succeeds', async () => {
+    const business = { id: 4, userId: 20, companyName: 'Acme' };
+    const owner = { id: 20, walletBalance: 100 };
+    const receiver = { id: 42, walletBalance: 0 };
+    wireEntities(business, owner, receiver);
+
+    const log = await service.create(42, dto());
+
+    expect(log.userId).toBe(42);
+    expect(log.address).toBe('+27821234567');
+    expect(log.category).toBe('business');
+    expect(log.decision).toBe('paid');
   });
 });

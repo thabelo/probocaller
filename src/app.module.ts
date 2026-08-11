@@ -20,6 +20,7 @@ import { CallPermissionRequest } from './data-broker/call-permission-request.ent
 import { DataBrokerModule } from './data-broker/data-broker.module';
 
 import { Setting } from './config/setting.entity';
+import { ConfigModule } from './config/config.module';
 import { AdminModule } from './admin/admin.module';
 import { AdminService } from './admin/admin.service';
 
@@ -164,6 +165,9 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
     ]),
     // Setting: UserController (also declared here) reads RATE_PER_SECOND.
     TypeOrmModule.forFeature([User, Business, Setting]),
+    // ConfigModule: UserController (also declared here) reads live rates via
+    // the shared SettingsReaderService.
+    ConfigModule,
     UserModule,
     CallModule,
     AdminModule,

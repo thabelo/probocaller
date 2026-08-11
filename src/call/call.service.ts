@@ -6,13 +6,10 @@ import { CallRating } from './call-rating.entity';
 import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
 import { BusinessNumber } from '../business/business-number.entity';
-import { Setting } from '../config/setting.entity';
 import { TransactionService } from '../transaction/transaction.service';
 import { DataBrokerService } from '../data-broker/data-broker.service';
 import { ReferralService } from '../referral/referral.service';
-
-const DEFAULT_RATE_PER_SECOND = 0.002;
-const DEFAULT_PLATFORM_CUT_RATE = 0.24;
+import { SettingsReaderService } from '../config/settings-reader.service';
 
 @Injectable()
 export class CallService {
@@ -27,22 +24,19 @@ export class CallService {
     private businessRepository: Repository<Business>,
     @InjectRepository(BusinessNumber)
     private numberRepository: Repository<BusinessNumber>,
-    @InjectRepository(Setting)
-    private settingRepository: Repository<Setting>,
+    private readonly settingsReader: SettingsReaderService,
     private readonly transactionService: TransactionService,
     private readonly dataBrokerService: DataBrokerService,
     private readonly referralService: ReferralService,
     private readonly ds: DataSource,
   ) {}
 
-  private async getRatePerSecond(): Promise<number> {
-    const s = await this.settingRepository.findOne({ where: { key: 'RATE_PER_SECOND' } });
-    return s ? parseFloat(s.value) || DEFAULT_RATE_PER_SECOND : DEFAULT_RATE_PER_SECOND;
+  private getRatePerSecond(): Promise<number> {
+    return this.settingsReader.getNumber('RATE_PER_SECOND');
   }
 
-  private async getPlatformCutRate(): Promise<number> {
-    const s = await this.settingRepository.findOne({ where: { key: 'PLATFORM_CUT_RATE' } });
-    return s ? parseFloat(s.value) || DEFAULT_PLATFORM_CUT_RATE : DEFAULT_PLATFORM_CUT_RATE;
+  private getPlatformCutRate(): Promise<number> {
+    return this.settingsReader.getNumber('PLATFORM_CUT_RATE');
   }
 
   private isWithinCallWindows(windows: { dayOfWeek: number; startTime: string; endTime: string }[]): boolean {
@@ -352,11 +346,11 @@ export class CallService {
       const chargeParty = chargePartyId === call.fromUserId ? call.fromUser : call.toUser;
       const platformCutRate = await this.getPlatformCutRate();
       // A stored rate of 0 is a LEGITIMATE free call (e.g. a whitelisted business
-      // or a 'free' policy), not a missing value — so only fall back to the default
-      // when the stored rate isn't a finite number. Using `|| DEFAULT` here would
-      // treat the falsy 0 as absent and silently bill a "free" call at the default.
+      // or a 'free' policy), not a missing value — so only fall back to the LIVE
+      // rate when the stored rate isn't a finite number. Using `|| DEFAULT` here
+      // would treat the falsy 0 as absent and silently bill a "free" call.
       const storedRate = Number(call.ratePerSecond);
-      const rate = Number.isFinite(storedRate) ? storedRate : DEFAULT_RATE_PER_SECOND;
+      const rate = Number.isFinite(storedRate) ? storedRate : await this.getRatePerSecond();
 
       // Wrap ALL wallet mutations (business charge + receiver credit + both
       // ledger logs + the referral commission) AND the completion status flip in
