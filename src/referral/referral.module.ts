@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { ReferralController } from './referral.controller';
 import { ReferralService } from './referral.service';
 import { TransactionModule } from '../transaction/transaction.module';
 import { ConfigModule } from '../config/config.module';
@@ -11,6 +12,7 @@ import { ConfigModule } from '../config/config.module';
 // dependency.
 @Module({
   imports: [TransactionModule, ConfigModule],
+  controllers: [ReferralController],
   providers: [ReferralService],
   exports: [ReferralService],
 })

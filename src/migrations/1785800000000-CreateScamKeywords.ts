@@ -2,10 +2,11 @@ import { MigrationInterface, QueryRunner } from 'typeorm';
 
 /**
  * Global, admin-managed scam keyword list (src/scam-keyword/). Distinct from
- * blocked_keywords (per-user, already migrated) and from the hardcoded
- * DEFAULT_SCAM_KEYWORDS constant used for server-side risk scoring in
- * src/scam-shield/ — this table has no userId; admins manage one shared list
- * that mobile devices sync down and merge locally.
+ * blocked_keywords (per-user, already migrated) — this table has no userId;
+ * admins manage one shared list that mobile devices sync down and merge
+ * locally with their own cold-start seed. The mobile app's baseline
+ * DEFAULT_SCAM_KEYWORDS (17 words) are also seeded into this table by
+ * 1786300000000-SeedDefaultScamKeywords, so they're now admin-editable too.
  */
 export class CreateScamKeywords1785800000000 implements MigrationInterface {
   name = 'CreateScamKeywords1785800000000';
