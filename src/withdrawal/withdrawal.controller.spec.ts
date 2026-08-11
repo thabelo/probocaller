@@ -21,9 +21,9 @@ describe('WithdrawalController', () => {
    * instead of guessing.
    */
   describe('GET /withdrawals/config', () => {
-    it('returns the pending cap from the service', () => {
-      service.getConfig.mockReturnValue({ pendingCap: 3 });
-      expect(controller.config()).toEqual({ pendingCap: 3 });
+    it('returns the pending cap from the service', async () => {
+      service.getConfig.mockResolvedValue({ pendingCap: 3 });
+      await expect(controller.config()).resolves.toEqual({ pendingCap: 3 });
       expect(service.getConfig).toHaveBeenCalled();
     });
   });

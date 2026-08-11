@@ -1,30 +1,22 @@
 import { Injectable } from '@nestjs/common';
-import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager } from 'typeorm';
 import { User } from '../user/user.entity';
 import { TransactionService } from '../transaction/transaction.service';
-import { Setting } from '../config/setting.entity';
+import { SettingsReaderService } from '../config/settings-reader.service';
 import { round4 } from '../common/round4';
 
 export const REFERRAL_RATE_KEY = 'REFERRAL_COMMISSION_RATE';
+// Only used to seed the bootstrap row (AdminService.seedDefaultConfig); no
+// longer a runtime fallback — a missing/invalid row is a real
+// misconfiguration and must fail loudly, like every other SettingsReaderService
+// consumer, not silently re-substitute this value.
 export const DEFAULT_COMMISSION_RATE = 0.03;
-
-/**
- * Clamp a stored rate to something payable. Out of range or unparseable falls
- * back to the default rather than paying a nonsense amount.
- */
-export function parseCommissionRate(raw: unknown): number {
-  const n = Number(raw);
-  if (!Number.isFinite(n) || n < 0 || n >= 1) return DEFAULT_COMMISSION_RATE;
-  return n;
-}
 
 @Injectable()
 export class ReferralService {
   constructor(
     private readonly transactionService: TransactionService,
-    @InjectRepository(Setting)
-    private readonly settingRepository: Repository<Setting>,
+    private readonly settingsReader: SettingsReaderService,
   ) {}
 
   /**
@@ -34,10 +26,19 @@ export class ReferralService {
    * operational policy that changes without a deploy, and the apps need to be
    * able to show the real figure instead of a number compiled into their copy.
    * A rate of 0 is a valid kill-switch — payCommission then writes no rows.
+   *
+   * Unlike the old local parser, a missing/unparseable row is NOT silently
+   * replaced with the 3% default (that let a typo in the admin panel silently
+   * mis-bill forever) — it throws, via the shared SettingsReaderService, same
+   * as every other admin-configurable rate. A configured value outside
+   * [0, 1) is likewise rejected rather than clamped.
    */
   async getCommissionRate(): Promise<number> {
-    const setting = await this.settingRepository.findOne({ where: { key: REFERRAL_RATE_KEY } });
-    return parseCommissionRate(setting?.value);
+    const rate = await this.settingsReader.getNumber(REFERRAL_RATE_KEY);
+    if (!(rate >= 0 && rate < 1)) {
+      throw new Error(`Invalid ${REFERRAL_RATE_KEY}: ${rate} (must be within [0, 1))`);
+    }
+    return rate;
   }
 
   /**

@@ -7,6 +7,7 @@ import { User } from '../user/user.entity';
 import { BankAccountService } from '../bank-account/bank-account.service';
 import { FicaService } from '../fica/fica.service';
 import { TransactionService } from '../transaction/transaction.service';
+import { SettingsReaderService } from '../config/settings-reader.service';
 
 /**
  * Security regression — Backend C4.
@@ -49,6 +50,7 @@ describe('WithdrawalService — wallet lock hardening (C4)', () => {
         { provide: FicaService,                   useValue: { isApproved: jest.fn().mockResolvedValue(true) } },
         { provide: TransactionService,            useValue: { log: jest.fn().mockResolvedValue(undefined) } },
         { provide: DataSource,                    useValue: dataSource },
+        { provide: SettingsReaderService,         useValue: { getNumber: jest.fn().mockResolvedValue(3) } },
       ],
     }).compile();
 
@@ -104,21 +106,15 @@ describe('WithdrawalService — wallet lock hardening (C4)', () => {
  *
  * A user with N pending withdrawals already cannot create another one;
  * they must wait for review (or cancel one) first. Default cap = 3,
- * overridable via env WITHDRAWAL_PENDING_CAP.
+ * admin-configurable via the WITHDRAWAL_PENDING_CAP setting row (read
+ * through the shared SettingsReaderService, not process.env).
  */
 describe('WithdrawalService — pending withdrawal cap', () => {
   let service: WithdrawalService;
   let withdrawalRepo: { count: jest.Mock; find: jest.Mock; findOne: jest.Mock };
-  const prevCap = process.env.WITHDRAWAL_PENDING_CAP;
-  afterEach(() => {
-    if (prevCap === undefined) delete process.env.WITHDRAWAL_PENDING_CAP;
-    else process.env.WITHDRAWAL_PENDING_CAP = prevCap;
-  });
+  let settingsReader: { getNumber: jest.Mock };
 
-  async function build(envCap?: string) {
-    if (envCap === undefined) delete process.env.WITHDRAWAL_PENDING_CAP;
-    else process.env.WITHDRAWAL_PENDING_CAP = envCap;
-
+  async function build(cap = 3) {
     withdrawalRepo = {
       count: jest.fn(),
       find: jest.fn(),
@@ -130,6 +126,7 @@ describe('WithdrawalService — pending withdrawal cap', () => {
       create: jest.fn().mockImplementation((_e, data) => ({ id: 42, ...data })),
     };
     const dataSource = { transaction: jest.fn().mockImplementation(async (cb: any) => cb(manager)) };
+    settingsReader = { getNumber: jest.fn().mockResolvedValue(cap) };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -140,6 +137,7 @@ describe('WithdrawalService — pending withdrawal cap', () => {
         { provide: FicaService,                   useValue: { isApproved: jest.fn().mockResolvedValue(true) } },
         { provide: TransactionService,            useValue: { log: jest.fn().mockResolvedValue(undefined) } },
         { provide: DataSource,                    useValue: dataSource },
+        { provide: SettingsReaderService,         useValue: settingsReader },
       ],
     }).compile();
 
@@ -151,6 +149,7 @@ describe('WithdrawalService — pending withdrawal cap', () => {
     withdrawalRepo.count.mockResolvedValue(2);
     await expect(service.request(1, 10)).resolves.toBeDefined();
     expect(withdrawalRepo.count).toHaveBeenCalledWith({ where: { userId: 1, status: 'pending' } });
+    expect(settingsReader.getNumber).toHaveBeenCalledWith('WITHDRAWAL_PENDING_CAP');
   });
 
   it('rejects when pending count is at the default cap', async () => {
@@ -159,8 +158,8 @@ describe('WithdrawalService — pending withdrawal cap', () => {
     await expect(service.request(1, 10)).rejects.toThrow(/pending withdrawal/i);
   });
 
-  it('honours WITHDRAWAL_PENDING_CAP env override', async () => {
-    await build('1');
+  it('honours the admin-configured WITHDRAWAL_PENDING_CAP setting', async () => {
+    await build(1);
     withdrawalRepo.count.mockResolvedValue(1);
     await expect(service.request(1, 10)).rejects.toThrow(/pending withdrawal/i);
   });
@@ -173,11 +172,20 @@ describe('WithdrawalService — pending withdrawal cap', () => {
    */
   it('getConfig() exposes the default pending cap', async () => {
     await build();
-    expect(service.getConfig()).toEqual({ pendingCap: 3 });
+    await expect(service.getConfig()).resolves.toEqual({ pendingCap: 3 });
   });
 
-  it('getConfig() honours the WITHDRAWAL_PENDING_CAP env override', async () => {
-    await build('7');
-    expect(service.getConfig()).toEqual({ pendingCap: 7 });
+  it('getConfig() honours the admin-configured WITHDRAWAL_PENDING_CAP setting', async () => {
+    await build(7);
+    await expect(service.getConfig()).resolves.toEqual({ pendingCap: 7 });
+  });
+
+  // Regression: a genuinely missing/invalid setting must fail loudly, not
+  // silently fall back to a hardcoded 3 — SettingsReaderService's own
+  // no-fallback contract.
+  it('propagates a loud failure when WITHDRAWAL_PENDING_CAP is missing/invalid', async () => {
+    await build();
+    settingsReader.getNumber.mockRejectedValue(new Error('Missing or invalid setting: WITHDRAWAL_PENDING_CAP'));
+    await expect(service.getConfig()).rejects.toThrow(/Missing or invalid setting/i);
   });
 });

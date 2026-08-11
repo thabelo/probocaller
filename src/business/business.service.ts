@@ -11,6 +11,7 @@ import { ApiKey } from './api-key.entity';
 import { User } from '../user/user.entity';
 import { TransactionService } from '../transaction/transaction.service';
 import { normalizeNumber } from '../suppression/number-hash';
+import { SettingsReaderService } from '../config/settings-reader.service';
 
 /**
  * The Probocaller-branded placeholder logo every business gets when its owner
@@ -18,27 +19,6 @@ import { normalizeNumber } from '../suppression/number-hash';
  * static asset by the app front-ends.
  */
 export const DEFAULT_BUSINESS_LOGO_URL = '/probocaller-logo.svg';
-
-/** Hard ceiling per money move — anything above this is a typo or an attack. */
-const MAX_MONEY_MOVE = 1_000_000;
-
-/**
- * Validate a wallet amount for REAL money movement: a finite, positive number
- * within sane bounds, normalised to the ledger's 4dp. Rejects NaN/Infinity
- * (which pass a naive `> 0` check) and magnitudes that would overflow the
- * numeric(12,4) columns into 500s.
- */
-function assertMoneyAmount(amount: number): number {
-  const a = Number(amount);
-  if (!Number.isFinite(a) || a <= 0) {
-    throw new BadRequestException('Amount must be a positive number');
-  }
-  if (a > MAX_MONEY_MOVE) {
-    throw new BadRequestException(`Amount exceeds the per-transaction limit of ${MAX_MONEY_MOVE}`);
-  }
-  return parseFloat(a.toFixed(4));
-}
-
 
 @Injectable()
 export class BusinessService {
@@ -53,7 +33,29 @@ export class BusinessService {
     private userRepo: Repository<User>,
     private readonly transactionService: TransactionService,
     private readonly dataSource: DataSource,
+    private readonly settingsReader: SettingsReaderService,
   ) {}
+
+  /**
+   * Validate a wallet amount for REAL money movement: a finite, positive
+   * number within sane bounds, normalised to the ledger's 4dp. Rejects
+   * NaN/Infinity (which pass a naive `> 0` check) and magnitudes that would
+   * overflow the numeric(12,4) columns into 500s. The ceiling is
+   * admin-configurable (MAX_MONEY_MOVE setting row), read through the shared
+   * SettingsReaderService — no hardcoded fallback, AdminService.seedDefaultConfig
+   * guarantees the row exists.
+   */
+  private async assertMoneyAmount(amount: number): Promise<number> {
+    const a = Number(amount);
+    if (!Number.isFinite(a) || a <= 0) {
+      throw new BadRequestException('Amount must be a positive number');
+    }
+    const maxMoneyMove = await this.settingsReader.getNumber('MAX_MONEY_MOVE');
+    if (a > maxMoneyMove) {
+      throw new BadRequestException(`Amount exceeds the per-transaction limit of ${maxMoneyMove}`);
+    }
+    return parseFloat(a.toFixed(4));
+  }
 
   /** Load a business the caller owns, or throw. */
   private async ownedBusinessOrThrow(businessId: number, requesterUserId: number): Promise<Business> {
@@ -83,7 +85,7 @@ export class BusinessService {
 
   /** Add funds to the BUSINESS wallet (atomic credit + business-scoped audit row). */
   async topUpWallet(businessId: number, requesterUserId: number, amount: number) {
-    amount = assertMoneyAmount(amount);
+    amount = await this.assertMoneyAmount(amount);
     const business = await this.ownedBusinessOrThrow(businessId, requesterUserId);
 
     return this.dataSource.transaction(async (manager) => {
@@ -122,7 +124,7 @@ export class BusinessService {
     amount: number,
     direction: 'in' | 'out',
   ) {
-    const amt = assertMoneyAmount(amount);
+    const amt = await this.assertMoneyAmount(amount);
     const business = await this.ownedBusinessOrThrow(businessId, requesterUserId);
 
     return this.dataSource.transaction(async (manager) => {

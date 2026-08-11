@@ -9,18 +9,8 @@ import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
 import { Transaction } from '../transaction/transaction.entity';
 import { DataCertificate } from './data-certificate.entity';
-import { Setting } from '../config/setting.entity';
 import { randomBytes } from 'crypto';
 
-// A data-usage certificate costs a fixed base fee plus the cost of the leads it
-// generates. Buying leads always mints a new certificate; the leads on an issued
-// certificate are frozen. The base fee and the pro-rata baseline period are
-// admin-configurable (settings LEADS_BASE_FEE / LEADS_BASELINE_DAYS); these are
-// the fallbacks when unset.
-const DEFAULT_LEADS_BASE_FEE = 250;
-const DEFAULT_LEADS_FREE_DAYS = 7;       // the base fee covers this authorisation window
-const DEFAULT_LEADS_DAILY_RATE = 0.018;  // compounding interest per day beyond the free window
-const DEFAULT_LEADS_MAX_MULTIPLIER = 3;  // cap so the compounded base fee can't run away
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpsertProfileFieldDto } from './dto/upsert-profile-field.dto';
 import { QueryAudienceDto, SaveAudienceDto } from './dto/query-audience.dto';
@@ -56,8 +46,6 @@ export class ProfileService {
     private txRepo: Repository<Transaction>,
     @InjectRepository(DataCertificate)
     private certRepo: Repository<DataCertificate>,
-    @InjectRepository(Setting)
-    private settingRepo: Repository<Setting>,
     private readonly settingsReader: SettingsReaderService,
     private readonly referralService: ReferralService,
     private readonly dataSource: DataSource,
@@ -65,24 +53,17 @@ export class ProfileService {
 
   // Admin-configurable leads pricing: the certificate base fee and the pro-rata
   // baseline (the window the base fee covers, and the divisor for scaling the
-  // leads cost). Invalid/unset config falls back to the defaults.
+  // leads cost). Read through the shared SettingsReaderService — no local
+  // fallback constant, so a missing/invalid row is a real misconfiguration and
+  // fails loudly (AdminService.seedDefaultConfig guarantees the rows exist).
   async getLeadsPricing(): Promise<{ baseFee: number; freeDays: number; dailyRate: number; maxMultiplier: number }> {
-    const [feeRow, freeRow, rateRow, capRow] = await Promise.all([
-      this.settingRepo.findOne({ where: { key: 'LEADS_BASE_FEE' } }),
-      this.settingRepo.findOne({ where: { key: 'LEADS_FREE_DAYS' } }),
-      this.settingRepo.findOne({ where: { key: 'LEADS_DAILY_RATE' } }),
-      this.settingRepo.findOne({ where: { key: 'LEADS_MAX_MULTIPLIER' } }),
+    const [baseFee, freeDays, dailyRate, maxMultiplier] = await Promise.all([
+      this.settingsReader.getNumber('LEADS_BASE_FEE'),
+      this.settingsReader.getNumber('LEADS_FREE_DAYS'),
+      this.settingsReader.getNumber('LEADS_DAILY_RATE'),
+      this.settingsReader.getNumber('LEADS_MAX_MULTIPLIER'),
     ]);
-    const fee = feeRow ? parseFloat(feeRow.value) : NaN;
-    const free = freeRow ? parseFloat(freeRow.value) : NaN;
-    const rate = rateRow ? parseFloat(rateRow.value) : NaN;
-    const cap = capRow ? parseFloat(capRow.value) : NaN;
-    return {
-      baseFee: Number.isFinite(fee) && fee >= 0 ? fee : DEFAULT_LEADS_BASE_FEE,
-      freeDays: Number.isFinite(free) && free > 0 ? free : DEFAULT_LEADS_FREE_DAYS,
-      dailyRate: Number.isFinite(rate) && rate >= 0 ? rate : DEFAULT_LEADS_DAILY_RATE,
-      maxMultiplier: Number.isFinite(cap) && cap >= 1 ? cap : DEFAULT_LEADS_MAX_MULTIPLIER,
-    };
+    return { baseFee, freeDays, dailyRate, maxMultiplier };
   }
 
   // Admin-configurable platform cut on the leads (data) cost — the same Setting

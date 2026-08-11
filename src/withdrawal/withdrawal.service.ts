@@ -8,15 +8,7 @@ import { User } from '../user/user.entity';
 import { BankAccountService } from '../bank-account/bank-account.service';
 import { FicaService } from '../fica/fica.service';
 import { TransactionService } from '../transaction/transaction.service';
-
-// Cap on concurrent pending withdrawals per user. Default 3; override via
-// WITHDRAWAL_PENDING_CAP. Read live (not cached) so it can be reconfigured
-// without a restart-sensitive test setup, and shared between the
-// enforcement in request() and the read-only GET /withdrawals/config
-// endpoint so the two can never drift apart.
-export function getWithdrawalPendingCap(): number {
-  return Number(process.env.WITHDRAWAL_PENDING_CAP ?? 3);
-}
+import { SettingsReaderService } from '../config/settings-reader.service';
 
 @Injectable()
 export class WithdrawalService {
@@ -29,13 +21,24 @@ export class WithdrawalService {
     private readonly fica: FicaService,
     private readonly tx: TransactionService,
     private readonly dataSource: DataSource,
+    private readonly settingsReader: SettingsReaderService,
   ) {}
+
+  // Cap on concurrent pending withdrawals per user, admin-configurable via
+  // the WITHDRAWAL_PENDING_CAP setting row (read through the shared
+  // SettingsReaderService, no hardcoded fallback — AdminService.seedDefaultConfig
+  // guarantees the row exists). Read live so it can be reconfigured without a
+  // redeploy, and shared between the enforcement in request() and the
+  // read-only GET /withdrawals/config endpoint so the two can never drift apart.
+  private getWithdrawalPendingCap(): Promise<number> {
+    return this.settingsReader.getNumber('WITHDRAWAL_PENDING_CAP');
+  }
 
   // Read-only view of the withdrawal config used to enforce request(). Backs
   // GET /withdrawals/config so the mobile app can read this instead of
   // hardcoding it client-side.
-  getConfig(): { pendingCap: number } {
-    return { pendingCap: getWithdrawalPendingCap() };
+  async getConfig(): Promise<{ pendingCap: number }> {
+    return { pendingCap: await this.getWithdrawalPendingCap() };
   }
 
   async request(userId: number, amount: number): Promise<Withdrawal> {
@@ -50,7 +53,7 @@ export class WithdrawalService {
 
     // Prevents a user from flooding the admin queue and from holding
     // arbitrary amounts of wallet balance in escrow.
-    const cap = getWithdrawalPendingCap();
+    const cap = await this.getWithdrawalPendingCap();
     const pending = await this.repo.count({ where: { userId, status: 'pending' } });
     if (pending >= cap) {
       throw new ForbiddenException(

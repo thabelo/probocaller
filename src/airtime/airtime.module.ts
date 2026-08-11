@@ -7,12 +7,14 @@ import { AirtimeService } from './airtime.service';
 import { AirtimeController } from './airtime.controller';
 import { AIRTIME_PROVIDER, ReloadlyAirtimeProvider } from './airtime.provider';
 import { TransactionModule } from '../transaction/transaction.module';
+import { ConfigModule } from '../config/config.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([AirtimePayout, User]),
     PassportModule.register({ defaultStrategy: 'jwt' }),
     TransactionModule,
+    ConfigModule,
   ],
   controllers: [AirtimeController],
   providers: [

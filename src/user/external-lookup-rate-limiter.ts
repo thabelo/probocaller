@@ -6,8 +6,13 @@
  * name). In-memory is sufficient for the single-process deployment; it resets on
  * restart, which only ever loosens the cap.
  *
- * Not a Nest provider by decoration — provided via a factory so its numeric/clock
- * constructor args aren't treated as injectable dependencies.
+ * Not a Nest provider by decoration — provided via an ASYNC factory in
+ * UserModule that resolves EXTERNAL_LOOKUP_MAX_PER_WINDOW /
+ * EXTERNAL_LOOKUP_WINDOW_MS live from the settings table (via
+ * SettingsReaderService) at module-init time and passes them in explicitly,
+ * so `tryAcquire` itself stays fully synchronous on the caller-ID hot path.
+ * The defaults below are a plain fallback for direct construction (tests,
+ * ad-hoc use) — production never relies on them.
  */
 export class ExternalLookupRateLimiter {
   private readonly max: number;
@@ -15,12 +20,12 @@ export class ExternalLookupRateLimiter {
   private readonly hits = new Map<string, number[]>();
 
   constructor(
-    max?: number,
-    windowMs?: number,
+    max = 15,
+    windowMs = 60_000,
     private readonly now: () => number = () => Date.now(),
   ) {
-    this.max = max ?? (Number(process.env.EXTERNAL_LOOKUP_MAX_PER_WINDOW) || 15);
-    this.windowMs = windowMs ?? (Number(process.env.EXTERNAL_LOOKUP_WINDOW_MS) || 60_000);
+    this.max = max;
+    this.windowMs = windowMs;
   }
 
   /** Returns true if this key may perform a lookup now (and records it), else false. */

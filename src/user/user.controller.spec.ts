@@ -14,10 +14,10 @@ describe('UserController — findUser caller-ID lookup: permittedForYou', () => 
     };
     const lookupService: any = { resolveExternalName: jest.fn().mockResolvedValue(null) };
     const externalLookupLimiter: any = { tryAcquire: jest.fn().mockReturnValue(true) };
-    const settingRepo: any = { findOne: jest.fn().mockResolvedValue(null) };
     const settingsReader: any = { getNumber: jest.fn().mockResolvedValue(0.15) };
-    const controller = new UserController(userService, businessService, transactionService, dataBrokerService, lookupService, externalLookupLimiter, settingRepo, settingsReader);
-    return { controller, userService, businessService, dataBrokerService, lookupService, externalLookupLimiter, settingRepo, settingsReader };
+    const referralService: any = { getCommissionRate: jest.fn().mockResolvedValue(0.03) };
+    const controller = new UserController(userService, businessService, transactionService, dataBrokerService, lookupService, externalLookupLimiter, settingsReader, referralService);
+    return { controller, userService, businessService, dataBrokerService, lookupService, externalLookupLimiter, settingsReader, referralService };
   };
 
   // Requests from an app build that supports the non-cacheable external-name flag.
@@ -263,15 +263,10 @@ describe('UserController — GET /user/rate (live platform rate for the app)', (
   // PAY_TO_CONTACT_FEE_RATE) — these mirror seedDefaultConfig's bootstrap
   // defaults purely as TEST-FIXTURE convenience; the app itself no longer has
   // a fallback and would throw if a row were genuinely missing (seeding
-  // guarantees it isn't). REFERRAL_COMMISSION_RATE is still read directly off
-  // the Setting repository (unchanged, not part of this dedup).
+  // guarantees it isn't). REFERRAL_COMMISSION_RATE is read through
+  // ReferralService.getCommissionRate() — the SAME reader payCommission()
+  // uses — instead of a controller-local duplicate parse.
   const make = (settingVal: any) => {
-    const settingRepo: any = {
-      findOne: jest.fn().mockImplementation(async (opts: any) => {
-        if (opts.where.key === 'REFERRAL_COMMISSION_RATE') return settingVal.referral ?? null;
-        return null;
-      }),
-    };
     const settingsReader: any = {
       getNumber: jest.fn().mockImplementation(async (key: string) => {
         if (key === 'RATE_PER_SECOND') return settingVal.rate ?? 0.002;
@@ -281,7 +276,10 @@ describe('UserController — GET /user/rate (live platform rate for the app)', (
         throw new Error(`unexpected setting key in test: ${key}`);
       }),
     };
-    return new UserController({} as any, {} as any, {} as any, {} as any, {} as any, {} as any, settingRepo, settingsReader);
+    const referralService: any = {
+      getCommissionRate: jest.fn().mockResolvedValue(settingVal.referral ?? 0.03),
+    };
+    return new UserController({} as any, {} as any, {} as any, {} as any, {} as any, {} as any, settingsReader, referralService);
   };
 
   it('returns the live rate, platform cut and derived user share', async () => {
@@ -308,13 +306,18 @@ describe('UserController — GET /user/rate (live platform rate for the app)', (
    * copy is a guess that silently goes stale the moment an admin changes it.
    */
   it('exposes the admin-configured referral commission rate', async () => {
-    const c = make({ referral: { value: '0.05' } });
+    const c = make({ referral: 0.05 });
     const res: any = await c.getRate();
     expect(res.referralCommissionRate).toBe(0.05);
   });
 
-  it('falls back to the default referral rate when unset', async () => {
-    const c = make({});
+  // The rate is sourced from ReferralService.getCommissionRate() — the SAME
+  // reader payCommission() uses — rather than a controller-local duplicate
+  // parse. A genuinely missing/invalid setting is ReferralService's own
+  // concern (it throws, see referral.service.spec.ts); this only pins that
+  // the controller surfaces whatever ReferralService reports, unmodified.
+  it('reads the referral rate through ReferralService.getCommissionRate(), not a local re-parse', async () => {
+    const c = make({ referral: 0.03 });
     const res: any = await c.getRate();
     expect(res.referralCommissionRate).toBe(0.03);
   });
@@ -380,6 +383,51 @@ describe('UserController — POST /user/business-opt-out', () => {
 });
 
 /**
+ * POST /user/credit — the top-up ceiling is admin-configurable
+ * (MAX_TOPUP_AMOUNT setting row), enforced here at the point the request is
+ * handled rather than a static class-validator decorator, which can't read a
+ * live DB value per-request.
+ */
+describe('UserController — POST /user/credit (admin-configurable top-up ceiling)', () => {
+  const makeController = (maxTopup: number) => {
+    const userService: any = { addCredit: jest.fn().mockResolvedValue({ id: 1, walletBalance: 100 }) };
+    const settingsReader: any = {
+      getNumber: jest.fn().mockImplementation(async (key: string) =>
+        key === 'MAX_TOPUP_AMOUNT' ? maxTopup : Promise.reject(new Error(`unexpected key: ${key}`))),
+    };
+    const controller = new UserController(
+      userService, {} as any, {} as any, {} as any, {} as any, {} as any, settingsReader, {} as any,
+    );
+    return { controller, userService, settingsReader };
+  };
+
+  it('rejects an amount exceeding the admin-configured MAX_TOPUP_AMOUNT', async () => {
+    const { controller, userService } = makeController(1000);
+    await expect(
+      controller.addCredit({ user: { userId: 7 } } as any, { amount: 1001 } as any),
+    ).rejects.toThrow(/exceeds|maximum/i);
+    expect(userService.addCredit).not.toHaveBeenCalled();
+  });
+
+  it('allows an amount at or below the admin-configured MAX_TOPUP_AMOUNT', async () => {
+    const { controller, userService } = makeController(1000);
+    await controller.addCredit({ user: { userId: 7 } } as any, { amount: 1000 } as any);
+    expect(userService.addCredit).toHaveBeenCalledWith(7, 1000);
+  });
+
+  // Regression: the ceiling must reflect whatever an admin configures, not a
+  // baked-in 1000 literal.
+  it('honours a lower admin-configured ceiling', async () => {
+    const { controller, userService } = makeController(50);
+    await expect(
+      controller.addCredit({ user: { userId: 7 } } as any, { amount: 51 } as any),
+    ).rejects.toThrow();
+    await controller.addCredit({ user: { userId: 7 } } as any, { amount: 50 } as any);
+    expect(userService.addCredit).toHaveBeenCalledWith(7, 50);
+  });
+});
+
+/**
  * Caller-ID is on the incoming-call hot path — the ringing overlay shows
  * "Looking up caller…" until this endpoint answers, so every avoidable round
  * trip is visible delay. The platform rate, the user row and the business
@@ -422,7 +470,7 @@ describe('UserController — findUser latency', () => {
 
     const controller = new UserController(
       userService, businessService, {} as any, dataBrokerService,
-      lookupService, externalLookupLimiter, {} as any, settingsReader,
+      lookupService, externalLookupLimiter, settingsReader, {} as any,
     );
 
     const result = await Promise.race([

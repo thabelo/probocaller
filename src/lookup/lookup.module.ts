@@ -8,9 +8,10 @@ import { LookupService } from './lookup.service';
 import { GooglePlacesLookupService, NUMBER_INTELLIGENCE } from './google-places-lookup.service';
 import { ReverseLookupService } from './reverse-lookup.service';
 import { ReverseLookupEvent } from './reverse-lookup-event.entity';
+import { ConfigModule } from '../config/config.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, ReverseLookupEvent]), BusinessModule, SuppressionModule],
+  imports: [TypeOrmModule.forFeature([User, ReverseLookupEvent]), BusinessModule, SuppressionModule, ConfigModule],
   controllers: [LookupController],
   providers: [
     LookupService,

@@ -8,6 +8,14 @@ import { BusinessNumber } from './business-number.entity';
 import { ApiKey } from './api-key.entity';
 import { User } from '../user/user.entity';
 import { TransactionService } from '../transaction/transaction.service';
+import { SettingsReaderService } from '../config/settings-reader.service';
+
+// Mirrors seedDefaultConfig's MAX_MONEY_MOVE bootstrap default (1,000,000),
+// sourced from the shared SettingsReaderService instead of a hardcoded
+// module-level constant.
+const mockSettingsReader = () => ({
+  getNumber: jest.fn().mockResolvedValue(1_000_000),
+});
 
 /**
  * Device-sync source for GET /business-numbers/sync (business-number-sync.controller.ts).
@@ -28,6 +36,7 @@ describe('BusinessService — getVerifiedActiveNumbers (device sync source)', ()
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: TransactionService, useFactory: mockTx },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
       ],
     }).compile();
     service = module.get(BusinessService);
@@ -90,6 +99,7 @@ describe('BusinessService — API keys', () => {
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: TransactionService, useFactory: mockTx },
         { provide: DataSource, useValue: dataSource },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
       ],
     }).compile();
     service = module.get(BusinessService);
@@ -211,6 +221,27 @@ describe('BusinessService — API keys', () => {
         await expect(service.transferWallet(5, 9, bad, 'in')).rejects.toBeInstanceOf(BadRequestException);
       }
       expect(dataSource.transaction).not.toHaveBeenCalled(); // rejected before touching money
+    });
+
+    // MAX_MONEY_MOVE is admin-configurable (Setting row), not a hardcoded
+    // module-level constant — the ceiling must reflect whatever an admin
+    // configures, live.
+    it('reads the per-transaction ceiling through the shared SettingsReaderService, not a hardcoded literal', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9 });
+      const settingsReader = (service as any).settingsReader;
+      settingsReader.getNumber.mockResolvedValue(500);
+      await expect(service.topUpWallet(5, 9, 501)).rejects.toBeInstanceOf(BadRequestException);
+      expect(settingsReader.getNumber).toHaveBeenCalledWith('MAX_MONEY_MOVE');
+    });
+
+    // Regression: a missing/invalid ceiling setting must fail loudly, not
+    // silently fall back to a hardcoded 1,000,000 — SettingsReaderService's
+    // own no-fallback contract.
+    it('propagates a loud failure when MAX_MONEY_MOVE is missing/invalid', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9 });
+      const settingsReader = (service as any).settingsReader;
+      settingsReader.getNumber.mockRejectedValue(new Error('Missing or invalid setting: MAX_MONEY_MOVE'));
+      await expect(service.topUpWallet(5, 9, 50)).rejects.toThrow(/Missing or invalid setting/i);
     });
   });
 
@@ -371,6 +402,7 @@ describe('BusinessService — register requires a country', () => {
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: TransactionService, useFactory: mockTx },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
       ],
     }).compile();
     service = module.get(BusinessService);
@@ -448,6 +480,7 @@ describe('BusinessService — calling numbers are stored in E.164', () => {
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: TransactionService, useFactory: mockTx },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
       ],
     }).compile();
     service = module.get(BusinessService);
@@ -505,6 +538,7 @@ describe('BusinessService — resolveCallerIdentity matches last-10 lookups agai
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: TransactionService, useFactory: mockTx },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
       ],
     }).compile();
     service = module.get(BusinessService);
@@ -592,6 +626,7 @@ describe('BusinessService — getOwnerWalletBalance', () => {
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: TransactionService, useFactory: mockTx },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
       ],
     }).compile();
     service = module.get(BusinessService);
@@ -631,6 +666,7 @@ describe('BusinessService — updateProfile persists the logo', () => {
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: TransactionService, useFactory: mockTx },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
       ],
     }).compile();
     service = module.get(BusinessService);
@@ -674,6 +710,7 @@ describe('BusinessService — a business caller carries its logo', () => {
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: TransactionService, useFactory: mockTx },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
       ],
     }).compile();
     service = module.get(BusinessService);
@@ -742,6 +779,7 @@ describe('BusinessService — registration requires a logo', () => {
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: TransactionService, useFactory: mockTx },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
       ],
     }).compile();
     service = module.get(BusinessService);
@@ -814,6 +852,7 @@ describe('BusinessService — a business number resolves in national form too', 
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: TransactionService, useFactory: mockTx },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
       ],
     }).compile();
     service = module.get(BusinessService);
@@ -867,6 +906,7 @@ describe('BusinessService — the admin paths obey the logo rule too', () => {
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: TransactionService, useFactory: mockTx },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
       ],
     }).compile();
     service = module.get(BusinessService);
@@ -936,6 +976,7 @@ describe('BusinessService — industry is normalised at the boundary', () => {
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: TransactionService, useFactory: mockTx },
         { provide: DataSource, useValue: { transaction: jest.fn() } },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
       ],
     }).compile();
     service = module.get(BusinessService);

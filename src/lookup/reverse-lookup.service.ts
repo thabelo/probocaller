@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ReverseLookupEvent } from './reverse-lookup-event.entity';
 import { NumberIntelligence } from './google-places-lookup.service';
+import { SettingsReaderService } from '../config/settings-reader.service';
 
 const round4 = (n: number) => parseFloat(n.toFixed(4));
 const dayKey = (d: Date) => d.toISOString().slice(0, 10);
@@ -22,16 +23,15 @@ export interface ReverseLookupStats {
 /**
  * Records and aggregates reverse-lookup (Google Places) usage for the admin
  * billing dashboard. Google bills a flat rate per Find Place request whether or
- * not a match comes back, so every uncached call costs `perLookupRate`; a cached
- * hit served from our own data is free. Rate is overridable via env.
+ * not a match comes back, so every uncached call costs the admin-configured
+ * GOOGLE_PLACES_COST_USD rate; a cached hit served from our own data is free.
  */
 @Injectable()
 export class ReverseLookupService {
-  private readonly perLookupRate = Number(process.env.GOOGLE_PLACES_COST_USD) || 0.017;
-
   constructor(
     @InjectRepository(ReverseLookupEvent)
     private readonly repo: Repository<ReverseLookupEvent>,
+    private readonly settingsReader: SettingsReaderService,
   ) {}
 
   /** Log one reverse-lookup, computing its estimated cost from the fields returned. */
@@ -46,8 +46,11 @@ export class ReverseLookupService {
     const success = !!input.result;
     // Google bills per request regardless of whether a match came back; a cached
     // hit (served from our own data) is free. We store hasName as a boolean only —
-    // the returned name itself is never persisted (provider ToS).
-    const cost = cached ? 0 : this.perLookupRate;
+    // the returned name itself is never persisted (provider ToS). The rate is
+    // read live from the admin-configurable GOOGLE_PLACES_COST_USD setting —
+    // no hardcoded fallback, AdminService.seedDefaultConfig guarantees the
+    // row exists.
+    const cost = cached ? 0 : await this.settingsReader.getNumber('GOOGLE_PLACES_COST_USD');
 
     const ev = this.repo.create({
       phoneNumber: input.phoneNumber,

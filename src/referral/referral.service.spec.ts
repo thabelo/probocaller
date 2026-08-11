@@ -1,8 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { getRepositoryToken } from '@nestjs/typeorm';
 import { ReferralService } from './referral.service';
 import { TransactionService } from '../transaction/transaction.service';
-import { Setting } from '../config/setting.entity';
+import { SettingsReaderService } from '../config/settings-reader.service';
 import { User } from '../user/user.entity';
 
 /**
@@ -18,14 +17,37 @@ describe('ReferralService.payCommission', () => {
   let service: ReferralService;
   let tx: { log: jest.Mock };
   let manager: any;
-  let settingRepo: any;
+  let settingsReader: { getNumber: jest.Mock };
 
-  /** Set the admin-configured rate for a test. */
-  const setRate = (value: string | null) =>
-    settingRepo.findOne.mockResolvedValue(value === null ? null : { key: 'REFERRAL_COMMISSION_RATE', value });
+  /**
+   * Set the admin-configured rate for a test. Mirrors the shared
+   * SettingsReaderService's own contract: a valid number (including 0,
+   * the disable kill-switch) resolves; a missing/invalid row rejects with
+   * "Missing or invalid setting: …", exactly like every other rate reader.
+   */
+  const setRate = (value: string | null) => {
+    if (value === null) {
+      settingsReader.getNumber.mockRejectedValue(
+        new Error('Missing or invalid setting: REFERRAL_COMMISSION_RATE'),
+      );
+      return;
+    }
+    const n = Number(value);
+    if (!Number.isFinite(n)) {
+      settingsReader.getNumber.mockRejectedValue(
+        new Error('Missing or invalid setting: REFERRAL_COMMISSION_RATE'),
+      );
+      return;
+    }
+    settingsReader.getNumber.mockResolvedValue(n);
+  };
 
   beforeEach(async () => {
-    settingRepo = { findOne: jest.fn().mockResolvedValue(null) };
+    // Default fixture rate mirrors seedDefaultConfig's bootstrap default
+    // (0.03) — every test that doesn't call setRate() exercises the
+    // payCommission graph logic at the normal 3% rate, matching production
+    // where seedDefaultConfig guarantees the row exists.
+    settingsReader = { getNumber: jest.fn().mockResolvedValue(0.03) };
     tx = { log: jest.fn().mockResolvedValue(undefined) };
     manager = {
       findOne: jest.fn(),
@@ -35,7 +57,7 @@ describe('ReferralService.payCommission', () => {
       providers: [
         ReferralService,
         { provide: TransactionService, useValue: tx },
-        { provide: getRepositoryToken(Setting), useValue: settingRepo },
+        { provide: SettingsReaderService, useValue: settingsReader },
       ],
     }).compile();
     service = module.get(ReferralService);
@@ -153,15 +175,25 @@ describe('ReferralService.payCommission', () => {
     );
   });
 
-  it('invalid/out-of-range rate falls back to the 3% default', async () => {
+  // Regression: an unparseable/missing setting used to silently fall back to
+  // the 3% default — a typo in the admin panel would silently mis-bill
+  // forever. It must now fail loudly instead, matching SettingsReaderService's
+  // own no-fallback contract used by every other rate in the app.
+  it('propagates a loud failure when the configured rate is missing/unparseable, instead of silently defaulting', async () => {
     setRate('not-a-number');
     wireReferred(3, 7, 100);
 
-    await service.payCommission(3, 10, manager);
+    await expect(service.payCommission(3, 10, manager)).rejects.toThrow(/Missing or invalid setting/i);
+    expect(tx.log).not.toHaveBeenCalled();
+    expect(manager.save).not.toHaveBeenCalled();
+  });
 
-    expect(tx.log).toHaveBeenCalledWith(
-      7, 'REFERRAL_COMMISSION', 0.3, expect.any(String), undefined, manager,
-    );
+  it('rejects a configured rate outside [0, 1) instead of silently clamping to the default', async () => {
+    setRate('1.5');
+    wireReferred(3, 7, 100);
+
+    await expect(service.payCommission(3, 10, manager)).rejects.toThrow();
+    expect(tx.log).not.toHaveBeenCalled();
   });
 
   // Regression: the description used to hardcode the literal "3%" no matter

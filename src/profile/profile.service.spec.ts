@@ -10,7 +10,6 @@ import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
 import { Transaction } from '../transaction/transaction.entity';
 import { DataCertificate } from './data-certificate.entity';
-import { Setting } from '../config/setting.entity';
 import { ReferralService } from '../referral/referral.service';
 import { SettingsReaderService } from '../config/settings-reader.service';
 import { DataSource } from 'typeorm';
@@ -24,10 +23,25 @@ const mockRepo = () => ({
   count: jest.fn().mockResolvedValue(0),
 });
 
-// Mirrors seedDefaultConfig's PLATFORM_CUT_RATE default (0.24), sourced from
-// the shared SettingsReaderService instead of a hardcoded fallback constant.
-const mockSettingsReader = () => ({
-  getNumber: jest.fn(async (_key: string): Promise<number> => 0.24),
+// Mirrors seedDefaultConfig's bootstrap defaults for every setting
+// ProfileService reads through the shared SettingsReaderService, so tests
+// that don't care about a specific rate get the SAME numbers the real app
+// would see once seeded — no more implicit "missing row" fallback, since
+// SettingsReaderService throws instead of silently substituting a default.
+const DEFAULT_SETTINGS: Record<string, number> = {
+  PLATFORM_CUT_RATE: 0.24,
+  LEADS_BASE_FEE: 250,
+  LEADS_FREE_DAYS: 7,
+  LEADS_DAILY_RATE: 0.018,
+  LEADS_MAX_MULTIPLIER: 3,
+};
+
+const mockSettingsReader = (overrides: Record<string, number> = {}) => ({
+  getNumber: jest.fn(async (key: string): Promise<number> => {
+    if (key in overrides) return overrides[key];
+    if (key in DEFAULT_SETTINGS) return DEFAULT_SETTINGS[key];
+    throw new Error(`unexpected setting key in test: ${key}`);
+  }),
 });
 
 const mockField = (overrides = {}): ProfileField =>
@@ -53,7 +67,6 @@ describe('ProfileService', () => {
         { provide: getRepositoryToken(Business), useFactory: mockRepo },
         { provide: getRepositoryToken(Transaction), useFactory: mockRepo },
         { provide: getRepositoryToken(DataCertificate), useFactory: mockRepo },
-        { provide: getRepositoryToken(Setting), useFactory: mockRepo },
         { provide: SettingsReaderService, useFactory: mockSettingsReader },
         { provide: ReferralService, useValue: { payCommission: jest.fn().mockResolvedValue(undefined) } },
         // DataSource is required by purchaseLeads' transaction wrapper. Other
@@ -239,30 +252,29 @@ describe('ProfileService', () => {
   });
 
   describe('getLeadsPricing — admin-configurable leads costs', () => {
-    let settingRepo: ReturnType<typeof mockRepo>;
-    beforeEach(() => { settingRepo = (service as any).settingRepo; });
+    let settingsReader: ReturnType<typeof mockSettingsReader>;
+    beforeEach(() => { settingsReader = (service as any).settingsReader; });
 
-    it('falls back to the defaults (R250 base, 7 free days, 1.8%/day, ×3 cap) when unset', async () => {
-      settingRepo.findOne.mockResolvedValue(null);
+    it('reads the bootstrap defaults (R250 base, 7 free days, 1.8%/day, ×3 cap) through SettingsReaderService', async () => {
       expect(await service.getLeadsPricing()).toEqual({ baseFee: 250, freeDays: 7, dailyRate: 0.018, maxMultiplier: 3 });
     });
 
     it('returns the configured values from settings', async () => {
-      settingRepo.findOne.mockImplementation(async ({ where }: any) =>
-        where.key === 'LEADS_BASE_FEE' ? { value: '400' }
-          : where.key === 'LEADS_FREE_DAYS' ? { value: '14' }
-          : where.key === 'LEADS_DAILY_RATE' ? { value: '0.025' }
-          : where.key === 'LEADS_MAX_MULTIPLIER' ? { value: '5' } : null);
+      settingsReader.getNumber.mockImplementation(async (key: string) =>
+        key === 'LEADS_BASE_FEE' ? 400
+          : key === 'LEADS_FREE_DAYS' ? 14
+          : key === 'LEADS_DAILY_RATE' ? 0.025
+          : key === 'LEADS_MAX_MULTIPLIER' ? 5 : Promise.reject(new Error(`unexpected key: ${key}`)));
       expect(await service.getLeadsPricing()).toEqual({ baseFee: 400, freeDays: 14, dailyRate: 0.025, maxMultiplier: 5 });
     });
 
-    it('ignores non-positive / non-numeric config and uses the defaults', async () => {
-      settingRepo.findOne.mockImplementation(async ({ where }: any) =>
-        where.key === 'LEADS_BASE_FEE' ? { value: 'abc' }
-          : where.key === 'LEADS_FREE_DAYS' ? { value: '0' }
-          : where.key === 'LEADS_DAILY_RATE' ? { value: 'x' }
-          : where.key === 'LEADS_MAX_MULTIPLIER' ? { value: '0' } : null);
-      expect(await service.getLeadsPricing()).toEqual({ baseFee: 250, freeDays: 7, dailyRate: 0.018, maxMultiplier: 3 });
+    // Regression: an unparseable/missing leads-pricing row used to silently
+    // fall back to the hardcoded default — a typo in the admin panel would
+    // silently mis-price every certificate forever. It must now fail loudly,
+    // via the shared SettingsReaderService's own no-fallback contract.
+    it('propagates a loud failure when a leads-pricing setting is missing/invalid, instead of silently defaulting', async () => {
+      settingsReader.getNumber.mockRejectedValue(new Error('Missing or invalid setting: LEADS_BASE_FEE'));
+      await expect(service.getLeadsPricing()).rejects.toThrow(/Missing or invalid setting/i);
     });
   });
 
@@ -426,7 +438,6 @@ describe('ProfileService', () => {
           { provide: getRepositoryToken(Business),        useFactory: mockRepo },
           { provide: getRepositoryToken(Transaction),     useFactory: mockRepo },
           { provide: getRepositoryToken(DataCertificate), useFactory: mockRepo },
-          { provide: getRepositoryToken(Setting),         useFactory: mockRepo },
           { provide: SettingsReaderService,               useFactory: mockSettingsReader },
           { provide: ReferralService,                     useValue: referral },
           { provide: DataSource,                          useValue: dsMock },
@@ -623,8 +634,7 @@ describe('ProfileService', () => {
 
     it('caps the compounding factor at maxMultiplier (base fee can never run away)', async () => {
       wireMatches(100, 0, 1); // 1 match, zero data cost → isolate the base fee
-      (service as any).settingRepo.findOne.mockImplementation(async ({ where }: any) =>
-        where.key === 'LEADS_MAX_MULTIPLIER' ? { value: '3' } : null); // base 250, free 7, 1.8%/day
+      // LEADS_MAX_MULTIPLIER=3 is the bootstrap default (base 250, free 7, 1.8%/day).
       const result = await service.purchaseLeads(7, {
         filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 360,
       });
@@ -698,8 +708,8 @@ describe('ProfileService', () => {
 
     it('charges the admin-configured base fee per user (not the hardcoded R250)', async () => {
       wireMatches(100, 1, 2); // 2 matches × per-person cost 1
-      (service as any).settingRepo.findOne.mockImplementation(async ({ where }: any) =>
-        where.key === 'LEADS_BASE_FEE' ? { value: '100' } : null);
+      (service as any).settingsReader.getNumber.mockImplementation(async (key: string) =>
+        key === 'LEADS_BASE_FEE' ? 100 : DEFAULT_SETTINGS[key]);
       const result = await service.purchaseLeads(7, {
         filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 7, // free window → no interest
       });
@@ -712,9 +722,9 @@ describe('ProfileService', () => {
 
     it('uses the admin-configured free days and daily rate', async () => {
       wireMatches(100, 1, 2); // 2 matches × per-person cost 1
-      (service as any).settingRepo.findOne.mockImplementation(async ({ where }: any) =>
-        where.key === 'LEADS_FREE_DAYS' ? { value: '14' }
-          : where.key === 'LEADS_DAILY_RATE' ? { value: '0.02' } : null); // base fee → 250
+      (service as any).settingsReader.getNumber.mockImplementation(async (key: string) =>
+        key === 'LEADS_FREE_DAYS' ? 14
+          : key === 'LEADS_DAILY_RATE' ? 0.02 : DEFAULT_SETTINGS[key]); // base fee → 250
       const result = await service.purchaseLeads(7, {
         filters: { income_range: { op: 'eq', value: 'gt_20k' } }, budget: 100, consentDays: 15,
       });

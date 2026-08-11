@@ -10,6 +10,7 @@ import { AdminGuard } from '../admin/admin.guard';
 import { BankAccountModule } from '../bank-account/bank-account.module';
 import { FicaModule } from '../fica/fica.module';
 import { TransactionModule } from '../transaction/transaction.module';
+import { ConfigModule } from '../config/config.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { TransactionModule } from '../transaction/transaction.module';
     BankAccountModule,
     FicaModule,
     TransactionModule,
+    ConfigModule,
   ],
   controllers: [WithdrawalController, AdminWithdrawalController],
   providers: [WithdrawalService, AdminGuard],

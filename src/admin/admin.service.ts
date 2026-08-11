@@ -458,10 +458,40 @@ export class AdminService {
       { key: 'LEADS_DAILY_RATE', value: '0.018', description: 'Compounding interest per day on the base fee beyond the free window (0.018 = 1.8%/day)' },
       { key: 'LEADS_MAX_MULTIPLIER', value: '3', description: 'Cap on the compounded base-fee multiplier so long windows can’t run away (3 = at most 3× the base fee)' },
       { key: 'PAY_TO_CONTACT_FEE_RATE', value: '0.3', description: 'Platform fee rate on pay-to-contact requests (0.3 = 30%)' },
+      { key: 'WITHDRAWAL_PENDING_CAP', value: '3', description: 'Max concurrent pending withdrawals allowed per user' },
+      { key: 'AIRTIME_MIN_ZAR', value: '5', description: 'Minimum airtime redemption amount (ZAR)' },
+      { key: 'AIRTIME_MAX_ZAR', value: '1000', description: 'Maximum airtime redemption amount (ZAR)' },
+      { key: 'MAX_MONEY_MOVE', value: '1000000', description: 'Sanity ceiling on any single wallet top-up/transfer amount (ZAR)' },
+      { key: 'MAX_TOPUP_AMOUNT', value: '1000', description: "Maximum single wallet top-up amount (ZAR) — enforced in AddCreditDto's handler, not the decorator" },
+      { key: 'GOOGLE_PLACES_COST_USD', value: '0.017', description: 'Per-lookup cost charged by the Google Places API (USD) — feeds the admin cost dashboard' },
+      { key: 'EXTERNAL_LOOKUP_MAX_PER_WINDOW', value: '15', description: 'Max billable external lookups allowed per user per rate-limit window' },
+      { key: 'EXTERNAL_LOOKUP_WINDOW_MS', value: '60000', description: 'Rate-limit window length in milliseconds for external lookup caps' },
     ];
     for (const def of defaults) {
       const existing = await this.settingRepository.findOne({ where: { key: def.key } });
       if (!existing) await this.settingRepository.save(this.settingRepository.create(def));
+    }
+
+    // PAY_TO_CONTACT_PLATFORM_USER_ID identifies a SPECIFIC user account as
+    // this environment's fee-collection wallet — there is no universally-
+    // correct default, so it is never bootstrap-seeded with a business-
+    // constant value. If this environment currently has one configured via
+    // env (a pre-migration deployment), seed that value ONE TIME so the
+    // environment doesn't break; otherwise leave it unset so an admin must
+    // explicitly configure it (reading it unset now throws loudly instead of
+    // silently skipping platform-fee collection).
+    const platformUserIdEnv = process.env.PAY_TO_CONTACT_PLATFORM_USER_ID;
+    if (platformUserIdEnv) {
+      const existing = await this.settingRepository.findOne({
+        where: { key: 'PAY_TO_CONTACT_PLATFORM_USER_ID' },
+      });
+      if (!existing) {
+        await this.settingRepository.save(this.settingRepository.create({
+          key: 'PAY_TO_CONTACT_PLATFORM_USER_ID',
+          value: platformUserIdEnv,
+          description: 'Platform wallet (user id) that collects the Pay-to-Contact fee — must be explicitly configured by an admin; no bootstrap default.',
+        }));
+      }
     }
   }
 

@@ -6,6 +6,7 @@ import { AirtimePayout } from './airtime.entity';
 import { User } from '../user/user.entity';
 import { TransactionService } from '../transaction/transaction.service';
 import { AIRTIME_PROVIDER } from './airtime.provider';
+import { SettingsReaderService } from '../config/settings-reader.service';
 
 describe('AirtimeService', () => {
   let service: AirtimeService;
@@ -13,6 +14,7 @@ describe('AirtimeService', () => {
   let manager: any;
   let tx: { log: jest.Mock };
   let provider: { sendAirtime: jest.Mock };
+  let settingsReader: { getNumber: jest.Mock };
 
   const buildUser = (balance: number) => ({ id: 1, walletBalance: balance });
 
@@ -29,6 +31,16 @@ describe('AirtimeService', () => {
     const dataSource = { transaction: jest.fn().mockImplementation(async (cb: any) => cb(manager)) };
     tx = { log: jest.fn().mockResolvedValue(undefined) };
     provider = { sendAirtime: jest.fn() };
+    // Mirrors seedDefaultConfig's AIRTIME_MIN_ZAR / AIRTIME_MAX_ZAR bootstrap
+    // defaults (5 / 1000), sourced from the shared SettingsReaderService
+    // instead of process.env.
+    settingsReader = {
+      getNumber: jest.fn().mockImplementation(async (key: string) => {
+        if (key === 'AIRTIME_MIN_ZAR') return 5;
+        if (key === 'AIRTIME_MAX_ZAR') return 1000;
+        throw new Error(`unexpected setting key in test: ${key}`);
+      }),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -38,10 +50,37 @@ describe('AirtimeService', () => {
         { provide: TransactionService, useValue: tx },
         { provide: AIRTIME_PROVIDER, useValue: provider },
         { provide: DataSource, useValue: dataSource },
+        { provide: SettingsReaderService, useValue: settingsReader },
       ],
     }).compile();
 
     service = module.get(AirtimeService);
+  });
+
+  describe('networks — min/max are admin-configurable, not hardcoded', () => {
+    it('reads AIRTIME_MIN_ZAR / AIRTIME_MAX_ZAR through the shared SettingsReaderService', async () => {
+      const result = await service.networks();
+      expect(result.min).toBe(5);
+      expect(result.max).toBe(1000);
+      expect(settingsReader.getNumber).toHaveBeenCalledWith('AIRTIME_MIN_ZAR');
+      expect(settingsReader.getNumber).toHaveBeenCalledWith('AIRTIME_MAX_ZAR');
+    });
+
+    it('reflects an admin-configured min/max, not the bootstrap default', async () => {
+      settingsReader.getNumber.mockImplementation(async (key: string) =>
+        key === 'AIRTIME_MIN_ZAR' ? 10 : 500);
+      const result = await service.networks();
+      expect(result.min).toBe(10);
+      expect(result.max).toBe(500);
+    });
+
+    // Regression: a missing/invalid setting must fail loudly, not silently
+    // fall back to a hardcoded 5/1000 — SettingsReaderService's own
+    // no-fallback contract.
+    it('propagates a loud failure when the min/max setting is missing/invalid', async () => {
+      settingsReader.getNumber.mockRejectedValue(new Error('Missing or invalid setting: AIRTIME_MIN_ZAR'));
+      await expect(service.networks()).rejects.toThrow(/Missing or invalid setting/i);
+    });
   });
 
   const dto = { amount: 20, phoneNumber: '0821234567', network: 'MTN' };

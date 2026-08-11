@@ -7,6 +7,7 @@ import { AirtimePayout, AirtimeStatus } from './airtime.entity';
 import { User } from '../user/user.entity';
 import { TransactionService } from '../transaction/transaction.service';
 import { SA_NETWORKS, isSupportedNetwork, isSouthAfricanMsisdn } from './airtime.provider';
+import { SettingsReaderService } from '../config/settings-reader.service';
 
 export interface RedeemAirtimeInput {
   amount: number;
@@ -23,14 +24,23 @@ export class AirtimeService {
     private readonly repo: Repository<AirtimePayout>,
     private readonly tx: TransactionService,
     private readonly dataSource: DataSource,
+    private readonly settingsReader: SettingsReaderService,
   ) {}
 
-  private get min() { return Number(process.env.AIRTIME_MIN_ZAR ?? 5); }
-  private get max() { return Number(process.env.AIRTIME_MAX_ZAR ?? 1000); }
+  // Admin-configurable redemption bounds (AIRTIME_MIN_ZAR / AIRTIME_MAX_ZAR),
+  // read through the shared SettingsReaderService — no hardcoded fallback,
+  // AdminService.seedDefaultConfig guarantees the rows exist.
+  private minMax(): Promise<[number, number]> {
+    return Promise.all([
+      this.settingsReader.getNumber('AIRTIME_MIN_ZAR'),
+      this.settingsReader.getNumber('AIRTIME_MAX_ZAR'),
+    ]);
+  }
 
   /** Supported SA networks for the client to render a picker. */
-  networks() {
-    return { networks: SA_NETWORKS, min: this.min, max: this.max };
+  async networks() {
+    const [min, max] = await this.minMax();
+    return { networks: SA_NETWORKS, min, max };
   }
 
   listMine(userId: number) {
@@ -119,8 +129,9 @@ export class AirtimeService {
     if (!isSouthAfricanMsisdn(phoneNumber)) {
       throw new BadRequestException('Airtime is available for South African numbers only.');
     }
-    if (!(amount >= this.min)) throw new BadRequestException(`Minimum airtime is R${this.min}.`);
-    if (amount > this.max) throw new BadRequestException(`Maximum airtime is R${this.max}.`);
+    const [min, max] = await this.minMax();
+    if (!(amount >= min)) throw new BadRequestException(`Minimum airtime is R${min}.`);
+    if (amount > max) throw new BadRequestException(`Maximum airtime is R${max}.`);
 
     // 1) Reserve — atomically debit the wallet and create a pending payout.
     //    The wallet row is locked so two concurrent redemptions can't both

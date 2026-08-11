@@ -21,12 +21,6 @@ export interface EscrowSplit {
 
 const round4 = (n: number) => parseFloat(n.toFixed(4));
 
-/** Platform wallet that collects fees, from PAY_TO_CONTACT_PLATFORM_USER_ID. */
-const resolvePlatformUserId = (): number | null => {
-  const raw = Number(process.env.PAY_TO_CONTACT_PLATFORM_USER_ID);
-  return Number.isInteger(raw) && raw > 0 ? raw : null;
-};
-
 @Injectable()
 export class PayToContactService {
   constructor(
@@ -49,6 +43,24 @@ export class PayToContactService {
    */
   resolveFeeRate(): Promise<number> {
     return this.settingsReader.getNumber('PAY_TO_CONTACT_FEE_RATE');
+  }
+
+  /**
+   * The platform wallet (user id) that collects the Pay-to-Contact fee, from
+   * the admin-configured PAY_TO_CONTACT_PLATFORM_USER_ID setting. Unlike the
+   * old process.env read, a missing/invalid value is NOT silently swallowed
+   * into a no-op — it identifies a specific environment's fee-collection
+   * wallet, and a nonzero fee that can't be routed anywhere is a real
+   * revenue leak, not a normal cold-start case. Only called from settle()
+   * when there's actually a nonzero fee to credit, so the throw only ever
+   * fails a settlement that genuinely needs this wallet configured.
+   */
+  private async resolvePlatformUserId(): Promise<number> {
+    const id = await this.settingsReader.getNumber('PAY_TO_CONTACT_PLATFORM_USER_ID');
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new Error(`Invalid PAY_TO_CONTACT_PLATFORM_USER_ID setting: ${id}`);
+    }
+    return id;
   }
 
   /**
@@ -184,10 +196,12 @@ export class PayToContactService {
       // credited amount above is unaffected.
       await this.referralService.payCommission(request.userId, platformFee, m);
 
-      // Route the skimmed fee to the platform wallet (when configured) so the
-      // ledger balances: bid == user earnings + platform fee.
-      const platformUserId = resolvePlatformUserId();
-      if (platformUserId && platformFee > 0) {
+      // Route the skimmed fee to the platform wallet so the ledger balances:
+      // bid == user earnings + platform fee. A nonzero fee that can't be
+      // routed anywhere (unconfigured platform wallet) fails the whole
+      // settlement loudly, rather than silently skipping fee collection.
+      if (platformFee > 0) {
+        const platformUserId = await this.resolvePlatformUserId();
         const platform = await m.findOne(User, {
           where: { id: platformUserId },
           lock: { mode: 'pessimistic_write' },

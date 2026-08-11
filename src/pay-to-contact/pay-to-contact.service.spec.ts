@@ -10,8 +10,22 @@ import { SettingsReaderService } from '../config/settings-reader.service';
 
 // Mirrors seedDefaultConfig's PAY_TO_CONTACT_FEE_RATE default (0.3), sourced
 // from the shared SettingsReaderService instead of process.env.
-const mockSettingsReader = (rate = 0.3) => ({
-  getNumber: jest.fn(async (_key: string): Promise<number> => rate),
+//
+// `platformUserId` defaults to a sane configured value (999) so tests that
+// don't care about the platform-wallet-crediting feature never accidentally
+// hit the "unconfigured platform wallet" loud-failure path. Pass `null` to
+// simulate PAY_TO_CONTACT_PLATFORM_USER_ID genuinely being unset/invalid.
+const mockSettingsReader = (rate = 0.3, platformUserId: number | null = 999) => ({
+  getNumber: jest.fn(async (key: string): Promise<number> => {
+    if (key === 'PAY_TO_CONTACT_FEE_RATE') return rate;
+    if (key === 'PAY_TO_CONTACT_PLATFORM_USER_ID') {
+      if (platformUserId === null) {
+        throw new Error('Missing or invalid setting: PAY_TO_CONTACT_PLATFORM_USER_ID');
+      }
+      return platformUserId;
+    }
+    throw new Error(`unexpected setting key in test: ${key}`);
+  }),
 });
 
 /**
@@ -258,16 +272,15 @@ describe('PayToContactService.settle — fee config & platform ledger', () => {
   let tx: { log: jest.Mock };
   let referral: { payCommission: jest.Mock };
   let settingsReader: { getNumber: jest.Mock };
-  const savedPlatformId = process.env.PAY_TO_CONTACT_PLATFORM_USER_ID;
 
-  const setup = async (feeRate = 0.3) => {
+  const setup = async (feeRate = 0.3, platformUserId: number | null = 999) => {
     manager = {
       findOne: jest.fn(),
       save: jest.fn().mockImplementation(async (a: any, b?: any) => b ?? a),
     };
     tx = { log: jest.fn().mockResolvedValue(undefined) };
     referral = { payCommission: jest.fn().mockResolvedValue(undefined) };
-    settingsReader = mockSettingsReader(feeRate);
+    settingsReader = mockSettingsReader(feeRate, platformUserId);
     const dataSource = {
       transaction: jest.fn().mockImplementation(async (cb: any) => cb(manager)),
     };
@@ -285,18 +298,13 @@ describe('PayToContactService.settle — fee config & platform ledger', () => {
     service = module.get(PayToContactService);
   };
 
-  afterEach(() => {
-    if (savedPlatformId === undefined) delete process.env.PAY_TO_CONTACT_PLATFORM_USER_ID;
-    else process.env.PAY_TO_CONTACT_PLATFORM_USER_ID = savedPlatformId;
-  });
-
   it('uses the fee rate from the settings table (PAY_TO_CONTACT_FEE_RATE) when no rate is passed', async () => {
     await setup(0.5);
-    delete process.env.PAY_TO_CONTACT_PLATFORM_USER_ID;
 
     manager.findOne
       .mockImplementationOnce(async () => ({ id: 7, userId: 9, escrowAmount: 40, escrowStatus: 'held' }))
-      .mockImplementationOnce(async () => ({ id: 9, walletBalance: 0 }));
+      .mockImplementationOnce(async () => ({ id: 9, walletBalance: 0 }))
+      .mockImplementationOnce(async () => ({ id: 999, walletBalance: 0 }));
 
     await service.settle(7);
 
@@ -307,8 +315,7 @@ describe('PayToContactService.settle — fee config & platform ledger', () => {
   });
 
   it('credits the platform wallet and logs PLATFORM_FEE when a platform account is configured', async () => {
-    await setup(0.3); // default
-    process.env.PAY_TO_CONTACT_PLATFORM_USER_ID = '99';
+    await setup(0.3, 99);
 
     manager.findOne
       .mockImplementationOnce(async () => ({ id: 7, userId: 9, escrowAmount: 40, escrowStatus: 'held' }))
@@ -328,6 +335,38 @@ describe('PayToContactService.settle — fee config & platform ledger', () => {
 
     expect(tx.log).toHaveBeenCalledWith(
       99, 'PLATFORM_FEE', 12, expect.any(String), undefined, manager,
+    );
+  });
+
+  /**
+   * Cost-configuration cleanup: PAY_TO_CONTACT_PLATFORM_USER_ID used to
+   * silently no-op platform-fee collection when unset (process.env read
+   * returning null) — a silent revenue leak. It must now fail the WHOLE
+   * settlement loudly instead, so a misconfigured environment can't quietly
+   * lose the platform's fee forever.
+   */
+  it('fails the whole settlement when a nonzero platform fee needs crediting but PAY_TO_CONTACT_PLATFORM_USER_ID is not configured', async () => {
+    await setup(0.3, null);
+
+    manager.findOne
+      .mockImplementationOnce(async () => ({ id: 7, userId: 9, escrowAmount: 40, escrowStatus: 'held' }))
+      .mockImplementationOnce(async () => ({ id: 9, walletBalance: 0 }));
+
+    await expect(service.settle(7)).rejects.toThrow(/Missing or invalid setting/i);
+  });
+
+  // A zero fee rate means there is nothing to route to the platform wallet —
+  // settle() must NOT require PAY_TO_CONTACT_PLATFORM_USER_ID in that case.
+  it('does not require a configured platform wallet when the fee is zero', async () => {
+    await setup(0, null);
+
+    manager.findOne
+      .mockImplementationOnce(async () => ({ id: 7, userId: 9, escrowAmount: 40, escrowStatus: 'held' }))
+      .mockImplementationOnce(async () => ({ id: 9, walletBalance: 0 }));
+
+    await expect(service.settle(7)).resolves.toBeDefined();
+    expect(tx.log).not.toHaveBeenCalledWith(
+      expect.anything(), 'PLATFORM_FEE', expect.anything(), expect.anything(), expect.anything(), expect.anything(),
     );
   });
 });

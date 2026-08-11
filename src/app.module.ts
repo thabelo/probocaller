@@ -31,6 +31,7 @@ import { CampaignModule } from './campaign/campaign.module';
 
 import { Transaction } from './transaction/transaction.entity';
 import { TransactionModule } from './transaction/transaction.module';
+import { ReferralModule } from './referral/referral.module';
 
 import { DataMigrationModule } from './migration/data-migration.module';
 import { DataMigrationService } from './migration/data-migration.service';
@@ -168,6 +169,9 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
     // ConfigModule: UserController (also declared here) reads live rates via
     // the shared SettingsReaderService.
     ConfigModule,
+    // ReferralModule: UserController (also declared here) reads the live
+    // referral commission rate via ReferralService.getCommissionRate().
+    ReferralModule,
     UserModule,
     CallModule,
     AdminModule,

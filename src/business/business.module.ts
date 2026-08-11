@@ -14,6 +14,7 @@ import { BusinessNumberSyncController } from './business-number-sync.controller'
 import { ApiKeyGuard } from './api-key.guard';
 import { ProfileModule } from '../profile/profile.module';
 import { TransactionModule } from '../transaction/transaction.module';
+import { ConfigModule } from '../config/config.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { TransactionModule } from '../transaction/transaction.module';
     PassportModule.register({ defaultStrategy: 'jwt' }),
     ProfileModule,
     TransactionModule,
+    ConfigModule,
   ],
   controllers: [BusinessController, BusinessLogoController, LeadsController, BusinessNumberSyncController],
   providers: [BusinessService, BusinessLogoService, ApiKeyGuard],

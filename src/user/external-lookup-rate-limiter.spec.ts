@@ -29,4 +29,18 @@ describe('ExternalLookupRateLimiter', () => {
     now = 1001;
     expect(rl.tryAcquire('u')).toBe(true);
   });
+
+  /**
+   * Production always constructs this via UserModule's async factory, which
+   * resolves EXTERNAL_LOOKUP_MAX_PER_WINDOW / EXTERNAL_LOOKUP_WINDOW_MS live
+   * from the settings table and passes them in explicitly (see
+   * user.module.spec.ts) — so this class itself no longer reads process.env.
+   * The no-args constructor default below is a plain fallback for direct
+   * construction (tests, ad-hoc use), not a production configuration path.
+   */
+  it('defaults to 15 per 60s when constructed with no args (test/ad-hoc convenience only)', () => {
+    const rl = new ExternalLookupRateLimiter();
+    for (let i = 0; i < 15; i++) expect(rl.tryAcquire('u')).toBe(true);
+    expect(rl.tryAcquire('u')).toBe(false);
+  });
 });

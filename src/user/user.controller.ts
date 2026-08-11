@@ -1,4 +1,4 @@
-import { Controller, Post, Get, Put, Delete, Body, Param, UseGuards, Request, ForbiddenException } from '@nestjs/common';
+import { Controller, Post, Get, Put, Delete, Body, Param, UseGuards, Request, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { UserService } from './user.service';
@@ -13,10 +13,7 @@ import { TransactionService } from '../transaction/transaction.service';
 import { DataBrokerService } from '../data-broker/data-broker.service';
 import { LookupService } from '../lookup/lookup.service';
 import { ExternalLookupRateLimiter } from './external-lookup-rate-limiter';
-import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
-import { Setting } from '../config/setting.entity';
-import { REFERRAL_RATE_KEY, parseCommissionRate } from '../referral/referral.service';
+import { ReferralService } from '../referral/referral.service';
 import { SettingsReaderService } from '../config/settings-reader.service';
 
 @ApiTags('users')
@@ -29,9 +26,8 @@ export class UserController {
     private readonly dataBrokerService: DataBrokerService,
     private readonly lookupService: LookupService,
     private readonly externalLookupLimiter: ExternalLookupRateLimiter,
-    @InjectRepository(Setting)
-    private readonly settingRepository: Repository<Setting>,
     private readonly settingsReader: SettingsReaderService,
+    private readonly referralService: ReferralService,
   ) {}
 
   // ── Admin-only: returns the full user list with PII. ──────────────────
@@ -133,6 +129,13 @@ export class UserController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Add credits to business wallet (positive amount only)' })
   async addCredit(@Request() req, @Body() body: AddCreditDto) {
+    // MAX_TOPUP_AMOUNT is admin-configurable (Setting row) — class-validator
+    // decorators are static and can't read a live DB value per-request, so
+    // the real, configurable ceiling is enforced here instead.
+    const maxTopupAmount = await this.settingsReader.getNumber('MAX_TOPUP_AMOUNT');
+    if (body.amount > maxTopupAmount) {
+      throw new BadRequestException(`Amount exceeds the maximum top-up of ${maxTopupAmount}`);
+    }
     return this.userService.addCredit(req.user.userId, body.amount);
   }
 
@@ -238,9 +241,10 @@ export class UserController {
       this.settingsReader.getNumber('PAY_TO_CONTACT_FEE_RATE'),
     ]);
     // Quoted to users as "earn N% of everything they make", so the app must be
-    // able to read it rather than compile the figure into its copy.
-    const referralSetting = await this.settingRepository.findOne({ where: { key: REFERRAL_RATE_KEY } });
-    const referralCommissionRate = parseCommissionRate(referralSetting?.value);
+    // able to read it rather than compile the figure into its copy. Reads
+    // through ReferralService.getCommissionRate() — the SAME reader
+    // payCommission() uses — instead of duplicating the settings parse here.
+    const referralCommissionRate = await this.referralService.getCommissionRate();
     return {
       ratePerSecond,
       platformCutRate,
