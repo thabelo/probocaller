@@ -217,3 +217,76 @@ describe('MarketplaceService.canAccess', () => {
     ).resolves.toBe(false);
   });
 });
+
+/**
+ * Storefront listing and guarded install.
+ *
+ * `listApps` annotates the catalogue with each app's state; sectioning is the
+ * client's business, so product can move an app between "earn" and "for your
+ * business" without a server change. Retired apps are dropped outright — they
+ * are not "coming soon", they are gone.
+ *
+ * `installApp` re-derives eligibility instead of trusting the caller: the
+ * storefront can be bypassed, so an install request for a locked app has to be
+ * refused here rather than in the UI.
+ */
+describe('MarketplaceService listing and guarded install', () => {
+  const catalogue = [
+    { key: 'data-broker', audience: 'user', status: 'live', requiresKyb: false },
+    { key: 'audience-leads', audience: 'business', status: 'live', requiresKyb: true },
+    { key: 'surveys', audience: 'user', status: 'coming_soon', requiresKyb: false },
+    { key: 'old-thing', audience: 'user', status: 'retired', requiresKyb: false },
+  ];
+
+  const makeService = (installedKeys: string[] = []) =>
+    new MarketplaceService(
+      {
+        find: jest.fn().mockResolvedValue(
+          installedKeys.map((appKey) => ({ appKey })),
+        ),
+        findOne: jest.fn().mockResolvedValue(null),
+        create: jest.fn((row: unknown) => row),
+        save: jest.fn(async (row: unknown) => row),
+      } as any,
+      {
+        find: jest.fn().mockResolvedValue(catalogue),
+        findOne: jest.fn(async ({ where }: any) =>
+          catalogue.find((a) => a.key === where.key) ?? null,
+        ),
+      } as any,
+    );
+
+  const personal = { hasBusinessAccess: false, kybVerified: false };
+
+  it('annotates every listed app with the state for this user', async () => {
+    const listed = await makeService(['data-broker']).listApps(7, personal);
+    const byKey = Object.fromEntries(listed.map((a) => [a.key, a.state]));
+
+    expect(byKey['data-broker']).toBe('installed');
+    expect(byKey['audience-leads']).toBe('needs_business');
+    expect(byKey['surveys']).toBe('coming_soon');
+  });
+
+  it('drops retired apps from the catalogue', async () => {
+    const listed = await makeService().listApps(7, personal);
+    expect(listed.map((a) => a.key)).not.toContain('old-thing');
+  });
+
+  it('refuses to install an app the user is not eligible for', async () => {
+    await expect(
+      makeService().installApp(7, 'audience-leads', personal),
+    ).rejects.toThrow(/not available/i);
+  });
+
+  it('refuses to install an unreleased app', async () => {
+    await expect(
+      makeService().installApp(7, 'surveys', personal),
+    ).rejects.toThrow(/not available/i);
+  });
+
+  it('installs an app the user is eligible for', async () => {
+    await expect(
+      makeService().installApp(7, 'data-broker', personal),
+    ).resolves.toBeDefined();
+  });
+});

@@ -38,6 +38,7 @@ import { DataMigrationService } from './migration/data-migration.service';
 
 import { LookupModule } from './lookup/lookup.module';
 import { SubscriptionModule } from './subscription/subscription.module';
+import { MarketplaceModule } from './marketplace/marketplace.module';
 import { ScreeningModule } from './screening/screening.module';
 import { CallScreening } from './screening/call-screening.entity';
 import { ReportModule } from './report/report.module';
@@ -181,6 +182,7 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
     DataMigrationModule,
     LookupModule,
     SubscriptionModule,
+    MarketplaceModule,
     ScreeningModule,
     ReportModule,
     DataBrokerModule,

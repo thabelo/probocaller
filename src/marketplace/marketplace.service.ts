@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { AppInstall } from './app-install.entity';
@@ -71,6 +71,50 @@ export class MarketplaceService {
       where: { userId, appKey, uninstalledAt: IsNull() },
     });
     return !!install;
+  }
+
+  /** Catalogue rows the client can render, each annotated with its state. */
+  async listApps(
+    userId: number,
+    ctx: UserAccessContext,
+  ): Promise<Array<App & { state: AppState }>> {
+    const apps = await this.appRepo.find();
+    const installed = await this.installedKeys(userId);
+
+    return apps
+      .filter((app) => app.status !== 'retired')
+      .map((app) => ({
+        ...app,
+        state: this.appState(app, ctx, installed.has(app.key)),
+      }));
+  }
+
+  /** Active install keys for a user, as a set for cheap membership tests. */
+  async installedKeys(userId: number): Promise<Set<string>> {
+    const rows = await this.installRepo.find({
+      where: { userId, uninstalledAt: IsNull() },
+    });
+    return new Set(rows.map((r) => r.appKey));
+  }
+
+  /**
+   * Install with the eligibility check re-derived server-side. The storefront
+   * can be bypassed, so "available" has to be proven here, not asserted by the
+   * caller.
+   */
+  async installApp(
+    userId: number,
+    appKey: string,
+    ctx: UserAccessContext,
+  ): Promise<AppInstall> {
+    const app = await this.appRepo.findOne({ where: { key: appKey } });
+    if (!app) throw new NotFoundException(`Unknown app: ${appKey}`);
+
+    const state = this.appState(app, ctx, false);
+    if (state !== 'available') {
+      throw new ForbiddenException(`${app.name || appKey} is not available to you`);
+    }
+    return this.install(userId, appKey);
   }
 
   async canAccess(
