@@ -1,4 +1,9 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { AppInstall } from './app-install.entity';
@@ -10,6 +15,23 @@ export type AppAudience = 'user' | 'business';
 
 /** Catalogue lifecycle. Only 'live' apps can be installed. */
 export type AppStatus = 'live' | 'beta' | 'coming_soon' | 'retired';
+
+/** Runtime copy of AppStatus, so an admin's input can be validated against it. */
+export const APP_STATUSES: AppStatus[] = ['live', 'beta', 'coming_soon', 'retired'];
+
+/**
+ * What an admin may edit. `key` is absent deliberately — the client switches on
+ * it to find an app's screens, so renaming one would orphan a shipped feature.
+ */
+export const EDITABLE_APP_FIELDS = [
+  'name',
+  'tagline',
+  'icon',
+  'category',
+  'status',
+  'requiresKyb',
+  'minAppVersion',
+] as const;
 
 /** What a user may currently do with an app. */
 export type AppState =
@@ -109,6 +131,55 @@ export class MarketplaceService {
         ...app,
         state: this.appState(app, ctx, installed.has(app.key)),
       }));
+  }
+
+  /**
+   * The whole catalogue, for admins. Unlike `listApps` this keeps retired apps
+   * and resolves no per-user state — an admin is managing the catalogue, not
+   * shopping in it, and needs to see the rows the storefront deliberately hides.
+   */
+  async listAllApps(): Promise<App[]> {
+    return this.appRepo.find();
+  }
+
+  /**
+   * Edit a catalogue entry.
+   *
+   * Edit-only by design: an app row is inert without screens shipped in the
+   * mobile binary, so there is no create, and withdrawing an app is
+   * `status: 'retired'` rather than a delete that would orphan its installs.
+   * `key` is excluded because it is what the client switches on to find an
+   * app's screens — renaming one would silently orphan a shipped feature.
+   */
+  async updateApp(
+    key: string,
+    changes: Partial<
+      Pick<
+        App,
+        | 'name'
+        | 'tagline'
+        | 'icon'
+        | 'category'
+        | 'status'
+        | 'requiresKyb'
+        | 'minAppVersion'
+      >
+    >,
+  ): Promise<App> {
+    const app = await this.appRepo.findOne({ where: { key } });
+    if (!app) throw new NotFoundException(`Unknown app: ${key}`);
+
+    if (changes.status !== undefined && !APP_STATUSES.includes(changes.status)) {
+      throw new BadRequestException(
+        `Unknown status: ${changes.status}. Expected one of ${APP_STATUSES.join(', ')}`,
+      );
+    }
+
+    for (const field of EDITABLE_APP_FIELDS) {
+      if (changes[field] !== undefined) (app as any)[field] = changes[field];
+    }
+
+    return this.appRepo.save(app);
   }
 
   /** Active install keys for a user, as a set for cheap membership tests. */
