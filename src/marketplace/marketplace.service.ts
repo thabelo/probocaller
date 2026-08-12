@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { AppInstall } from './app-install.entity';
 import { App } from './app.entity';
+import { User } from '../user/user.entity';
 
 /** Who an app is for. An app has exactly one audience. */
 export type AppAudience = 'user' | 'business';
@@ -39,7 +40,28 @@ export class MarketplaceService {
     private readonly installRepo: Repository<AppInstall>,
     @InjectRepository(App)
     private readonly appRepo: Repository<App>,
+    @InjectRepository(User)
+    private readonly userRepo: Repository<User>,
   ) {}
+
+  /**
+   * App-specific consequences of turning an app on or off.
+   *
+   * Databroker's install IS the data-sharing consent, so the install row and
+   * `dataShareEnabled` must never disagree — otherwise a removed app keeps
+   * feeding audience queries, which already filter on that flag. The flag stays
+   * independently toggleable inside the app, which is what makes "installed but
+   * paused" a state distinct from withdrawing consent.
+   */
+  private async applyAppEffects(
+    userId: number,
+    appKey: string,
+    active: boolean,
+  ): Promise<void> {
+    if (appKey === 'data-broker') {
+      await this.userRepo.update(userId, { dataShareEnabled: active } as any);
+    }
+  }
 
   appState(
     app: AppAccessFields,
@@ -145,7 +167,9 @@ export class MarketplaceService {
 
     row.installedAt = new Date();
     row.uninstalledAt = null;
-    return this.installRepo.save(row);
+    const saved = await this.installRepo.save(row);
+    await this.applyAppEffects(userId, appKey, true);
+    return saved;
   }
 
   async uninstall(userId: number, appKey: string): Promise<void> {
@@ -156,5 +180,6 @@ export class MarketplaceService {
 
     active.uninstalledAt = new Date();
     await this.installRepo.save(active);
+    await this.applyAppEffects(userId, appKey, false);
   }
 }

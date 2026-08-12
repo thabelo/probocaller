@@ -9,7 +9,7 @@ import { MarketplaceService } from './marketplace.service';
  * it, so a locked app cannot be opened by a client that simply ignores the UI.
  */
 describe('MarketplaceService.appState', () => {
-  const service = new MarketplaceService({} as any, {} as any);
+  const service = new MarketplaceService({} as any, {} as any, {} as any);
 
   const liveUserApp = {
     key: 'data-broker',
@@ -70,7 +70,7 @@ describe('MarketplaceService.appState', () => {
  * already installed instead of keeping it until someone notices.
  */
 describe('MarketplaceService.canUseApp', () => {
-  const service = new MarketplaceService({} as any, {} as any);
+  const service = new MarketplaceService({} as any, {} as any, {} as any);
 
   const leads = {
     key: 'audience-leads',
@@ -107,18 +107,18 @@ describe('MarketplaceService.hasApp', () => {
   const makeRepo = (row: unknown) => ({ findOne: jest.fn().mockResolvedValue(row) });
 
   it('false when the user has never installed the app', async () => {
-    const service = new MarketplaceService(makeRepo(null) as any, {} as any);
+    const service = new MarketplaceService(makeRepo(null) as any, {} as any, { update: jest.fn() } as any);
     await expect(service.hasApp(7, 'data-broker')).resolves.toBe(false);
   });
 
   it('true when an active install exists', async () => {
-    const service = new MarketplaceService(makeRepo({ id: 1 }) as any, {} as any);
+    const service = new MarketplaceService(makeRepo({ id: 1 }) as any, {} as any, { update: jest.fn() } as any);
     await expect(service.hasApp(7, 'data-broker')).resolves.toBe(true);
   });
 
   it('asks only for installs that have not been removed', async () => {
     const repo = makeRepo(null);
-    await new MarketplaceService(repo as any, {} as any).hasApp(7, 'data-broker');
+    await new MarketplaceService(repo as any, {} as any, { update: jest.fn() } as any).hasApp(7, 'data-broker');
     expect(repo.findOne).toHaveBeenCalledWith({
       where: { userId: 7, appKey: 'data-broker', uninstalledAt: IsNull() },
     });
@@ -142,7 +142,7 @@ describe('MarketplaceService install/uninstall', () => {
 
   it('first install creates an active row for the user', async () => {
     const repo = makeRepo(null);
-    await new MarketplaceService(repo as any, {} as any).install(7, 'data-broker');
+    await new MarketplaceService(repo as any, {} as any, { update: jest.fn() } as any).install(7, 'data-broker');
 
     const saved = repo.save.mock.calls[0][0] as any;
     expect(saved.userId).toBe(7);
@@ -159,7 +159,7 @@ describe('MarketplaceService install/uninstall', () => {
       settingsJson: { fields: ['income_range'] },
     };
     const repo = makeRepo(dormant);
-    await new MarketplaceService(repo as any, {} as any).install(7, 'data-broker');
+    await new MarketplaceService(repo as any, {} as any, { update: jest.fn() } as any).install(7, 'data-broker');
 
     const saved = repo.save.mock.calls[0][0] as any;
     expect(saved.id).toBe(42);
@@ -171,7 +171,7 @@ describe('MarketplaceService install/uninstall', () => {
   it('uninstalling stamps the row instead of deleting it', async () => {
     const active = { id: 42, userId: 7, appKey: 'data-broker', uninstalledAt: null };
     const repo = makeRepo(active);
-    await new MarketplaceService(repo as any, {} as any).uninstall(7, 'data-broker');
+    await new MarketplaceService(repo as any, {} as any, { update: jest.fn() } as any).uninstall(7, 'data-broker');
 
     const saved = repo.save.mock.calls[0][0] as any;
     expect(saved.id).toBe(42);
@@ -196,6 +196,7 @@ describe('MarketplaceService.canAccess', () => {
     new MarketplaceService(
       { findOne: jest.fn().mockResolvedValue(install) } as any,
       { findOne: jest.fn().mockResolvedValue(app) } as any,
+      { update: jest.fn() } as any,
     );
 
   const verified = { hasBusinessAccess: true, kybVerified: true };
@@ -254,6 +255,7 @@ describe('MarketplaceService listing and guarded install', () => {
           catalogue.find((a) => a.key === where.key) ?? null,
         ),
       } as any,
+      { update: jest.fn() } as any,
     );
 
   const personal = { hasBusinessAccess: false, kybVerified: false };
@@ -288,5 +290,49 @@ describe('MarketplaceService listing and guarded install', () => {
     await expect(
       makeService().installApp(7, 'data-broker', personal),
     ).resolves.toBeDefined();
+  });
+});
+
+/**
+ * Databroker's install IS the data-sharing consent (product decision), so the
+ * install row and the user's `dataShareEnabled` flag must not be able to
+ * disagree. Installing turns sharing on; removing stops it "the moment you
+ * confirm", which is what the remove sheet promises.
+ *
+ * The flag stays separately toggleable inside the app, which is what makes
+ * "installed but paused" a real state — pausing is not the same as withdrawing
+ * consent, and shouldn't cost the user their profile or earning tier.
+ */
+describe('MarketplaceService app side effects', () => {
+  const makeService = (existing: unknown = null) => {
+    const users = { update: jest.fn().mockResolvedValue(undefined) };
+    const service = new MarketplaceService(
+      {
+        findOne: jest.fn().mockResolvedValue(existing),
+        create: jest.fn((row: unknown) => row),
+        save: jest.fn(async (row: unknown) => row),
+      } as any,
+      { findOne: jest.fn().mockResolvedValue(null) } as any,
+      users as any,
+    );
+    return { service, users };
+  };
+
+  it('installing Databroker turns data sharing on', async () => {
+    const { service, users } = makeService();
+    await service.install(7, 'data-broker');
+    expect(users.update).toHaveBeenCalledWith(7, { dataShareEnabled: true });
+  });
+
+  it('removing Databroker stops sharing immediately', async () => {
+    const { service, users } = makeService({ id: 1, uninstalledAt: null });
+    await service.uninstall(7, 'data-broker');
+    expect(users.update).toHaveBeenCalledWith(7, { dataShareEnabled: false });
+  });
+
+  it('other apps do not touch the sharing flag', async () => {
+    const { service, users } = makeService();
+    await service.install(7, 'surveys');
+    expect(users.update).not.toHaveBeenCalled();
   });
 });
