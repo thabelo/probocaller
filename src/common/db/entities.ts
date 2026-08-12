@@ -40,6 +40,8 @@ import { ReverseLookupEvent } from '../../lookup/reverse-lookup-event.entity';
 import { ScamKeyword } from '../../scam-keyword/scam-keyword.entity';
 import { WhitelistedNumber } from '../../business-whitelist/business-whitelist.entity';
 import { SmsLog } from '../../sms-log/sms-log.entity';
+import { App } from '../../marketplace/app.entity';
+import { AppInstall } from '../../marketplace/app-install.entity';
 
 /**
  * Canonical list of every persisted TypeORM entity.
@@ -94,4 +96,6 @@ export const ENTITIES = [
   ScamKeyword,
   WhitelistedNumber,
   SmsLog,
+  App,
+  AppInstall,
 ];
