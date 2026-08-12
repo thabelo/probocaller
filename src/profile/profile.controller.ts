@@ -4,6 +4,7 @@ import {
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { AdminGuard } from '../admin/admin.guard';
+import { AppAccessGuard, RequiresApp } from '../marketplace/app-access.guard';
 import { ProfileService } from './profile.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpsertProfileFieldDto } from './dto/upsert-profile-field.dto';
@@ -57,6 +58,8 @@ export class ProfileController {
 
   @Get('business/leads')
   @ApiOperation({ summary: 'Business: the leads you have acquired via /leads and whether you may call each (requires a certificate)' })
+  @RequiresApp('audience-leads')
+  @UseGuards(AppAccessGuard)
   getBusinessLeads(@Request() req, @Query('businessId') businessId?: string) {
     return this.profileService.getBusinessLeads(req.user.userId, businessId ? Number(businessId) : undefined);
   }
@@ -69,12 +72,16 @@ export class ProfileController {
 
   @Get('certificates')
   @ApiOperation({ summary: 'Business: your issued data-usage certificates' })
+  @RequiresApp('audience-leads')
+  @UseGuards(AppAccessGuard)
   getMyCertificates(@Request() req, @Query('businessId') businessId?: string) {
     return this.profileService.getMyCertificates(req.user.userId, businessId ? Number(businessId) : undefined);
   }
 
   @Get('certificates/:code/leads')
   @ApiOperation({ summary: 'Business: the people covered by one certificate (its lead set)' })
+  @RequiresApp('audience-leads')
+  @UseGuards(AppAccessGuard)
   getCertificateLeads(@Request() req, @Param('code') code: string, @Query('businessId') businessId?: string) {
     return this.profileService.getCertificateLeads(req.user.userId, code, businessId ? Number(businessId) : undefined);
   }
@@ -87,36 +94,48 @@ export class ProfileController {
 
   @Post('audience/query')
   @ApiOperation({ summary: 'Business: estimate reach and cost for audience filters' })
+  @RequiresApp('audience-leads')
+  @UseGuards(AppAccessGuard)
   queryAudience(@Request() req, @Body() dto: QueryAudienceDto) {
     return this.profileService.queryAudience(req.user.userId, dto);
   }
 
   @Post('audience/purchase')
   @ApiOperation({ summary: 'Business: purchase lead data matching audience filters' })
+  @RequiresApp('audience-leads')
+  @UseGuards(AppAccessGuard)
   purchaseLeads(@Request() req, @Body() dto: QueryAudienceDto) {
     return this.profileService.purchaseLeads(req.user.userId, dto);
   }
 
   @Post('audience/report')
   @ApiOperation({ summary: 'Business: get anonymised aggregate report for audience filters' })
+  @RequiresApp('audience-leads')
+  @UseGuards(AppAccessGuard)
   aggregateReport(@Request() req, @Body() dto: QueryAudienceDto) {
     return this.profileService.getAggregateReport(req.user.userId, dto.filters);
   }
 
   @Post('audience/save')
   @ApiOperation({ summary: 'Business: save an audience filter set for later use' })
+  @RequiresApp('audience-leads')
+  @UseGuards(AppAccessGuard)
   saveAudience(@Request() req, @Body() dto: SaveAudienceDto) {
     return this.profileService.saveAudience(req.user.userId, dto);
   }
 
   @Get('audience/saved')
   @ApiOperation({ summary: 'Business: list saved audiences' })
+  @RequiresApp('audience-leads')
+  @UseGuards(AppAccessGuard)
   getSavedAudiences(@Request() req) {
     return this.profileService.getMyAudiences(req.user.userId);
   }
 
   @Delete('audience/:id')
   @ApiOperation({ summary: 'Business: delete a saved audience' })
+  @RequiresApp('audience-leads')
+  @UseGuards(AppAccessGuard)
   deleteAudience(@Request() req, @Param('id') id: number) {
     return this.profileService.deleteAudience(req.user.userId, Number(id));
   }

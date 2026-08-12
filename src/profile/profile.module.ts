@@ -12,12 +12,15 @@ import { ProfileService } from './profile.service';
 import { ProfileController } from './profile.controller';
 import { ReferralModule } from '../referral/referral.module';
 import { ConfigModule } from '../config/config.module';
+import { MarketplaceModule } from '../marketplace/marketplace.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([ProfileField, UserProfile, DataAccessLog, DataCertificate, BusinessAudience, User, Business, Transaction]),
     ReferralModule,
     ConfigModule,
+    // Supplies AppAccessGuard + its dependencies for the @RequiresApp routes.
+    MarketplaceModule,
   ],
   providers: [ProfileService],
   controllers: [ProfileController],
