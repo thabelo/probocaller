@@ -18,7 +18,11 @@ import { User } from '../user/user.entity';
  * `uninstalledAt IS NULL` — the row's existence alone means nothing.
  */
 @Entity('app_installs')
-@Index(['userId', 'appKey'])
+// Unique over *active* installs only, so a user can reinstall an app they
+// removed without colliding with the revoked row. Mirrors the partial index the
+// migration creates — keep the two in step, or a `synchronize` schema loses the
+// guarantee that production enforces.
+@Index(['userId', 'appKey'], { unique: true, where: '"uninstalledAt" IS NULL' })
 export class AppInstall {
   @PrimaryGeneratedColumn()
   id: number;

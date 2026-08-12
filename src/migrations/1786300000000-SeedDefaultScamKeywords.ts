@@ -33,7 +33,10 @@ export class SeedDefaultScamKeywords1786300000000 implements MigrationInterface 
   public async up(queryRunner: QueryRunner): Promise<void> {
     for (const keyword of this.keywords) {
       await queryRunner.query(
-        `INSERT INTO "scam_keywords" ("keyword", "active") SELECT $1, true WHERE NOT EXISTS (SELECT 1 FROM "scam_keywords" WHERE "keyword" = $1)`,
+        // $1 is cast explicitly: Postgres cannot infer a parameter's type from a
+        // SELECT output position, and the comparison below deduces a different
+        // one, which aborts the whole migration run.
+        `INSERT INTO "scam_keywords" ("keyword", "active") SELECT $1::varchar, true WHERE NOT EXISTS (SELECT 1 FROM "scam_keywords" WHERE "keyword" = $1::varchar)`,
         [keyword],
       );
     }

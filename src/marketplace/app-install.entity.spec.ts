@@ -23,4 +23,20 @@ describe('AppInstall entity', () => {
   it('keeps per-app settings so a reinstall restores what the user had', () => {
     expect(columns()).toContain('settingsJson');
   });
+
+  /**
+   * The migration creates a partial unique index over active installs only.
+   * The entity has to declare the same thing, or a `synchronize` schema — which
+   * is what local development runs on — silently drops the uniqueness and a
+   * double-install bug stays invisible until it violates the constraint in
+   * production.
+   */
+  it('allows only one active install per user and app', () => {
+    const index = getMetadataArgsStorage().indices.find(
+      (i) => i.target === AppInstall,
+    );
+
+    expect(index?.unique).toBe(true);
+    expect(index?.where).toMatch(/uninstalledAt.*IS NULL/);
+  });
 });
