@@ -11,7 +11,10 @@ import { AdminMarketplaceController } from './admin-marketplace.controller';
 describe('AdminMarketplaceController', () => {
   const make = () => {
     const service = {
-      listAllApps: jest.fn().mockResolvedValue([{ key: 'data-broker' }]),
+      listAppsForAdmin: jest
+        .fn()
+        .mockResolvedValue([{ key: 'data-broker', activeInstalls: 4, totalInstalls: 6 }]),
+      listAppInstalls: jest.fn().mockResolvedValue({ total: 0, rows: [] }),
       updateApp: jest.fn().mockResolvedValue({ key: 'surveys', status: 'live' }),
     };
     return { service, controller: new AdminMarketplaceController(service as any) };
@@ -26,12 +29,29 @@ describe('AdminMarketplaceController', () => {
     expect(guards).toContain(AdminGuard);
   });
 
-  it('lists the whole catalogue, retired rows included', async () => {
+  /** The admin table shows uptake, so the list must carry the counts. */
+  it('lists the whole catalogue with install counts', async () => {
     const { service, controller } = make();
 
     await controller.list();
 
-    expect(service.listAllApps).toHaveBeenCalled();
+    expect(service.listAppsForAdmin).toHaveBeenCalled();
+  });
+
+  it('lists who installed a given app', async () => {
+    const { service, controller } = make();
+
+    await controller.installs('data-broker', undefined, undefined);
+
+    expect(service.listAppInstalls).toHaveBeenCalledWith('data-broker', 50, 0);
+  });
+
+  it('passes paging through as numbers, not strings', async () => {
+    const { service, controller } = make();
+
+    await controller.installs('data-broker', '25', '50');
+
+    expect(service.listAppInstalls).toHaveBeenCalledWith('data-broker', 25, 50);
   });
 
   it('passes an edit through to the service, keyed by app key', async () => {

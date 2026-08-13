@@ -1,7 +1,6 @@
-import { Body, Controller, Get, Param, Patch, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AdminGuard } from '../admin/admin.guard';
-import { App } from './app.entity';
 import { MarketplaceService } from './marketplace.service';
 import { UpdateAppDto } from './dto/update-app.dto';
 
@@ -23,9 +22,28 @@ export class AdminMarketplaceController {
   constructor(private readonly marketplace: MarketplaceService) {}
 
   @Get('apps')
-  @ApiOperation({ summary: 'The whole catalogue, including retired apps' })
-  async list(): Promise<App[]> {
-    return this.marketplace.listAllApps();
+  @ApiOperation({ summary: 'The whole catalogue with uptake, retired apps included' })
+  async list() {
+    return this.marketplace.listAppsForAdmin();
+  }
+
+  /**
+   * Who has an app. Revoked installs are included and dated — for Databroker
+   * the install row IS the record of data-sharing consent, so the withdrawal
+   * history is the point rather than noise.
+   */
+  @Get('apps/:key/installs')
+  @ApiOperation({ summary: 'Who installed an app, newest first' })
+  async installs(
+    @Param('key') key: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return this.marketplace.listAppInstalls(
+      key,
+      Number(limit) || 50,
+      Number(offset) || 0,
+    );
   }
 
   @Patch('apps/:key')

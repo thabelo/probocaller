@@ -33,6 +33,15 @@ export const EDITABLE_APP_FIELDS = [
   'minAppVersion',
 ] as const;
 
+/** One person's relationship with an app, for the admin drill-down. */
+export interface AppInstallerRow {
+  userId: number;
+  name: string | null;
+  phoneNumber: string | null;
+  installedAt: Date;
+  uninstalledAt: Date | null;
+}
+
 /** What a user may currently do with an app. */
 export type AppState =
   | 'available'
@@ -140,6 +149,73 @@ export class MarketplaceService {
    */
   async listAllApps(): Promise<App[]> {
     return this.appRepo.find();
+  }
+
+  /**
+   * The catalogue with uptake, for the admin table.
+   *
+   * Counts are aggregated in one grouped query rather than per app, so adding
+   * apps doesn't add round trips. An app nobody has installed reports zero
+   * rather than being absent — a missing number in an admin table is
+   * indistinguishable from a broken query.
+   */
+  async listAppsForAdmin(): Promise<
+    Array<App & { activeInstalls: number; totalInstalls: number }>
+  > {
+    const apps = await this.appRepo.find();
+
+    const rows = await this.installRepo
+      .createQueryBuilder('i')
+      .select('i.appKey', 'appKey')
+      .addSelect('COUNT(*)', 'total')
+      .addSelect('COUNT(*) FILTER (WHERE i.uninstalledAt IS NULL)', 'active')
+      .groupBy('i.appKey')
+      .getRawMany();
+
+    const byKey = new Map(rows.map((r: any) => [r.appKey, r]));
+
+    return apps.map((app) => ({
+      ...app,
+      activeInstalls: Number(byKey.get(app.key)?.active ?? 0),
+      totalInstalls: Number(byKey.get(app.key)?.total ?? 0),
+    }));
+  }
+
+  /**
+   * Who has an app, newest first.
+   *
+   * Revoked rows are included and flagged rather than hidden: uninstall is a
+   * soft revoke, and for Databroker the install row IS the record of
+   * data-sharing consent, so the history is the point.
+   */
+  async listAppInstalls(
+    appKey: string,
+    limit = 50,
+    offset = 0,
+  ): Promise<{ total: number; rows: AppInstallerRow[] }> {
+    const app = await this.appRepo.findOne({ where: { key: appKey } });
+    if (!app) throw new NotFoundException(`Unknown app: ${appKey}`);
+
+    const [installs, total] = await this.installRepo.findAndCount({
+      where: { appKey },
+      order: { installedAt: 'DESC' },
+      take: Math.min(limit, 200),
+      skip: offset,
+    });
+
+    const users = await this.userRepo.findByIds(installs.map((i) => i.userId));
+    const byId = new Map(users.map((u) => [u.id, u]));
+
+    return {
+      total,
+      rows: installs.map((i) => ({
+        userId: i.userId,
+        name: byId.get(i.userId)?.name ?? null,
+        phoneNumber: byId.get(i.userId)?.phoneNumber ?? null,
+        installedAt: i.installedAt,
+        uninstalledAt: i.uninstalledAt,
+      })),
+    };
   }
 
   /**
