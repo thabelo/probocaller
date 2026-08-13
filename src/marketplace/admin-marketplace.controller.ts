@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Query, UseGuards } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AdminGuard } from '../admin/admin.guard';
+import { App } from './app.entity';
 import { MarketplaceService } from './marketplace.service';
 import { UpdateAppDto } from './dto/update-app.dto';
 
