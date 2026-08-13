@@ -1,0 +1,81 @@
+import { DEFAULT_SETTINGS, seedSettings } from './seed-settings';
+
+/**
+ * The bootstrap settings seed, extracted out of AdminService so it can run
+ * BEFORE provider instantiation rather than in AppModule.onModuleInit().
+ *
+ * Why it moved: UserModule builds ExternalLookupRateLimiter from an ASYNC
+ * useFactory that reads EXTERNAL_LOOKUP_MAX_PER_WINDOW / _WINDOW_MS through
+ * SettingsReaderService (which has no fallback and throws on a missing row).
+ * Async factories resolve during provider instantiation — strictly before
+ * onModuleInit — so a database missing any boot-time setting crash-looped and
+ * could never seed itself. That took production down on 12 Aug 2026 and was
+ * only cleared by inserting the two rows by hand.
+ *
+ * AdminService.seedDefaultConfig() now delegates here, so both callers seed
+ * identically and the default list can never drift between them.
+ */
+describe('seedSettings', () => {
+  let saved: any[];
+  let repo: any;
+
+  beforeEach(() => {
+    saved = [];
+    repo = {
+      findOne: jest.fn().mockResolvedValue(null),
+      create: jest.fn((d: any) => d),
+      save: jest.fn(async (d: any) => { saved.push(d); return d; }),
+    };
+  });
+
+  const prevEnv = process.env.PAY_TO_CONTACT_PLATFORM_USER_ID;
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env.PAY_TO_CONTACT_PLATFORM_USER_ID;
+    else process.env.PAY_TO_CONTACT_PLATFORM_USER_ID = prevEnv;
+  });
+
+  it('seeds every default row when the settings table is empty', async () => {
+    await seedSettings(repo);
+
+    for (const def of DEFAULT_SETTINGS) {
+      const row = saved.find((s) => s.key === def.key);
+      expect(row).toBeDefined();
+      expect(row.value).toBe(def.value);
+      expect(String(row.description).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('never overwrites a row an admin has already tuned', async () => {
+    repo.findOne.mockImplementation(async (opts: any) =>
+      opts.where.key === 'RATE_PER_SECOND' ? { key: 'RATE_PER_SECOND', value: 'tuned' } : null);
+
+    await seedSettings(repo);
+
+    expect(saved.find((s) => s.key === 'RATE_PER_SECOND')).toBeUndefined();
+  });
+
+  /**
+   * The two rows whose absence actually crash-looped boot — the async factory
+   * reads exactly these, so the seed list is what stands between a fresh
+   * database and an app that can never start.
+   */
+  it('includes the boot-time external-lookup limiter rows', () => {
+    const keys = DEFAULT_SETTINGS.map((d) => d.key);
+    expect(keys).toEqual(expect.arrayContaining([
+      'EXTERNAL_LOOKUP_MAX_PER_WINDOW',
+      'EXTERNAL_LOOKUP_WINDOW_MS',
+    ]));
+  });
+
+  it('does NOT seed PAY_TO_CONTACT_PLATFORM_USER_ID without an env value', async () => {
+    delete process.env.PAY_TO_CONTACT_PLATFORM_USER_ID;
+    await seedSettings(repo);
+    expect(saved.find((s) => s.key === 'PAY_TO_CONTACT_PLATFORM_USER_ID')).toBeUndefined();
+  });
+
+  it('migrates a configured PAY_TO_CONTACT_PLATFORM_USER_ID env value one time', async () => {
+    process.env.PAY_TO_CONTACT_PLATFORM_USER_ID = '42';
+    await seedSettings(repo);
+    expect(saved.find((s) => s.key === 'PAY_TO_CONTACT_PLATFORM_USER_ID')?.value).toBe('42');
+  });
+});

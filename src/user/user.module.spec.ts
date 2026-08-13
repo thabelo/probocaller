@@ -59,17 +59,24 @@ describe('UserModule wiring', () => {
    * per-call. Instead, its CONSTRUCTION is async: an async `useFactory`
    * resolves both live from SettingsReaderService at module-init time
    * (before the app serves any request) and passes them in explicitly.
+   *
+   * It must ALSO inject SETTINGS_SEEDED. Instantiation runs strictly before
+   * onModuleInit, where bootstrap seeding used to live, so a database missing
+   * either row threw here and crash-looped with no way to seed itself — that
+   * is the 12 Aug 2026 outage. Depending on the token orders the seed ahead of
+   * the read.
    */
   it('constructs ExternalLookupRateLimiter from live settings via an async factory', async () => {
     const { UserModule } = require('./user.module');
     const { ExternalLookupRateLimiter } = require('./external-lookup-rate-limiter');
     const { SettingsReaderService } = require('../config/settings-reader.service');
+    const { SETTINGS_SEEDED } = require('../config/config.module');
 
     const providers = Reflect.getMetadata('providers', UserModule) || [];
     const limiterProvider = providers.find((p: any) => p?.provide === ExternalLookupRateLimiter);
     expect(limiterProvider).toBeDefined();
     expect(typeof limiterProvider.useFactory).toBe('function');
-    expect(limiterProvider.inject).toEqual([SettingsReaderService]);
+    expect(limiterProvider.inject).toEqual([SettingsReaderService, SETTINGS_SEEDED]);
 
     const settingsReader = {
       getNumber: jest.fn().mockImplementation(async (key: string) =>
@@ -77,7 +84,7 @@ describe('UserModule wiring', () => {
           : key === 'EXTERNAL_LOOKUP_WINDOW_MS' ? 1000
           : Promise.reject(new Error(`unexpected key: ${key}`))),
     };
-    const limiter = await limiterProvider.useFactory(settingsReader);
+    const limiter = await limiterProvider.useFactory(settingsReader, true);
 
     expect(limiter).toBeInstanceOf(ExternalLookupRateLimiter);
     expect(limiter.tryAcquire('u')).toBe(true);

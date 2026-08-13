@@ -21,9 +21,16 @@ describe('ReferralModule wiring', () => {
       imports: [ReferralModule],
     })
       // Stand in for the infrastructure the module imports, so this test is
-      // about ReferralModule's own wiring and not the database.
+      // about ReferralModule's own wiring and not the database. create/save
+      // are needed because ConfigModule's SETTINGS_SEEDED provider writes the
+      // bootstrap rows at instantiation — with findOne returning null, this
+      // stub looks like an empty settings table.
       .overrideProvider(getRepositoryToken(Setting))
-      .useValue({ findOne: jest.fn().mockResolvedValue(null) })
+      .useValue({
+        findOne: jest.fn().mockResolvedValue(null),
+        create: jest.fn((d: any) => d),
+        save: jest.fn(async (d: any) => d),
+      })
       .overrideProvider(getRepositoryToken(Transaction))
       .useValue({ find: jest.fn(), save: jest.fn() })
       .overrideProvider(TransactionService)
