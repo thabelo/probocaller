@@ -1,18 +1,40 @@
 import { Module } from '@nestjs/common';
+import { TypeOrmModule } from '@nestjs/typeorm';
+import { PassportModule } from '@nestjs/passport';
 import { ConfigModule } from '../config/config.module';
 import { SurveyPricingService } from './survey-pricing.service';
+import { SurveyTemplateService } from './survey-template.service';
+import { SurveyTemplate } from './survey-template.entity';
+import { AdminSurveyController } from './admin-survey.controller';
+import { AdminGuard } from '../admin/admin.guard';
+import { User } from '../user/user.entity';
 
 /**
  * Surveys — the business half publishes and pays (`survey-campaigns`), the
  * personal half answers and earns (`surveys`). See docs/product/surveys-spec.md.
  *
- * Step 1 of the build order: pricing only. Both clients (mobile and the web
- * console) quote through this same service — the builder is an API first and
- * two clients second (§3.4), so no pricing logic may live in a client.
+ * Build-order step 1: pricing and the admin-curated template library. Nothing
+ * user-facing yet, and neither catalogue app may be released to `live` until
+ * its screens ship in the mobile binary.
+ *
+ * Both clients (mobile and the web console) will quote and build through this
+ * module — the builder is an API first and two clients second (§3.4), so no
+ * pricing or composition logic may live in a client.
  */
 @Module({
-  imports: [ConfigModule],
-  providers: [SurveyPricingService],
-  exports: [SurveyPricingService],
+  imports: [
+    // User is here for AdminGuard, which loads the caller to check their role.
+    TypeOrmModule.forFeature([SurveyTemplate, User]),
+    // AdminGuard authenticates via the 'jwt' strategy, same as every other
+    // admin-guarded controller.
+    PassportModule.register({ defaultStrategy: 'jwt' }),
+    ConfigModule,
+  ],
+  // AdminGuard is PROVIDED, not merely imported: AdminSurveyController is
+  // declared here, so Nest resolves its guard from this module's injector. A
+  // guard it cannot construct fails on the first request, not at boot.
+  providers: [SurveyPricingService, SurveyTemplateService, AdminGuard],
+  controllers: [AdminSurveyController],
+  exports: [SurveyPricingService, SurveyTemplateService],
 })
 export class SurveyModule {}
