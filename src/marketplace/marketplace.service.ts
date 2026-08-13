@@ -252,10 +252,16 @@ export class MarketplaceService {
     const byDay = new Map<string, { installs: number; removals: number }>();
     const put = (rows: any[], field: 'installs' | 'removals') => {
       for (const r of rows) {
-        // Postgres returns a Date for DATE(); normalise to a plain YYYY-MM-DD
-        // so the two sides key against each other and the client can sort text.
+        // Postgres returns DATE() as a Date at LOCAL midnight. toISOString()
+        // would convert to UTC and move it to the previous day anywhere east of
+        // Greenwich — a day of South African installs would be labelled as the
+        // day before. Read the local calendar fields instead.
         const day =
-          r.day instanceof Date ? r.day.toISOString().slice(0, 10) : String(r.day).slice(0, 10);
+          r.day instanceof Date
+            ? `${r.day.getFullYear()}-${String(r.day.getMonth() + 1).padStart(2, '0')}-${String(
+                r.day.getDate(),
+              ).padStart(2, '0')}`
+            : String(r.day).slice(0, 10);
         const entry = byDay.get(day) ?? { installs: 0, removals: 0 };
         entry[field] = Number(r.n);
         byDay.set(day, entry);

@@ -221,6 +221,19 @@ describe('MarketplaceService — admin catalogue', () => {
       ]);
     });
 
+    /**
+     * Postgres hands back DATE() as a Date at LOCAL midnight. Formatting that
+     * with toISOString() converts to UTC, which moves it to the previous day
+     * anywhere east of Greenwich — the chart labelled a day of South African
+     * installs as the day before.
+     */
+    it('keeps the local calendar day when the driver returns a Date', async () => {
+      const localMidnight = new Date(2026, 7, 13); // 13 Aug, local time
+      const { service } = serviceFor([{ day: localMidnight, n: '4' }], []);
+
+      expect((await service.installTrend(30))[0].date).toBe('2026-08-13');
+    });
+
     /** One app's trend, for a per-app view. */
     it('narrows to a single app when asked', async () => {
       const { builders, service } = serviceFor([], []);
