@@ -49,6 +49,17 @@ describe('canonical ENTITIES list (schema source of truth)', () => {
     expect(names).toContain('PendingTransfer');
   });
 
+  /**
+   * Surveys (docs/product/surveys-spec.md). Money-bearing: a published survey
+   * holds escrow against a business's wallet, so these tables must exist in the
+   * migration schema, not only under a local `synchronize`.
+   */
+  it('registers the survey tables', () => {
+    expect(names).toEqual(expect.arrayContaining([
+      'Survey', 'SurveyQuestion', 'SurveyResponse', 'SurveyAnswer', 'SurveyTemplate',
+    ]));
+  });
+
   it('has no duplicate entity classes', () => {
     expect(new Set(names).size).toBe(names.length);
   });

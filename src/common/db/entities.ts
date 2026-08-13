@@ -42,6 +42,11 @@ import { WhitelistedNumber } from '../../business-whitelist/business-whitelist.e
 import { SmsLog } from '../../sms-log/sms-log.entity';
 import { App } from '../../marketplace/app.entity';
 import { AppInstall } from '../../marketplace/app-install.entity';
+import { Survey } from '../../survey/survey.entity';
+import { SurveyQuestion } from '../../survey/survey-question.entity';
+import { SurveyResponse } from '../../survey/survey-response.entity';
+import { SurveyAnswer } from '../../survey/survey-answer.entity';
+import { SurveyTemplate } from '../../survey/survey-template.entity';
 
 /**
  * Canonical list of every persisted TypeORM entity.
@@ -98,4 +103,9 @@ export const ENTITIES = [
   SmsLog,
   App,
   AppInstall,
+  Survey,
+  SurveyQuestion,
+  SurveyResponse,
+  SurveyAnswer,
+  SurveyTemplate,
 ];

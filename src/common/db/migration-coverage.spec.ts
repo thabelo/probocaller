@@ -54,6 +54,23 @@ describe('migration coverage (every entity column is migrated)', () => {
       .columns.filter((c) => c.target === entity)
       .map((c) => c.options.name || c.propertyName);
 
+  /**
+   * The louder case the per-column check below deliberately skips: a table no
+   * migration creates AT ALL. Every column is "missing", so skipping it there
+   * kept the failure quiet — and nothing else actually owned it. An entity in
+   * ENTITIES with no CREATE TABLE anywhere works perfectly under the local
+   * synchronize:true schema and makes a fresh-database deploy impossible.
+   */
+  it.each(ENTITIES.map((e) => [(e as { name: string }).name, e] as const))(
+    '%s has a table created by a migration',
+    (_name, entity) => {
+      const table = tableFor(entity);
+      if (!table) return; // not a persisted table — nothing to migrate
+
+      expect({ table, migrated: migratedColumns(table).size > 0 }).toEqual({ table, migrated: true });
+    },
+  );
+
   it.each(ENTITIES.map((e) => [(e as { name: string }).name, e] as const))(
     '%s has a migration for every column it declares',
     (_name, entity) => {
