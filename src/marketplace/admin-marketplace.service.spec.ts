@@ -163,6 +163,78 @@ describe('MarketplaceService — admin catalogue', () => {
     });
   });
 
+  describe('installTrend', () => {
+    /**
+     * Installs and removals are dated on different columns, so they are two
+     * aggregations merged by day rather than one. Both are the same unit —
+     * people — so the chart can put them on one axis.
+     *
+     * A removal is counted on the day consent was withdrawn, not the day it was
+     * given, or the series would show the drop before the rise.
+     */
+    const serviceFor = (installRows: any[], removalRows: any[]) => {
+      const builders = [qbWith(installRows), qbWith(removalRows)];
+      let n = 0;
+      const installRepo = { createQueryBuilder: jest.fn(() => builders[n++]) };
+      return {
+        builders,
+        service: new MarketplaceService(installRepo as any, {} as any, {} as any),
+      };
+    };
+
+    it('merges installs and removals onto one day each', async () => {
+      const { service } = serviceFor(
+        [{ day: '2026-08-11', n: '3' }, { day: '2026-08-13', n: '1' }],
+        [{ day: '2026-08-13', n: '2' }],
+      );
+
+      expect(await service.installTrend(30)).toEqual([
+        { date: '2026-08-11', installs: 3, removals: 0 },
+        { date: '2026-08-13', installs: 1, removals: 2 },
+      ]);
+    });
+
+    /** A day with only removals must still appear, or the loss is invisible. */
+    it('keeps a day that saw removals but no installs', async () => {
+      const { service } = serviceFor([], [{ day: '2026-08-12', n: '4' }]);
+
+      expect(await service.installTrend(30)).toEqual([
+        { date: '2026-08-12', installs: 0, removals: 4 },
+      ]);
+    });
+
+    it('returns an empty series rather than failing when nothing has happened', async () => {
+      const { service } = serviceFor([], []);
+
+      expect(await service.installTrend(30)).toEqual([]);
+    });
+
+    it('orders the series oldest first, so a line reads left to right', async () => {
+      const { service } = serviceFor(
+        [{ day: '2026-08-13', n: '1' }, { day: '2026-08-02', n: '5' }],
+        [],
+      );
+
+      expect((await service.installTrend(30)).map((p) => p.date)).toEqual([
+        '2026-08-02',
+        '2026-08-13',
+      ]);
+    });
+
+    /** One app's trend, for a per-app view. */
+    it('narrows to a single app when asked', async () => {
+      const { builders, service } = serviceFor([], []);
+
+      await service.installTrend(30, 'data-broker');
+
+      for (const qb of builders) {
+        expect(qb.andWhere).toHaveBeenCalledWith(expect.stringContaining('appKey'), {
+          appKey: 'data-broker',
+        });
+      }
+    });
+  });
+
   describe('updateApp', () => {
     const repoWith = (existing: any) => ({
       findOne: jest.fn(async () => existing),

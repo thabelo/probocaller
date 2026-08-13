@@ -15,6 +15,7 @@ describe('AdminMarketplaceController', () => {
         .fn()
         .mockResolvedValue([{ key: 'data-broker', activeInstalls: 4, totalInstalls: 6 }]),
       listAppInstalls: jest.fn().mockResolvedValue({ total: 0, rows: [] }),
+      installTrend: jest.fn().mockResolvedValue([]),
       updateApp: jest.fn().mockResolvedValue({ key: 'surveys', status: 'live' }),
     };
     return { service, controller: new AdminMarketplaceController(service as any) };
@@ -44,6 +45,22 @@ describe('AdminMarketplaceController', () => {
     await controller.installs('data-broker', undefined, undefined);
 
     expect(service.listAppInstalls).toHaveBeenCalledWith('data-broker', 50, 0);
+  });
+
+  it('serves the installs-vs-removals trend', async () => {
+    const { service, controller } = make();
+
+    await controller.trend(undefined, undefined);
+
+    expect(service.installTrend).toHaveBeenCalledWith(30, undefined);
+  });
+
+  it('narrows the trend to one app and honours a day range', async () => {
+    const { service, controller } = make();
+
+    await controller.trend('90', 'data-broker');
+
+    expect(service.installTrend).toHaveBeenCalledWith(90, 'data-broker');
   });
 
   it('passes paging through as numbers, not strings', async () => {

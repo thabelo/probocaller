@@ -47,6 +47,16 @@ export class AdminMarketplaceController {
     );
   }
 
+  /**
+   * Installs vs removals over time. Kept out of the apps list so the table
+   * stays one cheap query — the chart is a separate, deliberate request.
+   */
+  @Get('stats/trend')
+  @ApiOperation({ summary: 'Installs and removals per day' })
+  async trend(@Query('days') days?: string, @Query('appKey') appKey?: string) {
+    return this.marketplace.installTrend(Number(days) || 30, appKey || undefined);
+  }
+
   @Patch('apps/:key')
   @ApiOperation({ summary: "Edit an app's copy, status or gating" })
   async update(

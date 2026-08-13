@@ -219,6 +219,57 @@ export class MarketplaceService {
   }
 
   /**
+   * Installs and removals per day, for the admin chart.
+   *
+   * Two aggregations rather than one: the two events are dated on different
+   * columns, and a removal belongs to the day consent was withdrawn, not the
+   * day it was given — counting it on `installedAt` would draw the drop before
+   * the rise. Both are counts of people, so they share one axis.
+   */
+  async installTrend(
+    days = 30,
+    appKey?: string,
+  ): Promise<Array<{ date: string; installs: number; removals: number }>> {
+    const since = new Date();
+    since.setDate(since.getDate() - days);
+
+    const countByDay = async (column: 'installedAt' | 'uninstalledAt') => {
+      const qb = this.installRepo
+        .createQueryBuilder('i')
+        .select(`DATE(i.${column})`, 'day')
+        .addSelect('COUNT(*)', 'n')
+        .where(`i.${column} >= :since`, { since })
+        .groupBy('day');
+      if (appKey) qb.andWhere('i.appKey = :appKey', { appKey });
+      return qb.getRawMany();
+    };
+
+    const [installRows, removalRows] = await Promise.all([
+      countByDay('installedAt'),
+      countByDay('uninstalledAt'),
+    ]);
+
+    const byDay = new Map<string, { installs: number; removals: number }>();
+    const put = (rows: any[], field: 'installs' | 'removals') => {
+      for (const r of rows) {
+        // Postgres returns a Date for DATE(); normalise to a plain YYYY-MM-DD
+        // so the two sides key against each other and the client can sort text.
+        const day =
+          r.day instanceof Date ? r.day.toISOString().slice(0, 10) : String(r.day).slice(0, 10);
+        const entry = byDay.get(day) ?? { installs: 0, removals: 0 };
+        entry[field] = Number(r.n);
+        byDay.set(day, entry);
+      }
+    };
+    put(installRows, 'installs');
+    put(removalRows, 'removals');
+
+    return [...byDay.entries()]
+      .map(([date, counts]) => ({ date, ...counts }))
+      .sort((a, b) => a.date.localeCompare(b.date));
+  }
+
+  /**
    * Edit a catalogue entry.
    *
    * Edit-only by design: an app row is inert without screens shipped in the
