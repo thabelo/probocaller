@@ -1,5 +1,23 @@
 import { Repository } from 'typeorm';
 import { Setting } from './setting.entity';
+import { QUESTION_TYPES, QuestionType, feeSettingKey } from '../survey/question-type';
+
+/**
+ * Base fee (ZAR) paid to a respondent per question, by type — a survey's price
+ * per response is the sum of its questions' rates (surveys-spec §1.1). Priced
+ * by the work asked of the person answering: free text takes real effort,
+ * yes/no is a tap. Admin-tunable from the console afterwards; these are only
+ * the bootstrap numbers.
+ *
+ * Typed as a full Record, so adding a question type without pricing it is a
+ * compile error rather than an unseeded row that throws at publish time.
+ */
+const SURVEY_QUESTION_FEES: Record<QuestionType, string> = {
+  free_text: '2.50',
+  yes_no: '0.50',
+  multiple_choice: '1.00',
+  dropdown: '0.75',
+};
 
 /**
  * Every bootstrap-seeded row in the `settings` table, in one place.
@@ -31,6 +49,11 @@ export const DEFAULT_SETTINGS: Array<{ key: string; value: string; description: 
   { key: 'GOOGLE_PLACES_COST_USD', value: '0.017', description: 'Per-lookup cost charged by the Google Places API (USD) — feeds the admin cost dashboard' },
   { key: 'EXTERNAL_LOOKUP_MAX_PER_WINDOW', value: '15', description: 'Max billable external lookups allowed per user per rate-limit window' },
   { key: 'EXTERNAL_LOOKUP_WINDOW_MS', value: '60000', description: 'Rate-limit window length in milliseconds for external lookup caps' },
+  ...QUESTION_TYPES.map((type) => ({
+    key: feeSettingKey(type),
+    value: SURVEY_QUESTION_FEES[type],
+    description: `Base fee (ZAR) earned per answered "${type.replace(/_/g, ' ')}" survey question — summed across a survey's questions to price one response`,
+  })),
 ];
 
 /**

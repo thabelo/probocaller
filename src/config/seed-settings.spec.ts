@@ -1,4 +1,5 @@
 import { DEFAULT_SETTINGS, seedSettings } from './seed-settings';
+import { QUESTION_TYPES, feeSettingKey } from '../survey/question-type';
 
 /**
  * The bootstrap settings seed, extracted out of AdminService so it can run
@@ -65,6 +66,21 @@ describe('seedSettings', () => {
       'EXTERNAL_LOOKUP_MAX_PER_WINDOW',
       'EXTERNAL_LOOKUP_WINDOW_MS',
     ]));
+  });
+
+  /**
+   * Surveys prices a response as the sum of its questions' type rates
+   * (surveys-spec §1.1), read with no fallback — so every question type needs
+   * its rate to exist before anything can be quoted or published.
+   */
+  it('seeds a base fee for every survey question type', async () => {
+    await seedSettings(repo);
+
+    for (const type of QUESTION_TYPES) {
+      const row = saved.find((s) => s.key === feeSettingKey(type));
+      expect(row).toBeDefined();
+      expect(Number(row.value)).toBeGreaterThan(0);
+    }
   });
 
   it('does NOT seed PAY_TO_CONTACT_PLATFORM_USER_ID without an env value', async () => {
