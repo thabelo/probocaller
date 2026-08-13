@@ -10,25 +10,22 @@ export type SurveyStatus = (typeof SURVEY_STATUSES)[number];
 /**
  * Which respondents a survey is offered to (surveys-spec §3.2).
  *
- * These read the same profile fields Databroker already prices — including
- * Industry / Sector — rather than a parallel taxonomy. Stored as JSON because
- * the profile field set is itself data (ProfileField rows), so a new matchable
- * field must not require a migration here.
+ * Keyed by PROFILE FIELD KEY — the same fields Databroker already prices
+ * (`age_range`, `province`, `industry_sector`, …) — mapping to the value, or
+ * any of several values, that a respondent must hold. The spec is explicit
+ * that these reuse the existing taxonomy rather than inventing a parallel one,
+ * which matters most for age: users pick a BAND, so a survey targets bands and
+ * never a number nobody stored.
+ *
+ * Stored as JSON because the field set is itself data (ProfileField rows), so
+ * a new matchable field must not require a migration here.
  *
  * Matching additionally requires an ACTIVE `surveys` install: installing that
  * app IS the consent to be matched (§2.2). It is deliberately NOT keyed off
  * `dataShareEnabled` — removing Databroker must not silently stop survey
  * invitations, since no copy anywhere warns that it would.
  */
-export interface SurveyFilters {
-  ageMin?: number;
-  ageMax?: number;
-  gender?: string;
-  province?: string;
-  industry?: string;
-  /** Any further ProfileField key → required value. */
-  [field: string]: unknown;
-}
+export type SurveyFilters = Record<string, string | string[]>;
 
 /**
  * A survey a business publishes and pays for. See docs/product/surveys-spec.md.

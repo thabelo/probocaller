@@ -3,6 +3,7 @@ import { BadRequestException, ForbiddenException, NotFoundException } from '@nes
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { SurveyService } from './survey.service';
 import { SurveyPricingService } from './survey-pricing.service';
+import { SurveyMatchingService } from './survey-matching.service';
 import { Survey } from './survey.entity';
 import { SurveyQuestion } from './survey-question.entity';
 import { SurveyTemplate } from './survey-template.entity';
@@ -21,6 +22,7 @@ describe('SurveyService — creating a draft', () => {
   let questionRepo: any;
   let templateRepo: any;
   let businessRepo: any;
+  let matching: any;
 
   const OWNED_BUSINESS = { id: 7, userId: 1, name: 'Acme' };
 
@@ -40,6 +42,10 @@ describe('SurveyService — creating a draft', () => {
       delete: jest.fn(),
     };
     templateRepo = { findOne: jest.fn().mockResolvedValue(null) };
+    matching = {
+      assertKnownFields: jest.fn().mockResolvedValue(undefined),
+      estimateAudience: jest.fn().mockResolvedValue(500),
+    };
     businessRepo = {
       findOne: jest.fn(async ({ where }: any) =>
         where.id === OWNED_BUSINESS.id && where.userId === OWNED_BUSINESS.userId
@@ -52,6 +58,7 @@ describe('SurveyService — creating a draft', () => {
       providers: [
         SurveyService,
         { provide: SurveyPricingService, useValue: {} },
+        { provide: SurveyMatchingService, useValue: matching },
         { provide: getRepositoryToken(Survey), useValue: surveyRepo },
         { provide: getRepositoryToken(SurveyQuestion), useValue: questionRepo },
         { provide: getRepositoryToken(SurveyTemplate), useValue: templateRepo },
@@ -62,7 +69,8 @@ describe('SurveyService — creating a draft', () => {
       .useValue({
         pricePerResponse: jest.fn().mockResolvedValue(3),
         quote: jest.fn().mockResolvedValue({
-          pricePerResponse: 3, targetResponses: 100, total: 300,
+          pricePerResponse: 3, targetResponses: 100,
+          respondentTotal: 300, platformFee: 72, total: 372,
         }),
       })
       .compile();
@@ -116,7 +124,10 @@ describe('SurveyService — creating a draft', () => {
     /** But the builder still has to show what it WOULD cost right now. */
     it('returns a live quote so the builder can show the price', async () => {
       const result = await service.createDraft(1, input());
-      expect(result.quote).toEqual({ pricePerResponse: 3, targetResponses: 100, total: 300 });
+      expect(result.quote).toEqual({
+        pricePerResponse: 3, targetResponses: 100,
+        respondentTotal: 300, platformFee: 72, total: 372,
+      });
     });
   });
 
@@ -261,12 +272,12 @@ describe('SurveyService — creating a draft', () => {
     it('stores respondent filters separately from the reporting category', async () => {
       await service.createDraft(1, input({
         category: 'insurance',
-        filters: { ageMin: 25, ageMax: 40, province: 'Gauteng', industry: 'insurance' },
+        filters: { age_range: ['25_34', '35_44'], province: 'Gauteng', industry_sector: 'insurance' },
       }));
 
       expect(savedSurvey().category).toBe('insurance');
       expect(savedSurvey().filtersJson).toEqual({
-        ageMin: 25, ageMax: 40, province: 'Gauteng', industry: 'insurance',
+        age_range: ['25_34', '35_44'], province: 'Gauteng', industry_sector: 'insurance',
       });
     });
 
@@ -275,10 +286,18 @@ describe('SurveyService — creating a draft', () => {
       expect(savedSurvey().filtersJson).toEqual({});
     });
 
-    it('refuses an age range that is the wrong way round', async () => {
+    /**
+     * Filters are keyed by real profile fields. A typo'd key matches nobody, so
+     * without this a business could pay to publish a survey nobody can answer.
+     */
+    it('refuses a filter on a profile field that does not exist', async () => {
+      matching.assertKnownFields.mockRejectedValueOnce(
+        new BadRequestException('Unknown profile field: provnce'),
+      );
       await expect(
-        service.createDraft(1, input({ filters: { ageMin: 40, ageMax: 25 } })),
+        service.createDraft(1, input({ filters: { provnce: 'Gauteng' } })),
       ).rejects.toBeInstanceOf(BadRequestException);
+      expect(surveyRepo.save).not.toHaveBeenCalled();
     });
   });
 });
@@ -316,6 +335,10 @@ describe('SurveyService — reading and editing drafts', () => {
         { provide: SurveyPricingService, useValue: {
           pricePerResponse: jest.fn().mockResolvedValue(3),
           quote: jest.fn().mockResolvedValue({ pricePerResponse: 3, targetResponses: 100, total: 300 }),
+        } },
+        { provide: SurveyMatchingService, useValue: {
+          assertKnownFields: jest.fn().mockResolvedValue(undefined),
+          estimateAudience: jest.fn().mockResolvedValue(500),
         } },
         { provide: getRepositoryToken(Survey), useValue: surveyRepo },
         { provide: getRepositoryToken(SurveyQuestion), useValue: questionRepo },

@@ -4,6 +4,8 @@ import { SurveyController } from './survey.controller';
 import { SurveyService } from './survey.service';
 import { SurveyTemplateService } from './survey-template.service';
 import { SurveyPricingService } from './survey-pricing.service';
+import { SurveyPublishService } from './survey-publish.service';
+import { SurveyMatchingService } from './survey-matching.service';
 import { AppAccessGuard, REQUIRES_APP } from '../marketplace/app-access.guard';
 
 /**
@@ -15,6 +17,8 @@ describe('SurveyController', () => {
   let surveys: any;
   let templates: any;
   let pricing: any;
+  let publishing: any;
+  let matching: any;
 
   const req = { user: { userId: 1 } };
 
@@ -28,12 +32,20 @@ describe('SurveyController', () => {
     templates = { listActive: jest.fn().mockResolvedValue([]) };
     pricing = { quote: jest.fn().mockResolvedValue({ pricePerResponse: 3, targetResponses: 10, total: 30 }) };
 
+    publishing = {
+      publish: jest.fn().mockResolvedValue({ id: 100, shortfall: 0 }),
+      close: jest.fn().mockResolvedValue({ id: 100 }),
+    };
+    matching = { estimateAudience: jest.fn().mockResolvedValue(42) };
+
     const mod: TestingModule = await Test.createTestingModule({
       controllers: [SurveyController],
       providers: [
         { provide: SurveyService, useValue: surveys },
         { provide: SurveyTemplateService, useValue: templates },
         { provide: SurveyPricingService, useValue: pricing },
+        { provide: SurveyPublishService, useValue: publishing },
+        { provide: SurveyMatchingService, useValue: matching },
       ],
     })
       .overrideGuard(AppAccessGuard)
@@ -90,9 +102,23 @@ describe('SurveyController', () => {
     expect(surveys.createDraft).not.toHaveBeenCalled();
   });
 
-  /** Publishing moves money and is step 3 — it must not exist yet. */
-  it('exposes no publish route', () => {
-    const methods = Object.getOwnPropertyNames(SurveyController.prototype);
-    expect(methods.some((m) => /publish|close/i.test(m))).toBe(false);
+  /**
+   * Publishing is what takes the money, so it is its OWN operation rather than
+   * a status field a client could set (§1.2).
+   */
+  it('publishes a survey', async () => {
+    await controller.publish(req, 100);
+    expect(publishing.publish).toHaveBeenCalledWith(1, 100);
+  });
+
+  it('closes a survey early, which refunds what was never delivered', async () => {
+    await controller.close(req, 100);
+    expect(publishing.close).toHaveBeenCalledWith(1, 100);
+  });
+
+  /** The builder needs the reach BEFORE committing money to a narrow filter. */
+  it('estimates how many people a filter can reach', async () => {
+    await controller.audience({ filters: { province: 'Gauteng' } } as any);
+    expect(matching.estimateAudience).toHaveBeenCalledWith({ province: 'Gauteng' });
   });
 });

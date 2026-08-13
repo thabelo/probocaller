@@ -7,13 +7,16 @@ import { AppAccessGuard, RequiresApp } from '../marketplace/app-access.guard';
 import { SurveyService } from './survey.service';
 import { SurveyTemplateService } from './survey-template.service';
 import { SurveyPricingService } from './survey-pricing.service';
-import { CreateSurveyDto, QuoteSurveyDto, UpdateSurveyDto } from './dto/survey.dto';
+import { CreateSurveyDto, QuoteSurveyDto, UpdateSurveyDto, AudienceDto } from './dto/survey.dto';
+import { SurveyPublishService } from './survey-publish.service';
+import { SurveyMatchingService } from './survey-matching.service';
 
 
 /**
- * The business-facing survey builder (build-order step 2). DRAFT ONLY —
- * publishing holds money against a wallet and is step 3, so there is
- * deliberately no publish route here yet.
+ * The business-facing survey builder.
+ *
+ * Publishing is its own operation rather than a status field: it debits and
+ * holds real money (§1.2), so no client may reach it by setting a field.
  *
  * Gated on the `survey-campaigns` app: publishing surveys is what that app IS,
  * so entitlement comes from the install rather than being re-derived locally.
@@ -31,6 +34,8 @@ export class SurveyController {
     private readonly surveys: SurveyService,
     private readonly templateLibrary: SurveyTemplateService,
     private readonly pricing: SurveyPricingService,
+    private readonly publishing: SurveyPublishService,
+    private readonly matching: SurveyMatchingService,
   ) {}
 
   @Get('templates')
@@ -68,6 +73,29 @@ export class SurveyController {
       ...body,
       durationDays: body.durationDays ?? null,
     } as any);
+  }
+
+  /**
+   * How many people a filter can actually reach. The builder shows this BEFORE
+   * publishing, so a business can see when its targeting is narrower than the
+   * number of responses it is about to pay for.
+   */
+  @Post('audience')
+  @ApiOperation({ summary: 'How many respondents match these filters' })
+  async audience(@Body() body: AudienceDto) {
+    return { audienceSize: await this.matching.estimateAudience(body.filters ?? {}) };
+  }
+
+  @Post(':id/publish')
+  @ApiOperation({ summary: 'Publish: hold the money and open the survey for responses' })
+  publish(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.publishing.publish(req.user.userId, id);
+  }
+
+  @Post(':id/close')
+  @ApiOperation({ summary: 'Close early — refunds every response never delivered' })
+  close(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.publishing.close(req.user.userId, id);
   }
 
   @Patch(':id')

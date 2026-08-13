@@ -8,6 +8,16 @@ import { SurveyTemplate } from './survey-template.entity';
 import { AdminSurveyController } from './admin-survey.controller';
 import { SurveyController } from './survey.controller';
 import { SurveyService } from './survey.service';
+import { SurveyMatchingService } from './survey-matching.service';
+import { SurveyPublishService } from './survey-publish.service';
+import { SurveyResponseService } from './survey-response.service';
+import { RespondentSurveyController } from './respondent-survey.controller';
+import { SurveyResponse } from './survey-response.entity';
+import { SurveyAnswer } from './survey-answer.entity';
+import { TransactionModule } from '../transaction/transaction.module';
+import { UserProfile } from '../profile/user-profile.entity';
+import { ProfileField } from '../profile/profile-field.entity';
+import { AppInstall } from '../marketplace/app-install.entity';
 import { Survey } from './survey.entity';
 import { SurveyQuestion } from './survey-question.entity';
 import { Business } from '../business/business.entity';
@@ -30,7 +40,13 @@ import { User } from '../user/user.entity';
 @Module({
   imports: [
     // User is here for AdminGuard, which loads the caller to check their role.
-    TypeOrmModule.forFeature([Survey, SurveyQuestion, SurveyTemplate, User, Business]),
+    TypeOrmModule.forFeature([
+      Survey, SurveyQuestion, SurveyTemplate, User, Business,
+      // Matching reads who consented (an active `surveys` install) and what
+      // they said about themselves.
+      AppInstall, UserProfile, ProfileField,
+      SurveyResponse, SurveyAnswer,
+    ]),
     // AdminGuard authenticates via the 'jwt' strategy, same as every other
     // admin-guarded controller.
     PassportModule.register({ defaultStrategy: 'jwt' }),
@@ -38,12 +54,18 @@ import { User } from '../user/user.entity';
     // AppAccessGuard gates the builder on the survey-campaigns install, so
     // entitlement is never re-derived here.
     MarketplaceModule,
+    // Every wallet move writes an audit row on the same transaction.
+    TransactionModule,
   ],
   // AdminGuard is PROVIDED, not merely imported: AdminSurveyController is
   // declared here, so Nest resolves its guard from this module's injector. A
   // guard it cannot construct fails on the first request, not at boot.
-  providers: [SurveyPricingService, SurveyTemplateService, SurveyService, AdminGuard],
-  controllers: [AdminSurveyController, SurveyController],
-  exports: [SurveyPricingService, SurveyTemplateService, SurveyService],
+  providers: [
+    SurveyPricingService, SurveyTemplateService, SurveyService,
+    SurveyMatchingService, SurveyPublishService, SurveyResponseService,
+    AdminGuard,
+  ],
+  controllers: [AdminSurveyController, SurveyController, RespondentSurveyController],
+  exports: [SurveyPricingService, SurveyTemplateService, SurveyService, SurveyMatchingService, SurveyPublishService, SurveyResponseService],
 })
 export class SurveyModule {}

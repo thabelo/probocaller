@@ -1,6 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import { CreateSurveyDto, QuoteSurveyDto, UpdateSurveyDto } from './survey.dto';
+import { AudienceDto, CreateSurveyDto, QuoteSurveyDto, UpdateSurveyDto } from './survey.dto';
 
 const errorsFor = async (cls: any, payload: unknown, options = {}) =>
   validate(plainToInstance(cls, payload as object), options);
@@ -98,5 +98,15 @@ describe('QuoteSurveyDto', () => {
       targetResponses: 100,
     });
     expect(errors.length).toBeGreaterThan(0);
+  });
+});
+
+describe('AudienceDto', () => {
+  it('accepts a filter map', async () => {
+    expect(await errorsFor(AudienceDto, { filters: { province: 'Gauteng' } })).toHaveLength(0);
+  });
+
+  it('accepts no filters at all — that is "everyone"', async () => {
+    expect(await errorsFor(AudienceDto, {})).toHaveLength(0);
   });
 });

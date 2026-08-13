@@ -14,6 +14,30 @@ import { SurveyQuestion } from './survey-question.entity';
 import { Business } from '../business/business.entity';
 import { App } from '../marketplace/app.entity';
 import { AppInstall } from '../marketplace/app-install.entity';
+import { UserProfile } from '../profile/user-profile.entity';
+import { ProfileField } from '../profile/profile-field.entity';
+import { SurveyResponse } from './survey-response.entity';
+import { Transaction } from '../transaction/transaction.entity';
+import { DataSource } from 'typeorm';
+import { Global, Module } from '@nestjs/common';
+
+/**
+ * TypeOrmModule.forRoot provides DataSource GLOBALLY in the real app; a module
+ * compiled on its own has no such root. This stands in for it so the wiring
+ * test can still actually CONSTRUCT the graph — metadata assertions alone
+ * cannot see an unconstructible guard, which is how AdminGuard shipped broken
+ * here once already.
+ */
+@Global()
+@Module({
+  providers: [{ provide: DataSource, useValue: { transaction: jest.fn() } }],
+  exports: [DataSource],
+})
+class FakeDataSourceModule {}
+import { SurveyAnswer } from './survey-answer.entity';
+import { SurveyPublishService } from './survey-publish.service';
+import { SurveyResponseService } from './survey-response.service';
+import { RespondentSurveyController } from './respondent-survey.controller';
 import { User } from '../user/user.entity';
 
 /**
@@ -24,7 +48,7 @@ import { User } from '../user/user.entity';
  */
 describe('SurveyModule wiring', () => {
   const compile = () =>
-    Test.createTestingModule({ imports: [SurveyModule] })
+    Test.createTestingModule({ imports: [FakeDataSourceModule, SurveyModule] })
       .overrideProvider(getRepositoryToken(Setting))
       .useValue({
         findOne: jest.fn().mockResolvedValue({ value: '1.25' }),
@@ -39,6 +63,18 @@ describe('SurveyModule wiring', () => {
       .useValue({ find: jest.fn().mockResolvedValue([]), findOne: jest.fn() })
       .overrideProvider(getRepositoryToken(AppInstall))
       .useValue({ find: jest.fn().mockResolvedValue([]), findOne: jest.fn() })
+      .overrideProvider(getRepositoryToken(UserProfile))
+      .useValue({ find: jest.fn().mockResolvedValue([]) })
+      .overrideProvider(getRepositoryToken(ProfileField))
+      .useValue({ find: jest.fn().mockResolvedValue([]) })
+      // The money path writes its audit row on the caller's transaction, so
+      // TransactionModule (and a DataSource to run one) come along with it.
+      .overrideProvider(getRepositoryToken(Transaction))
+      .useValue({ find: jest.fn(), save: jest.fn(), create: jest.fn() })
+      .overrideProvider(getRepositoryToken(SurveyResponse))
+      .useValue({ find: jest.fn().mockResolvedValue([]), findOne: jest.fn(), create: jest.fn(), save: jest.fn() })
+      .overrideProvider(getRepositoryToken(SurveyAnswer))
+      .useValue({ find: jest.fn(), save: jest.fn() })
       .overrideProvider(getRepositoryToken(Survey))
       .useValue({ find: jest.fn(), findOne: jest.fn(), create: jest.fn(), save: jest.fn() })
       .overrideProvider(getRepositoryToken(SurveyQuestion))
@@ -105,6 +141,17 @@ describe('SurveyModule wiring', () => {
   it('declares the business-facing builder controller', () => {
     const controllers = Reflect.getMetadata('controllers', SurveyModule) || [];
     expect(controllers).toContain(SurveyController);
+  });
+
+  it('can construct the money-moving services from the module definition', async () => {
+    const moduleRef = await compile();
+    expect(moduleRef.get(SurveyPublishService)).toBeInstanceOf(SurveyPublishService);
+    expect(moduleRef.get(SurveyResponseService)).toBeInstanceOf(SurveyResponseService);
+  });
+
+  it('declares the respondent controller', () => {
+    const controllers = Reflect.getMetadata('controllers', SurveyModule) || [];
+    expect(controllers).toContain(RespondentSurveyController);
   });
 
   /** Rates resolve through the real settings reader, not a fallback constant. */

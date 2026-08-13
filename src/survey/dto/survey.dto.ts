@@ -5,6 +5,7 @@ import {
 import { Type } from 'class-transformer';
 import { ApiProperty } from '@nestjs/swagger';
 import { TemplateQuestionDto } from './survey-template.dto';
+import { SurveyFilters } from '../survey.entity';
 
 /**
  * Strict allow-lists for the survey builder. The global ValidationPipe runs
@@ -34,10 +35,14 @@ export class CreateSurveyDto {
   @IsOptional() @IsString() @MaxLength(64)
   category?: string;
 
-  /** Respondent matching: age band, province, industry, other profile fields. */
+  /**
+   * Respondent matching, keyed by profile field: `{ age_range: ['25_34'],
+   * province: 'Gauteng' }`. Same fields Databroker prices — never a parallel
+   * taxonomy (§3.2).
+   */
   @ApiProperty({ required: false, type: Object })
   @IsOptional() @IsObject()
-  filters?: Record<string, unknown>;
+  filters?: SurveyFilters;
 
   @ApiProperty()
   @IsInt() @IsPositive()
@@ -81,7 +86,7 @@ export class UpdateSurveyDto {
 
   @ApiProperty({ required: false, type: Object })
   @IsOptional() @IsObject()
-  filters?: Record<string, unknown>;
+  filters?: SurveyFilters;
 
   @ApiProperty({ required: false })
   @IsOptional() @IsInt() @IsPositive()
@@ -111,4 +116,11 @@ export class QuoteSurveyDto {
   @ApiProperty()
   @IsInt() @IsPositive()
   targetResponses: number;
+}
+
+/** Estimating reach before committing money to a filter. */
+export class AudienceDto {
+  @ApiProperty({ required: false, type: Object })
+  @IsOptional() @IsObject()
+  filters?: SurveyFilters;
 }

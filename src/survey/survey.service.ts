@@ -8,6 +8,7 @@ import { SurveyQuestion } from './survey-question.entity';
 import { SurveyTemplate } from './survey-template.entity';
 import { Business } from '../business/business.entity';
 import { SurveyPricingService } from './survey-pricing.service';
+import { SurveyMatchingService } from './survey-matching.service';
 import { CHOICE_TYPES, QuestionType, isQuestionType } from './question-type';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -55,6 +56,7 @@ export class SurveyService {
     @InjectRepository(Business)
     private readonly businessRepository: Repository<Business>,
     private readonly pricing: SurveyPricingService,
+    private readonly matching: SurveyMatchingService,
   ) {}
 
   /** The business, or throw — scoping every operation to what the caller owns. */
@@ -93,6 +95,8 @@ export class SurveyService {
     // targetResponses is required at creation, so an absent one must fail here
     // rather than defaulting to something a business did not choose.
     this.validateTargeting(input, { requireTarget: true });
+    // Filter keys must name real profile fields — a typo matches nobody.
+    await this.matching.assertKnownFields(input.filters ?? {});
 
     const survey = await this.surveyRepository.save(
       this.surveyRepository.create({
@@ -155,6 +159,7 @@ export class SurveyService {
     // Only what the caller actually sent: re-checking untouched stored values
     // would let a rule added later reject an edit to an unrelated field.
     this.validateTargeting(input);
+    if (input.filters !== undefined) await this.matching.assertKnownFields(input.filters);
 
     if (input.title !== undefined) survey.title = input.title;
     if (input.description !== undefined) survey.description = input.description;
@@ -238,10 +243,10 @@ export class SurveyService {
    * must not be rejected by a rule about a field it never touched.
    */
   private validateTargeting(
-    input: { targetResponses?: number; durationDays?: number | null; filters?: SurveyFilters },
+    input: { targetResponses?: number; durationDays?: number | null },
     { requireTarget = false }: { requireTarget?: boolean } = {},
   ): void {
-    const { targetResponses, durationDays, filters } = input;
+    const { targetResponses, durationDays } = input;
 
     if (requireTarget || targetResponses !== undefined) {
       if (!Number.isInteger(targetResponses as number) || (targetResponses as number) <= 0) {
@@ -252,10 +257,6 @@ export class SurveyService {
       throw new BadRequestException(
         'Duration must be a positive number of days, or omitted to run indefinitely',
       );
-    }
-    const { ageMin, ageMax } = filters ?? {};
-    if (ageMin != null && ageMax != null && ageMin > ageMax) {
-      throw new BadRequestException('The minimum age cannot be greater than the maximum age');
     }
   }
 }
