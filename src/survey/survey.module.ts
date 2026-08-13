@@ -6,6 +6,12 @@ import { SurveyPricingService } from './survey-pricing.service';
 import { SurveyTemplateService } from './survey-template.service';
 import { SurveyTemplate } from './survey-template.entity';
 import { AdminSurveyController } from './admin-survey.controller';
+import { SurveyController } from './survey.controller';
+import { SurveyService } from './survey.service';
+import { Survey } from './survey.entity';
+import { SurveyQuestion } from './survey-question.entity';
+import { Business } from '../business/business.entity';
+import { MarketplaceModule } from '../marketplace/marketplace.module';
 import { AdminGuard } from '../admin/admin.guard';
 import { User } from '../user/user.entity';
 
@@ -24,17 +30,20 @@ import { User } from '../user/user.entity';
 @Module({
   imports: [
     // User is here for AdminGuard, which loads the caller to check their role.
-    TypeOrmModule.forFeature([SurveyTemplate, User]),
+    TypeOrmModule.forFeature([Survey, SurveyQuestion, SurveyTemplate, User, Business]),
     // AdminGuard authenticates via the 'jwt' strategy, same as every other
     // admin-guarded controller.
     PassportModule.register({ defaultStrategy: 'jwt' }),
     ConfigModule,
+    // AppAccessGuard gates the builder on the survey-campaigns install, so
+    // entitlement is never re-derived here.
+    MarketplaceModule,
   ],
   // AdminGuard is PROVIDED, not merely imported: AdminSurveyController is
   // declared here, so Nest resolves its guard from this module's injector. A
   // guard it cannot construct fails on the first request, not at boot.
-  providers: [SurveyPricingService, SurveyTemplateService, AdminGuard],
-  controllers: [AdminSurveyController],
-  exports: [SurveyPricingService, SurveyTemplateService],
+  providers: [SurveyPricingService, SurveyTemplateService, SurveyService, AdminGuard],
+  controllers: [AdminSurveyController, SurveyController],
+  exports: [SurveyPricingService, SurveyTemplateService, SurveyService],
 })
 export class SurveyModule {}
