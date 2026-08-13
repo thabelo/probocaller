@@ -8,10 +8,7 @@ import { SurveyQuestion } from './survey-question.entity';
 import { SurveyTemplate } from './survey-template.entity';
 import { Business } from '../business/business.entity';
 import { SurveyPricingService } from './survey-pricing.service';
-import { QuestionType, isQuestionType } from './question-type';
-
-/** Types that are meaningless without choices to pick from. */
-const CHOICE_TYPES: string[] = ['multiple_choice', 'dropdown'];
+import { CHOICE_TYPES, QuestionType, isQuestionType } from './question-type';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 

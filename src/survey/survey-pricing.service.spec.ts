@@ -21,7 +21,9 @@ describe('SurveyPricingService', () => {
     SURVEY_FEE_FREE_TEXT: 2.5,
     SURVEY_FEE_YES_NO: 0.5,
     SURVEY_FEE_MULTIPLE_CHOICE: 1,
+    SURVEY_FEE_MULTI_SELECT: 1.5,
     SURVEY_FEE_DROPDOWN: 0.75,
+    PLATFORM_CUT_RATE: 0.24,
   };
 
   beforeEach(async () => {
@@ -84,12 +86,48 @@ describe('SurveyPricingService', () => {
     await expect(service.pricePerResponse(['yes_no'])).rejects.toThrow('Missing or invalid setting');
   });
 
-  /** What the business's wallet is actually debited and held at publish (§1.2). */
-  it('quotes the escrow total as price per response × target responses', async () => {
+  /**
+   * What the business's wallet is actually debited and held at publish (§1.2).
+   *
+   * The platform cut is added ON TOP: the respondent earns the full question
+   * rates, and the business pays those plus the platform's share. Taking it out
+   * of the respondent's fee instead would quietly pay someone less than the
+   * rate the app showed them before they started.
+   */
+  it('quotes the escrow total as the respondent pot plus the platform cut', async () => {
     await expect(service.quote(['free_text', 'yes_no'], 100)).resolves.toEqual({
-      pricePerResponse: 3,
+      pricePerResponse: 3,     // what one respondent earns — untouched by the cut
       targetResponses: 100,
-      total: 300,
+      respondentTotal: 300,    // the pot respondents are paid from
+      platformFee: 72,         // 24% on top
+      total: 372,              // what is debited and held
+    });
+  });
+
+  it('leaves the respondent fee alone whatever the cut is', async () => {
+    getNumber.mockImplementation(async (key: string) =>
+      key === 'PLATFORM_CUT_RATE' ? 0.5 : RATES[key]);
+
+    const quote = await service.quote(['free_text'], 10);
+
+    expect(quote.pricePerResponse).toBe(2.5);   // unchanged
+    expect(quote.respondentTotal).toBe(25);
+    expect(quote.platformFee).toBe(12.5);
+    expect(quote.total).toBe(37.5);
+  });
+
+  it('reads the platform cut live rather than hardcoding 24%', async () => {
+    await service.quote(['yes_no'], 1);
+    expect(getNumber).toHaveBeenCalledWith('PLATFORM_CUT_RATE');
+  });
+
+  /** A zero cut is a legitimate setting, not a missing one. */
+  it('holds exactly the respondent pot when the cut is zero', async () => {
+    getNumber.mockImplementation(async (key: string) =>
+      key === 'PLATFORM_CUT_RATE' ? 0 : RATES[key]);
+
+    await expect(service.quote(['yes_no'], 10)).resolves.toMatchObject({
+      platformFee: 0, total: 5,
     });
   });
 
@@ -108,8 +146,10 @@ describe('SurveyPricingService', () => {
    * reconciling.
    */
   it('rounds money to cents rather than leaking float dust', async () => {
-    getNumber.mockImplementation(async (key: string) =>
-      key === 'SURVEY_FEE_YES_NO' ? 0.1 : 0.2);
+    getNumber.mockImplementation(async (key: string) => {
+      if (key === 'PLATFORM_CUT_RATE') return 0;
+      return key === 'SURVEY_FEE_YES_NO' ? 0.1 : 0.2;
+    });
 
     const { pricePerResponse, total } = await service.quote(['yes_no', 'dropdown'], 3);
 

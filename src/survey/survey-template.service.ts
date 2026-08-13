@@ -2,10 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SurveyTemplate, TemplateQuestion } from './survey-template.entity';
-import { isQuestionType } from './question-type';
-
-/** Types that are meaningless without choices to pick from. */
-const CHOICE_TYPES = ['multiple_choice', 'dropdown'];
+import { CHOICE_TYPES, isQuestionType } from './question-type';
 
 export interface CreateTemplateInput {
   key: string;

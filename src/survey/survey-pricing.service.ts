@@ -2,6 +2,21 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { SettingsReaderService } from '../config/settings-reader.service';
 import { QuestionType, feeSettingKey, isQuestionType } from './question-type';
 
+/**
+ * What publishing a survey costs, broken into the parts that move separately:
+ * `respondentTotal` is the pot respondents are paid from and is what gets
+ * refunded if unspent; `platformFee` is the platform's share on top; `total`
+ * is what leaves the wallet.
+ */
+export interface SurveyQuote {
+  /** What ONE respondent earns for completing it. Never reduced by the cut. */
+  pricePerResponse: number;
+  targetResponses: number;
+  respondentTotal: number;
+  platformFee: number;
+  total: number;
+}
+
 /** Round to cents, so escrow holds and their refunds still reconcile. */
 function toCents(amount: number): number {
   return Math.round(amount * 100) / 100;
@@ -48,22 +63,37 @@ export class SurveyPricingService {
   }
 
   /**
-   * The full escrow quote for publishing: what one response costs, how many
-   * are being bought, and the total held against the business's wallet.
+   * The full escrow quote for publishing: what one respondent earns, how many
+   * responses are being bought, the platform's share, and the total held
+   * against the business's wallet.
+   *
+   * The platform cut is added ON TOP of the respondent pot rather than taken
+   * out of it. A respondent is shown what a survey pays before starting
+   * (§1.3), so a cut deducted from their fee would quietly pay them less than
+   * the figure they agreed to.
    */
   async quote(
     questionTypes: QuestionType[],
     targetResponses: number,
-  ): Promise<{ pricePerResponse: number; targetResponses: number; total: number }> {
+  ): Promise<SurveyQuote> {
     if (!Number.isInteger(targetResponses) || targetResponses <= 0) {
       throw new BadRequestException('Target responses must be a whole number greater than zero');
     }
 
-    const pricePerResponse = await this.pricePerResponse(questionTypes);
+    const [pricePerResponse, cutRate] = await Promise.all([
+      this.pricePerResponse(questionTypes),
+      this.settingsReader.getNumber('PLATFORM_CUT_RATE'),
+    ]);
+
+    const respondentTotal = toCents(pricePerResponse * targetResponses);
+    const platformFee = toCents(respondentTotal * cutRate);
+
     return {
       pricePerResponse,
       targetResponses,
-      total: toCents(pricePerResponse * targetResponses),
+      respondentTotal,
+      platformFee,
+      total: toCents(respondentTotal + platformFee),
     };
   }
 }

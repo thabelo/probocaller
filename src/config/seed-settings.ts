@@ -16,6 +16,7 @@ const SURVEY_QUESTION_FEES: Record<QuestionType, string> = {
   free_text: '2.50',
   yes_no: '0.50',
   multiple_choice: '1.00',
+  multi_select: '1.50',
   dropdown: '0.75',
 };
 

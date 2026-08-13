@@ -13,7 +13,16 @@
  * possible"; adding one here is enough to seed its rate, price it, and accept
  * it on a question — no other file needs to change.
  */
-export const QUESTION_TYPES = ['free_text', 'yes_no', 'multiple_choice', 'dropdown'] as const;
+export const QUESTION_TYPES = [
+  'free_text',
+  'yes_no',
+  /** Pick ONE of several options, shown as a list of choices. */
+  'multiple_choice',
+  /** Pick SEVERAL — its own type, so it can be priced for the extra work. */
+  'multi_select',
+  /** Pick one, shown collapsed. Same answer shape as multiple_choice. */
+  'dropdown',
+] as const;
 
 export type QuestionType = (typeof QUESTION_TYPES)[number];
 
@@ -24,4 +33,16 @@ export function feeSettingKey(type: QuestionType): string {
 
 export function isQuestionType(value: string): value is QuestionType {
   return (QUESTION_TYPES as readonly string[]).includes(value);
+}
+
+/** Types that are meaningless without options to pick from. */
+export const CHOICE_TYPES: QuestionType[] = ['multiple_choice', 'multi_select', 'dropdown'];
+
+/**
+ * Whether an answer to this type may hold more than one value. Decided by the
+ * type alone, so nothing downstream has to carry a separate flag — the answer
+ * row stores a single `valueText` or a `valueJson` array accordingly.
+ */
+export function isMultiSelect(type: string): boolean {
+  return type === 'multi_select';
 }
