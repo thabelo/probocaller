@@ -80,6 +80,22 @@ describe('UpdateSurveyDto', () => {
  * before a business commits to building anything.
  */
 describe('QuoteSurveyDto', () => {
+  /** A business may ask "how many does R500 buy?" instead of naming a count. */
+  it('accepts a budget instead of a target', async () => {
+    expect(await errorsFor(QuoteSurveyDto, {
+      questions: [{ type: 'free_text', prompt: 'Why?' }],
+      budget: 500,
+    })).toHaveLength(0);
+  });
+
+  it('rejects a budget of zero', async () => {
+    const errors = await errorsFor(QuoteSurveyDto, {
+      questions: [{ type: 'free_text', prompt: 'Why?' }],
+      budget: 0,
+    });
+    expect(errors.length).toBeGreaterThan(0);
+  });
+
   it('accepts questions and a target', async () => {
     expect(await errorsFor(QuoteSurveyDto, {
       questions: [{ type: 'free_text', prompt: 'Why?' }],

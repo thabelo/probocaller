@@ -1,5 +1,5 @@
 import {
-  ArrayMinSize, IsArray, IsInt, IsObject, IsOptional, IsPositive, IsString,
+  ArrayMinSize, IsArray, IsInt, IsNumber, IsObject, IsOptional, IsPositive, IsString,
   Matches, MaxLength, Min, ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -113,9 +113,19 @@ export class QuoteSurveyDto {
   @ValidateNested({ each: true }) @Type(() => TemplateQuestionDto)
   questions: TemplateQuestionDto[];
 
-  @ApiProperty()
-  @IsInt() @IsPositive()
-  targetResponses: number;
+  /** Name a count… */
+  @ApiProperty({ required: false })
+  @IsOptional() @IsInt() @IsPositive()
+  targetResponses?: number;
+
+  /**
+   * …or name a BUDGET and let the server say how many responses it buys. A
+   * business thinks in money; turning that into a count needs the question
+   * rates and the platform cut, which only the server has.
+   */
+  @ApiProperty({ required: false })
+  @IsOptional() @IsNumber() @IsPositive()
+  budget?: number;
 }
 
 /** Estimating reach before committing money to a filter. */

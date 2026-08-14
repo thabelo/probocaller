@@ -50,9 +50,14 @@ export class SurveyController {
    * show a cost after the business has committed to building something.
    */
   @Post('quote')
-  @ApiOperation({ summary: 'What a set of questions would cost per response and in total' })
+  @ApiOperation({ summary: 'What a set of questions costs — by response count, or by budget' })
   quote(@Body() body: QuoteSurveyDto) {
-    return this.pricing.quote(body.questions.map((q) => q.type), body.targetResponses);
+    const types = body.questions.map((q) => q.type);
+    // A budget answers "how many can I buy?"; a count answers "what will this
+    // cost?". Either way the arithmetic stays here.
+    return body.budget != null
+      ? this.pricing.quoteForBudget(types, body.budget)
+      : this.pricing.quote(types, body.targetResponses as number);
   }
 
   @Get()

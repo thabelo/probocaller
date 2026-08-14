@@ -63,6 +63,42 @@ export class SurveyPricingService {
   }
 
   /**
+   * How many responses a BUDGET buys.
+   *
+   * A business thinks in money — "I have R500 for this" — not in response
+   * counts. Turning one into the other needs the question rates AND the
+   * platform cut, so it can only be answered here: a client dividing a budget
+   * by a fee it guessed would promise responses the wallet cannot cover.
+   *
+   * Rounds DOWN, because a part of a response is not a response, and the total
+   * it returns is guaranteed to fit inside the budget.
+   */
+  async quoteForBudget(
+    questionTypes: QuestionType[],
+    budget: number,
+  ): Promise<SurveyQuote> {
+    if (!Number.isFinite(budget) || budget <= 0) {
+      throw new BadRequestException('Give a budget greater than zero.');
+    }
+
+    const [pricePerResponse, cutRate] = await Promise.all([
+      this.pricePerResponse(questionTypes),
+      this.settingsReader.getNumber('PLATFORM_CUT_RATE'),
+    ]);
+
+    const costPerResponse = toCents(pricePerResponse * (1 + cutRate));
+    const targetResponses = Math.floor(budget / costPerResponse);
+
+    if (targetResponses < 1) {
+      throw new BadRequestException(
+        `One response costs ${costPerResponse.toFixed(2)}, so a budget of ${budget.toFixed(2)} buys none. Ask less of people, or raise the budget.`,
+      );
+    }
+
+    return this.quote(questionTypes, targetResponses);
+  }
+
+  /**
    * The full escrow quote for publishing: what one respondent earns, how many
    * responses are being bought, the platform's share, and the total held
    * against the business's wallet.

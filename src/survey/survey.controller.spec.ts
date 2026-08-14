@@ -31,7 +31,10 @@ describe('SurveyController', () => {
       deleteDraft: jest.fn().mockResolvedValue(undefined),
     };
     templates = { listActive: jest.fn().mockResolvedValue([]) };
-    pricing = { quote: jest.fn().mockResolvedValue({ pricePerResponse: 3, targetResponses: 10, total: 30 }) };
+    pricing = {
+      quote: jest.fn().mockResolvedValue({ pricePerResponse: 3, targetResponses: 10, total: 30 }),
+      quoteForBudget: jest.fn().mockResolvedValue({ pricePerResponse: 3, targetResponses: 26, total: 96.72 }),
+    };
 
     publishing = {
       publish: jest.fn().mockResolvedValue({ id: 100, shortfall: 0 }),
@@ -106,6 +109,13 @@ describe('SurveyController', () => {
     await controller.quote({ questions: [{ type: 'yes_no', prompt: 'q' }], targetResponses: 10 } as any);
     expect(pricing.quote).toHaveBeenCalledWith(['yes_no'], 10);
     expect(surveys.createDraft).not.toHaveBeenCalled();
+  });
+
+  /** A budget asks the server how many responses it buys. */
+  it('quotes from a budget when one is given', async () => {
+    await controller.quote({ questions: [{ type: 'yes_no', prompt: 'q' }], budget: 100 } as any);
+    expect(pricing.quoteForBudget).toHaveBeenCalledWith(['yes_no'], 100);
+    expect(pricing.quote).not.toHaveBeenCalled();
   });
 
   /**

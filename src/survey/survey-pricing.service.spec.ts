@@ -131,6 +131,47 @@ describe('SurveyPricingService', () => {
     });
   });
 
+  /**
+   * A business thinks in money, not in response counts: "I have R500 to spend
+   * on this" is the real question. How many responses that buys depends on the
+   * question types AND the platform cut, so only the server can answer it —
+   * a client dividing budget by a fee it guessed would promise responses the
+   * wallet cannot cover.
+   */
+  describe('buying responses with a budget', () => {
+    it('says how many responses a budget buys, cut included', async () => {
+      // free text 2.50 + yes/no 0.50 = 3.00 a response, +24% = 3.72 all in.
+      // R100 buys 26 of those (96.72), not 33.
+      await expect(service.quoteForBudget(['free_text', 'yes_no'], 100)).resolves.toMatchObject({
+        pricePerResponse: 3,
+        targetResponses: 26,
+      });
+    });
+
+    it('never promises more responses than the budget covers', async () => {
+      const quote = await service.quoteForBudget(['free_text', 'yes_no'], 100);
+      expect(quote.total).toBeLessThanOrEqual(100);
+    });
+
+    it('rounds down — a part-response is not a response', async () => {
+      await expect(service.quoteForBudget(['yes_no'], 1.9)).resolves.toMatchObject({
+        targetResponses: 3,   // 0.62 each all in
+      });
+    });
+
+    /** Below the price of one response there is nothing to buy. */
+    it('refuses a budget that cannot buy a single response', async () => {
+      await expect(service.quoteForBudget(['free_text'], 1)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('refuses a budget of zero or less', async () => {
+      await expect(service.quoteForBudget(['yes_no'], 0)).rejects.toBeInstanceOf(BadRequestException);
+      await expect(service.quoteForBudget(['yes_no'], -10)).rejects.toBeInstanceOf(BadRequestException);
+    });
+  });
+
   it('rejects a target of zero or less', async () => {
     await expect(service.quote(['yes_no'], 0)).rejects.toBeInstanceOf(BadRequestException);
     await expect(service.quote(['yes_no'], -5)).rejects.toBeInstanceOf(BadRequestException);
