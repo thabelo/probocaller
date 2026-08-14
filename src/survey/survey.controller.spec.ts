@@ -28,6 +28,7 @@ describe('SurveyController', () => {
       list: jest.fn().mockResolvedValue([]),
       get: jest.fn().mockResolvedValue({ id: 100 }),
       update: jest.fn().mockResolvedValue({ id: 100 }),
+      deleteDraft: jest.fn().mockResolvedValue(undefined),
     };
     templates = { listActive: jest.fn().mockResolvedValue([]) };
     pricing = { quote: jest.fn().mockResolvedValue({ pricePerResponse: 3, targetResponses: 10, total: 30 }) };
@@ -79,6 +80,11 @@ describe('SurveyController', () => {
   it('reads one survey', async () => {
     await controller.get(req, 100);
     expect(surveys.get).toHaveBeenCalledWith(1, 100);
+  });
+
+  it('throws away a draft', async () => {
+    await controller.remove(req, 100);
+    expect(surveys.deleteDraft).toHaveBeenCalledWith(1, 100);
   });
 
   it('edits a draft', async () => {

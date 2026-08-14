@@ -1,5 +1,6 @@
 import {
-  Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, Request, UseGuards,
+  Body, Controller, Delete, Get, HttpCode, Param, ParseIntPipe, Patch, Post, Query, Request,
+  UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
@@ -102,5 +103,16 @@ export class SurveyController {
   @ApiOperation({ summary: 'Edit one of my drafts' })
   update(@Request() req, @Param('id', ParseIntPipe) id: number, @Body() body: UpdateSurveyDto) {
     return this.surveys.update(req.user.userId, id, body as any);
+  }
+
+  /**
+   * Only a draft can be deleted. Anything published is a record of money that
+   * moved and answers people were paid for.
+   */
+  @Delete(':id')
+  @HttpCode(204)
+  @ApiOperation({ summary: 'Throw away one of my drafts' })
+  remove(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.surveys.deleteDraft(req.user.userId, id);
   }
 }

@@ -177,6 +177,26 @@ export class SurveyService {
     return saved;
   }
 
+  /**
+   * Throw a draft away.
+   *
+   * Only a draft: it holds no escrow and has no responses, so nothing is lost.
+   * A live, closed or expired survey is a record of money that moved and of
+   * answers people were paid for — that is never deleted, the same reasoning
+   * that gives the app catalogue and the template library no delete either.
+   */
+  async deleteDraft(userId: number, id: number): Promise<void> {
+    const survey = await this.ownedSurvey(userId, id);
+    if (survey.status !== 'draft') {
+      throw new BadRequestException(
+        `Only a draft can be deleted — this survey is ${survey.status}. Close it instead.`,
+      );
+    }
+
+    await this.questionRepository.delete({ surveyId: id });
+    await this.surveyRepository.delete({ id });
+  }
+
   private async loadTemplate(key: string): Promise<SurveyTemplate> {
     const template = await this.templateRepository.findOne({ where: { key } });
     if (!template) throw new NotFoundException(`No template with key "${key}"`);

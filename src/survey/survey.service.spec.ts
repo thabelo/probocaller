@@ -316,6 +316,7 @@ describe('SurveyService — reading and editing drafts', () => {
       save: jest.fn(async (d: any) => d),
       findOne: jest.fn().mockResolvedValue(DRAFT),
       find: jest.fn().mockResolvedValue([DRAFT]),
+      delete: jest.fn(),
     };
     questionRepo = {
       create: jest.fn((d: any) => d),
@@ -386,6 +387,35 @@ describe('SurveyService — reading and editing drafts', () => {
     await expect(service.update(1, 100, { title: 'Renamed' })).rejects.toBeInstanceOf(
       BadRequestException,
     );
+  });
+
+  /**
+   * A draft can be thrown away. It holds no money and has no responses, so
+   * nothing is lost — and without this a mistyped survey is stuck in the
+   * business's list forever.
+   */
+  describe('deleting a draft', () => {
+    it('deletes the draft and its questions', async () => {
+      await service.deleteDraft(1, 100);
+      expect(questionRepo.delete).toHaveBeenCalledWith({ surveyId: 100 });
+      expect(surveyRepo.delete).toHaveBeenCalledWith({ id: 100 });
+    });
+
+    /**
+     * A live survey holds escrow and may already have answers someone was paid
+     * for. Deleting it would destroy the record of money that moved.
+     */
+    it('refuses to delete a survey that is not a draft', async () => {
+      surveyRepo.findOne.mockResolvedValue({ ...DRAFT, status: 'live' });
+      await expect(service.deleteDraft(1, 100)).rejects.toBeInstanceOf(BadRequestException);
+      expect(surveyRepo.delete).not.toHaveBeenCalled();
+    });
+
+    it("refuses to delete another account's draft", async () => {
+      surveyRepo.findOne.mockResolvedValue({ ...DRAFT, business: { userId: 99 } });
+      await expect(service.deleteDraft(1, 100)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(surveyRepo.delete).not.toHaveBeenCalled();
+    });
   });
 
   it('replaces the whole question set when questions are edited', async () => {
