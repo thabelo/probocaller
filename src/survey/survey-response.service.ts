@@ -8,6 +8,7 @@ import { SurveyQuestion } from './survey-question.entity';
 import { SurveyResponse } from './survey-response.entity';
 import { SurveyAnswer } from './survey-answer.entity';
 import { User } from '../user/user.entity';
+import { Business } from '../business/business.entity';
 import { SurveyMatchingService } from './survey-matching.service';
 import { TransactionService } from '../transaction/transaction.service';
 import { isMultiSelect } from './question-type';
@@ -58,6 +59,7 @@ export class SurveyResponseService {
     const live = await this.surveyRepository.find({
       where: { status: 'live' },
       order: { publishedAt: 'DESC' },
+      relations: ['business'],
     });
     if (!live.length) return [];
 
@@ -69,6 +71,7 @@ export class SurveyResponseService {
     const offered: any[] = [];
     for (const survey of live) {
       if (answered.has(survey.id)) continue;
+      if (this.ownsSurvey(userId, survey)) continue;
 
       const audience = await this.matching.audience(survey.filtersJson ?? {});
       if (!audience.includes(userId)) continue;
@@ -90,6 +93,18 @@ export class SurveyResponseService {
       });
     }
     return offered;
+  }
+
+  /**
+   * A business answering its own survey.
+   *
+   * Not profitable — the owner pays the platform's cut to move money to
+   * themselves — but it lets a business inflate its own response count and then
+   * act on results it wrote. Responses are anonymous, so nothing downstream
+   * could tell that apart from a real answer.
+   */
+  private ownsSurvey(userId: number, survey: Survey): boolean {
+    return survey.business?.userId === userId;
   }
 
   /**
@@ -123,10 +138,17 @@ export class SurveyResponseService {
       const survey = await manager.findOne(Survey, {
         where: { id: surveyId },
         lock: { mode: 'pessimistic_write' },
+        // FOR UPDATE cannot lock across a join, so the owner is read separately.
+        loadEagerRelations: false,
       });
       if (!survey) throw new NotFoundException('Survey not found');
       if (survey.status !== 'live') {
         throw new BadRequestException('This survey is no longer taking responses.');
+      }
+
+      const owner = await manager.findOne(Business, { where: { id: survey.businessId } });
+      if (owner?.userId === userId) {
+        throw new ForbiddenException('You cannot answer a survey your own business is running.');
       }
 
       const price = Number(survey.pricePerResponse);

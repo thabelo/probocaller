@@ -11,6 +11,7 @@ import { SurveyResponse } from './survey-response.entity';
 import { SurveyAnswer } from './survey-answer.entity';
 import { User } from '../user/user.entity';
 import { UserProfile } from '../profile/user-profile.entity';
+import { Business } from '../business/business.entity';
 
 /**
  * Build-order step 4 — the respondent side.
@@ -40,6 +41,8 @@ describe('SurveyResponseService', () => {
   const LIVE = (over: Record<string, unknown> = {}) => ({
     id: 100,
     businessId: 7,
+    // Owned by user 9 — someone OTHER than the respondent in these tests.
+    business: { id: 7, userId: 9 },
     title: 'How are we doing?',
     status: 'live',
     filtersJson: {},
@@ -137,6 +140,49 @@ describe('SurveyResponseService', () => {
       expect(surveyRepo.find).toHaveBeenCalledWith(
         expect.objectContaining({ where: expect.objectContaining({ status: 'live' }) }),
       );
+    });
+  });
+
+  /**
+   * A business must not answer its own survey.
+   *
+   * It is not profitable — the owner pays the platform's cut to move money to
+   * themselves — but it lets a business quietly inflate its own response count
+   * and pollute the results it is about to act on. Worse, the response is
+   * anonymous, so nothing downstream can tell it apart from a real one.
+   */
+  describe('a business cannot answer its own survey', () => {
+    const OWN = (over: Record<string, unknown> = {}) =>
+      LIVE({ business: { id: 7, userId: 5 }, ...over });
+
+    it('is not offered to the person who owns the business', async () => {
+      surveyRepo.find.mockResolvedValue([OWN()]);
+      await expect(service.available(5)).resolves.toEqual([]);
+    });
+
+    it('is still offered to everyone else', async () => {
+      surveyRepo.find.mockResolvedValue([OWN({ business: { id: 7, userId: 9 } })]);
+      await expect(service.available(5)).resolves.toHaveLength(1);
+    });
+
+    it('refuses a submission from the owner, and pays nobody', async () => {
+      manager.findOne.mockImplementation(async (entity: any) => {
+        if (entity === User) return { id: 5, walletBalance: '10' };
+        if (entity === Survey) return OWN();
+        // The locked survey row carries no join, so ownership is read from the
+        // business itself — owned here by the same person submitting.
+        if (entity === Business) return { id: 7, userId: 5 };
+        return null;
+      });
+      surveyRepo.findOne.mockResolvedValue(OWN());
+
+      await expect(
+        service.submit(5, 100, [
+          { questionId: 1, valueText: 'x' },
+          { questionId: 2, valueJson: ['a'] },
+        ]),
+      ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(transactions.log).not.toHaveBeenCalled();
     });
   });
 
