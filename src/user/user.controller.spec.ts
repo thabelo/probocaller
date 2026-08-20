@@ -273,6 +273,7 @@ describe('UserController — GET /user/rate (live platform rate for the app)', (
         if (key === 'PLATFORM_CUT_RATE') return settingVal.cut ?? 0.24;
         if (key === 'SMS_RATE_PER_MESSAGE') return settingVal.smsRate ?? 0.05;
         if (key === 'PAY_TO_CONTACT_FEE_RATE') return settingVal.payToContactFeeRate ?? 0.3;
+        if (key === 'PHONE_NUMBER_CREDIT_COST') return settingVal.phoneNumberCost ?? 10;
         throw new Error(`unexpected setting key in test: ${key}`);
       }),
     };
@@ -281,6 +282,17 @@ describe('UserController — GET /user/rate (live platform rate for the app)', (
     };
     return new UserController({} as any, {} as any, {} as any, {} as any, {} as any, {} as any, settingsReader, referralService);
   };
+
+  /**
+   * The app quotes what a profile is worth per business view. With phone
+   * sharing on, the number is part of that — so the client has to read the
+   * same live price billing charges rather than compile a figure into its copy.
+   */
+  it('exposes the live phone-number price so the app can quote it', async () => {
+    const c = make({ phoneNumberCost: 12.5 });
+    const res: any = await c.getRate();
+    expect(res.phoneNumberCost).toBe(12.5);
+  });
 
   it('returns the live rate, platform cut and derived user share', async () => {
     const c = make({ rate: 0.15, cut: 0.24 });
@@ -390,7 +402,12 @@ describe('UserController — POST /user/business-opt-out', () => {
  */
 describe('UserController — POST /user/credit (admin-configurable top-up ceiling)', () => {
   const makeController = (maxTopup: number) => {
-    const userService: any = { addCredit: jest.fn().mockResolvedValue({ id: 1, walletBalance: 100 }) };
+    // These cases are about the ceiling, not the top-up gate — run them as an
+    // admin so the gate (covered separately below) never masks the assertion.
+    const userService: any = {
+      addCredit: jest.fn().mockResolvedValue({ id: 1, walletBalance: 100 }),
+      isAdmin: jest.fn().mockResolvedValue(true),
+    };
     const settingsReader: any = {
       getNumber: jest.fn().mockImplementation(async (key: string) =>
         key === 'MAX_TOPUP_AMOUNT' ? maxTopup : Promise.reject(new Error(`unexpected key: ${key}`))),
@@ -424,6 +441,74 @@ describe('UserController — POST /user/credit (admin-configurable top-up ceilin
     ).rejects.toThrow();
     await controller.addCredit({ user: { userId: 7 } } as any, { amount: 50 } as any);
     expect(userService.addCredit).toHaveBeenCalledWith(7, 50);
+  });
+});
+
+/**
+ * The wallet faucet (LAUNCH BLOCKER): POST /user/credit credits a wallet from
+ * nothing. Until a payment provider verifies the money arrived, a non-admin may
+ * only self-credit outside production, and only with an explicit opt-in.
+ */
+describe('UserController — POST /user/credit is gated until payments are wired', () => {
+  const makeController = (opts: { isAdmin: boolean; env: string; allow?: string }) => {
+    const userService: any = {
+      addCredit: jest.fn().mockResolvedValue({ id: 1, walletBalance: 100 }),
+      isAdmin: jest.fn().mockResolvedValue(opts.isAdmin),
+    };
+    const settingsReader: any = { getNumber: jest.fn().mockResolvedValue(1000) };
+    const controller = new UserController(
+      userService, {} as any, {} as any, {} as any, {} as any, {} as any, settingsReader, {} as any,
+    );
+    return { controller, userService };
+  };
+
+  const withEnv = async (env: string, allow: string | undefined, fn: () => Promise<void>) => {
+    const prevEnv = process.env.NODE_ENV;
+    const prevAllow = process.env.ALLOW_UNVERIFIED_TOPUP;
+    process.env.NODE_ENV = env;
+    if (allow === undefined) delete process.env.ALLOW_UNVERIFIED_TOPUP;
+    else process.env.ALLOW_UNVERIFIED_TOPUP = allow;
+    try { await fn(); } finally {
+      process.env.NODE_ENV = prevEnv;
+      if (prevAllow === undefined) delete process.env.ALLOW_UNVERIFIED_TOPUP;
+      else process.env.ALLOW_UNVERIFIED_TOPUP = prevAllow;
+    }
+  };
+
+  it('refuses a self-service top-up in production, opt-in or not', async () => {
+    await withEnv('production', 'true', async () => {
+      const { controller, userService } = makeController({ isAdmin: false, env: 'production' });
+      await expect(
+        controller.addCredit({ user: { userId: 7 } } as any, { amount: 10 } as any),
+      ).rejects.toThrow(/payment/i);
+      expect(userService.addCredit).not.toHaveBeenCalled();
+    });
+  });
+
+  it('refuses a self-service top-up outside production without the explicit opt-in', async () => {
+    await withEnv('development', undefined, async () => {
+      const { controller, userService } = makeController({ isAdmin: false, env: 'development' });
+      await expect(
+        controller.addCredit({ user: { userId: 7 } } as any, { amount: 10 } as any),
+      ).rejects.toThrow(/payment/i);
+      expect(userService.addCredit).not.toHaveBeenCalled();
+    });
+  });
+
+  it('allows an opted-in self-service top-up outside production (dev/e2e funding)', async () => {
+    await withEnv('development', 'true', async () => {
+      const { controller, userService } = makeController({ isAdmin: false, env: 'development' });
+      await controller.addCredit({ user: { userId: 7 } } as any, { amount: 10 } as any);
+      expect(userService.addCredit).toHaveBeenCalledWith(7, 10);
+    });
+  });
+
+  it('always allows an admin to credit a wallet, even in production', async () => {
+    await withEnv('production', undefined, async () => {
+      const { controller, userService } = makeController({ isAdmin: true, env: 'production' });
+      await controller.addCredit({ user: { userId: 7 } } as any, { amount: 10 } as any);
+      expect(userService.addCredit).toHaveBeenCalledWith(7, 10);
+    });
   });
 });
 

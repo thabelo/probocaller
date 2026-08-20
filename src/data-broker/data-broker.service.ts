@@ -72,8 +72,13 @@ export class DataBrokerService {
       newSmsPolicy: smsPolicy.newSender,
       unknownSmsPolicy: smsPolicy.unknown,
       dataShareEnabled: user.dataShareEnabled,
+      // Undefined on accounts predating the column: those were sharing, so
+      // absence reads as on rather than silently withdrawing consent.
+      phoneShareEnabled: user.phoneShareEnabled !== false,
       dataCategories: user.dataCategories || [],
       incognitoEnabled: user.incognitoEnabled,
+      // Opt-in to ads; only opted-in users earn the ad revenue share.
+      adsEnabled: !!user.adsEnabled,
     };
   }
 
@@ -235,6 +240,8 @@ export class DataBrokerService {
       user.dataCategories = await this.profileService.sharableCandidateKeys(userId);
     }
     if (dto.incognitoEnabled !== undefined) user.incognitoEnabled = dto.incognitoEnabled;
+    if (dto.adsEnabled !== undefined) user.adsEnabled = dto.adsEnabled;
+    if (dto.phoneShareEnabled !== undefined) user.phoneShareEnabled = dto.phoneShareEnabled;
     await this.userRepo.save(user);
     return this.getPreferences(userId);
   }

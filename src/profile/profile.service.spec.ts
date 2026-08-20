@@ -34,6 +34,7 @@ const DEFAULT_SETTINGS: Record<string, number> = {
   LEADS_FREE_DAYS: 7,
   LEADS_DAILY_RATE: 0.018,
   LEADS_MAX_MULTIPLIER: 3,
+  PHONE_NUMBER_CREDIT_COST: 0.05,
 };
 
 const mockSettingsReader = (overrides: Record<string, number> = {}) => ({
@@ -91,6 +92,29 @@ describe('ProfileService', () => {
       profileRepo.findOne.mockResolvedValue(mockProfile({ data: { income_range: '5k_10k', marital_status: 'married', household_size: '' } }));
       const keys = await service.sharableCandidateKeys(1);
       expect(keys.sort()).toEqual(['income_range', 'marital_status']); // household_size empty → excluded
+    });
+
+    /**
+     * A multi-select the user turned on and then cleared leaves [] behind.
+     * That is an answered-nothing, not an answer: counting it would share an
+     * empty array with a business and charge them the field's credit cost for
+     * it, and would credit the user's completion score for a blank.
+     */
+    it('excludes a multi-select that has been cleared to an empty list', async () => {
+      fieldRepo.find.mockResolvedValue([
+        mockField({ key: 'income_range' }),
+        mockField({ key: 'interests', type: 'multi_select' }),
+      ]);
+      profileRepo.findOne.mockResolvedValue(
+        mockProfile({ data: { income_range: '5k_10k', interests: [] } }),
+      );
+      expect(await service.sharableCandidateKeys(1)).toEqual(['income_range']);
+    });
+
+    it('still counts a multi-select that has something chosen', async () => {
+      fieldRepo.find.mockResolvedValue([mockField({ key: 'interests', type: 'multi_select' })]);
+      profileRepo.findOne.mockResolvedValue(mockProfile({ data: { interests: ['telecoms'] } }));
+      expect(await service.sharableCandidateKeys(1)).toEqual(['interests']);
     });
 
     it('returns [] when the profile has no data', async () => {
@@ -189,6 +213,35 @@ describe('ProfileService', () => {
       const bob = leads.find((l: any) => l.userId === 200);
       expect(bob.callable).toBe(false);            // blocked → not callable
       expect(bob.callPolicy).toBe('blocked');
+    });
+
+    /**
+     * Phone sharing is a per-user consent flag. The leads view must honour it
+     * on read, not just at purchase time — a user who switches it off should
+     * stop appearing with a number in a list the business already holds.
+     */
+    it('hides the number of a user who has switched phone sharing off', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 7, userId: 9 });
+      accessLogRepo.find.mockResolvedValue([
+        { userId: 100, fieldsAccessed: ['income_range'], creditsCost: '0.05', accessedAt: new Date('2026-02-02'),
+          user: { id: 100, name: 'Alice', phoneNumber: '+27820000001', businessCallPolicy: 'paid', phoneShareEnabled: true } },
+        { userId: 200, fieldsAccessed: ['age_range'], creditsCost: '0.02', accessedAt: new Date('2026-03-03'),
+          user: { id: 200, name: 'Bob', phoneNumber: '+27820000002', businessCallPolicy: 'paid', phoneShareEnabled: false } },
+      ]);
+      const leads = await service.getBusinessLeads(9);
+      expect(leads.find((l: any) => l.userId === 100).phone).toBe('+27820000001');
+      expect(leads.find((l: any) => l.userId === 200).phone).toBeNull();
+    });
+
+    /** Accounts predating the flag were sharing, so absence must read as on. */
+    it('still shows the number when the account predates the flag', async () => {
+      businessRepo.findOne.mockResolvedValue({ id: 7, userId: 9 });
+      accessLogRepo.find.mockResolvedValue([
+        { userId: 100, fieldsAccessed: ['income_range'], creditsCost: '0.05', accessedAt: new Date('2026-02-02'),
+          user: { id: 100, name: 'Alice', phoneNumber: '+27820000001', businessCallPolicy: 'paid' } },
+      ]);
+      const leads = await service.getBusinessLeads(9);
+      expect(leads[0].phone).toBe('+27820000001');
     });
 
     it('returns [] when the business has purchased nothing', async () => {
@@ -467,13 +520,15 @@ describe('ProfileService', () => {
       userRepo().findOne.mockImplementation(async ({ where }: any) =>
         where.id === 7
           ? { id: 7, walletBalance: 555 } // owner's PERSONAL balance — must never be touched
-          : { id: where.id, walletBalance: 0, dataShareEnabled: true, dataCategories: ['income_range'] });
+          // phoneShareEnabled: false keeps these cases about field + base-fee
+          // math; the phone's own price is covered by its own tests below.
+          : { id: where.id, walletBalance: 0, dataShareEnabled: true, dataCategories: ['income_range'], phoneShareEnabled: false });
       managerSpy.findOne.mockImplementation(async (entity: any, opts: any) =>
         entity === Business
           ? { id: 1, userId: 7, companyName: 'AcmeCo', walletBalance: callerBalance }
           : opts.where.id === 7
             ? { id: 7, walletBalance: 555 }
-            : { id: opts.where.id, walletBalance: 0, dataShareEnabled: true, dataCategories: ['income_range'] });
+            : { id: opts.where.id, walletBalance: 0, dataShareEnabled: true, dataCategories: ['income_range'], phoneShareEnabled: false });
       return budget;
     };
 
@@ -494,6 +549,44 @@ describe('ProfileService', () => {
       const txSaves = managerSpy.save.mock.calls.filter((c: any[]) => c[0] === Transaction && c[1]?.type === 'DATA_PURCHASE');
       expect(txSaves.length).toBeGreaterThan(0);
       expect(txSaves.every((c: any[]) => c[1].businessId === 1)).toBe(true);
+    });
+
+    /**
+     * The number is the most direct thing a business can buy, so it carries its
+     * own admin-set price (PHONE_NUMBER_CREDIT_COST) and is charged only when
+     * consent actually lets it through. Off means not sent AND not billed.
+     */
+    const withPhoneShare = (on: boolean, phone = '+27820000001') => {
+      managerSpy.findOne.mockImplementation(async (entity: any, opts: any) =>
+        entity === Business
+          ? { id: 1, userId: 7, companyName: 'AcmeCo', walletBalance: 1_000_000 }
+          : opts.where.id === 7
+            ? { id: 7, walletBalance: 555 }
+            : {
+                id: opts.where.id, walletBalance: 0, dataShareEnabled: true,
+                dataCategories: ['income_range'], phoneNumber: phone, phoneShareEnabled: on,
+              });
+    };
+
+    it('sends the number and bills its configured price when sharing is on', async () => {
+      wireMatches(undefined, 0.05, 1);
+      withPhoneShare(true);
+      const res = await service.purchaseLeads(7, {
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } },
+      });
+      expect(res.leads[0].phone).toBe('+27820000001');
+      // 0.05 field + 0.05 phone
+      expect(Number(res.totalCost)).toBeCloseTo(0.10, 4);
+    });
+
+    it('withholds the number and does not bill for it when sharing is off', async () => {
+      wireMatches(undefined, 0.05, 1);
+      withPhoneShare(false);
+      const res = await service.purchaseLeads(7, {
+        filters: { income_range: { op: 'eq', value: 'gt_20k' } },
+      });
+      expect(res.leads[0].phone).toBeNull();
+      expect(Number(res.totalCost)).toBeCloseTo(0.05, 4);
     });
 
     it('budget=0 buys zero leads (was: bought every match)', async () => {

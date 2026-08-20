@@ -143,10 +143,26 @@ export class UpdatePrivacyPreferencesDto {
   @IsArray()
   @IsString({ each: true })
   dataCategories?: string[];
+
+  // Whether a business buying this user's data also receives their phone
+  // number. Defaults on — the number always rode along with a lead, so this is
+  // the missing control rather than a new capability.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  phoneShareEnabled?: boolean;
   @ApiPropertyOptional()
   @IsOptional()
   @IsBoolean()
   incognitoEnabled?: boolean;
+
+  // Opt-in to in-app ads. Off unless the user explicitly turns it on; only
+  // opted-in users earn the AD_REVENUE_SHARE_RATE share of the ad revenue their
+  // impressions produce.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  adsEnabled?: boolean;
 
   // --- SMS permissions (independent sibling of the call-policy fields above;
   // see data-broker/sms-policy.ts). No legacy aliases — there's no prior SMS mode. ---

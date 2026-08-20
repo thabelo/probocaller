@@ -41,7 +41,19 @@ export class User {
   spamList: string[];
 
   @Column({ type: 'simple-json', default: '[]' })
-  notifications: { id: number; message: string; timestamp: Date; read: boolean }[];
+  notifications: {
+    id: number;
+    message: string;
+    timestamp: Date;
+    read: boolean;
+    /**
+     * Optional routing metadata. The app infers a destination from `message`
+     * when these are absent — which is all a legacy row can offer — but a row
+     * that knows what it is about can open the exact thing rather than a list.
+     */
+    kind?: string;
+    target?: string;
+  }[];
 
   // Call-permission preset name (one of the six tiers) or 'custom'. Derived from the
   // four category policies below, which are the source of truth for gating.
@@ -114,6 +126,20 @@ export class User {
 
   @Column({ default: false })
   dataShareEnabled: boolean;
+
+  // Whether a business that buys this user's data also receives their phone
+  // number. Defaults TRUE because the platform already handed the number over
+  // with every lead — this flag is the control that was missing, not a new
+  // capability, so switching it on for existing accounts changes nothing and
+  // switching it off is a real withdrawal of consent.
+  @Column({ default: true })
+  phoneShareEnabled: boolean;
+
+  // Opt-in to in-app ads. Off by default: the user must actively choose ads
+  // before any are shown, and only opted-in users earn the AD_REVENUE_SHARE_RATE
+  // share of the revenue their impressions produce.
+  @Column({ default: false })
+  adsEnabled: boolean;
 
   // When true, viewing another user's profile does not write a data-access-log
   // row (Premium "incognito" — browse without being seen).

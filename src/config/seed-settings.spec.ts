@@ -95,3 +95,47 @@ describe('seedSettings', () => {
     expect(saved.find((s) => s.key === 'PAY_TO_CONTACT_PLATFORM_USER_ID')?.value).toBe('42');
   });
 });
+
+/**
+ * The phone number is priced in the platform's base currency, like the leads
+ * base fee beside it — not in the fractional "credits" a profile field costs.
+ * A number is worth orders of magnitude more than a demographic bucket, and
+ * pricing it at 0.05 would have given it away.
+ */
+describe('seed-settings — the phone-number price', () => {
+  const row = () => DEFAULT_SETTINGS.find((s) => s.key === 'PHONE_NUMBER_CREDIT_COST');
+
+  it('defaults to R10 in the base currency', () => {
+    expect(row()!.value).toBe('10');
+  });
+
+  it('says which currency that is, so an admin is not guessing', () => {
+    expect(row()!.description).toMatch(/ZAR|base currency/i);
+  });
+});
+
+/**
+ * Surveys and data broking are not billed the same, so the phone number
+ * carries two independent prices: a one-off on a data-broking lead, and a
+ * per-response fee on a survey that collects numbers. They must be tunable
+ * apart — one admin value driving both would tie the two markets together.
+ */
+describe('seed-settings — the survey phone fee is its own price', () => {
+  const surveyFee = () => DEFAULT_SETTINGS.find((s) => s.key === 'SURVEY_FEE_PHONE_NUMBER');
+  const brokingPrice = () => DEFAULT_SETTINGS.find((s) => s.key === 'PHONE_NUMBER_CREDIT_COST');
+
+  it('is seeded', () => {
+    expect(surveyFee()).toBeDefined();
+  });
+
+  it('is a different setting from the data-broking price', () => {
+    expect(surveyFee()!.key).not.toBe(brokingPrice()!.key);
+    expect(surveyFee()!.value).not.toBe(brokingPrice()!.value);
+  });
+
+  it('costs more than the priciest question but less than a whole lead', () => {
+    const fee = parseFloat(surveyFee()!.value);
+    expect(fee).toBeGreaterThan(2.5);
+    expect(fee).toBeLessThan(parseFloat(brokingPrice()!.value));
+  });
+});

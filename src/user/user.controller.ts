@@ -15,6 +15,8 @@ import { LookupService } from '../lookup/lookup.service';
 import { ExternalLookupRateLimiter } from './external-lookup-rate-limiter';
 import { ReferralService } from '../referral/referral.service';
 import { SettingsReaderService } from '../config/settings-reader.service';
+import { assertTopUpAllowed, readAllowUnverifiedTopUp } from '../common/billing/topup-authorization';
+import { resolveAppConfig } from '../common/config/app-config';
 
 @ApiTags('users')
 @Controller('user')
@@ -129,6 +131,14 @@ export class UserController {
   @ApiBearerAuth()
   @ApiOperation({ summary: 'Add credits to business wallet (positive amount only)' })
   async addCredit(@Request() req, @Body() body: AddCreditDto) {
+    // Crediting a wallet from nothing is a free-money faucet until a payment
+    // provider confirms the money arrived. Admins may still credit manually;
+    // everyone else needs an explicit opt-in that production ignores outright.
+    assertTopUpAllowed({
+      isAdmin: await this.userService.isAdmin(req.user.userId),
+      environment: resolveAppConfig().environment,
+      allowUnverifiedTopUp: readAllowUnverifiedTopUp(),
+    });
     // MAX_TOPUP_AMOUNT is admin-configurable (Setting row) — class-validator
     // decorators are static and can't read a live DB value per-request, so
     // the real, configurable ceiling is enforced here instead.
@@ -229,7 +239,7 @@ export class UserController {
     // Every money-affecting rate below is read live from the settings table via
     // the shared SettingsReaderService — no hardcoded fallback constant here,
     // so this can never silently drift from what billing actually charges.
-    const [ratePerSecond, platformCutRate, smsRatePerMessage, payToContactFeeRate] = await Promise.all([
+    const [ratePerSecond, platformCutRate, smsRatePerMessage, payToContactFeeRate, phoneNumberCost] = await Promise.all([
       this.settingsReader.getNumber('RATE_PER_SECOND'),
       this.settingsReader.getNumber('PLATFORM_CUT_RATE'),
       this.settingsReader.getNumber('SMS_RATE_PER_MESSAGE'),
@@ -239,6 +249,10 @@ export class UserController {
       // server actually settles with, or it silently drifts the moment an
       // admin changes it.
       this.settingsReader.getNumber('PAY_TO_CONTACT_FEE_RATE'),
+      // What a business pays for a lead's phone number. The app adds it to the
+      // profile's worth when the user shares their number, so it must read the
+      // SAME live value billing charges.
+      this.settingsReader.getNumber('PHONE_NUMBER_CREDIT_COST'),
     ]);
     // Quoted to users as "earn N% of everything they make", so the app must be
     // able to read it rather than compile the figure into its copy. Reads
@@ -252,6 +266,7 @@ export class UserController {
       referralCommissionRate,
       payToContactFeeRate,
       smsRatePerMessage,
+      phoneNumberCost,
     };
   }
 

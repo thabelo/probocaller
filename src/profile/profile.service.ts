@@ -17,6 +17,7 @@ import { QueryAudienceDto, SaveAudienceDto } from './dto/query-audience.dto';
 import { AdminUpdateDataBrokerDto } from './dto/admin-data-broker.dto';
 import { ReferralService } from '../referral/referral.service';
 import { SettingsReaderService } from '../config/settings-reader.service';
+import { INTEREST_FIELD_OPTIONS } from './interest-categories';
 
 const TIER_THRESHOLDS = { basic: 0, silver: 25, gold: 50, platinum: 75 };
 
@@ -146,6 +147,10 @@ export class ProfileService {
 
   private static isFilled(data: Record<string, any>, key: string): boolean {
     const v = data?.[key];
+    // A multi-select cleared back to [] is an answered-nothing, not an answer.
+    // Counting it would share an empty list with a business, charge them the
+    // field's credit cost for it, and credit the user's score for a blank.
+    if (Array.isArray(v)) return v.length > 0;
     return v !== undefined && v !== null && v !== '';
   }
 
@@ -248,7 +253,11 @@ export class ProfileService {
         entry = {
           userId: u.id,
           name: u.name,
-          phone: u.phoneNumber,
+          // Consent is honoured on every read: a user who switches phone
+          // sharing off disappears from lists the business already holds.
+          // Undefined means the account predates the flag, and those were
+          // sharing — absence reads as on.
+          phone: u.phoneShareEnabled === false ? null : u.phoneNumber,
           fields: new Set<string>(),
           totalSpent: 0,
           lastPurchasedAt: log.accessedAt, // logs are DESC → first seen is latest
@@ -449,6 +458,9 @@ export class ProfileService {
     // Admin-configurable platform cut on the leads (data) cost (defaults to 24%).
     const platformCutRate = await this.getPlatformCutRate();
 
+    // Admin-set price of a lead's phone number, charged per user who shares it.
+    const phoneCost = await this.settingsReader.getNumber('PHONE_NUMBER_CREDIT_COST');
+
     // H6 bugfix — wrap the wallet-mutating loop in a single transaction with
     // a pessimistic_write lock on the caller's wallet row, so two parallel
     // purchaseLeads calls from the same business can't both read the same
@@ -479,11 +491,15 @@ export class ProfileService {
         const sharableKeys = requestedKeys.filter((k) => (user.dataCategories || []).includes(k));
         if (sharableKeys.length === 0) continue;
 
+        // The number is its own priced item on top of the fields, billed only
+        // when this user's consent actually lets it through. Withheld means
+        // not sent AND not charged — a business never pays for a blank.
+        const sharesPhone = user.phoneShareEnabled !== false;
         const costForUser = sharableKeys.reduce((s, k) => {
           const fieldCost = Number(fieldMap[k]?.creditCost || 0);
           const floor = Number(profile.floorPrices?.[k] || 0);
           return s + Math.max(fieldCost, floor);
-        }, 0);
+        }, 0) + (sharesPhone ? phoneCost : 0);
 
         // Each lead costs the (period-compounded) per-user base fee PLUS its data
         // cost. Stop once the wallet can't cover the next lead in full…
@@ -546,7 +562,7 @@ export class ProfileService {
 
         const leadData: Record<string, any> = {};
         for (const k of sharableKeys) leadData[k] = profile.data[k];
-        leads.push({ userId: profile.userId, phone: user.phoneNumber, name: user.name, tier: profile.tier, data: leadData });
+        leads.push({ userId: profile.userId, phone: sharesPhone ? user.phoneNumber : null, name: user.name, tier: profile.tier, data: leadData });
 
         totalCost = parseFloat((totalCost + costForUser).toFixed(6));
         totalEarned = parseFloat((totalEarned + userEarning).toFixed(6));
@@ -842,6 +858,22 @@ export class ProfileService {
           { value: '13_17', label: '13 – 17 years' },
           { value: '18_plus', label: '18+' },
         ],
+      },
+      {
+        /**
+         * Which industries this person WANTS to hear from — distinct from
+         * `industry_sector`, which is where they work. Businesses filter on it
+         * to send niche surveys or ask for a call, so it is priced and weighted
+         * like any other field a business pays to reach.
+         *
+         * 'all' is deliberately first: it is the answer most people mean, and
+         * survey matching treats it as satisfying every filter.
+         */
+        key: 'interests', label: 'Interests', type: 'multi_select', weight: 15, creditCost: 0.04, sortOrder: 19,
+        // Read from the shared taxonomy, not restated: what a respondent can
+        // declare an interest in has to be the same list survey templates are
+        // tagged with, or "send me Health surveys" matches nothing.
+        options: INTEREST_FIELD_OPTIONS.map((o) => ({ ...o })),
       },
       {
         key: 'industry_sector', label: 'Industry / Sector', type: 'select', weight: 15, creditCost: 0.04, sortOrder: 18,

@@ -115,6 +115,55 @@ describe('DataBrokerService', () => {
       expect(result.incognitoEnabled).toBe(true);
     });
 
+    // Ads are opt-in: only an explicit choice turns them on, and only opted-in
+    // users earn the AD_REVENUE_SHARE_RATE share of the revenue they generate.
+    it('persists adsEnabled (ads opt-in that earns the revenue share)', async () => {
+      const user = mockUser();
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
+      const result = await service.updatePreferences(1, { adsEnabled: true } as any);
+      expect(userRepo.save.mock.calls[0][0].adsEnabled).toBe(true);
+      expect(result.adsEnabled).toBe(true);
+    });
+
+    it('leaves adsEnabled untouched when the request does not mention it', async () => {
+      const user = mockUser({ adsEnabled: true } as any);
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
+      await service.updatePreferences(1, { incognitoEnabled: true } as any);
+      expect(userRepo.save.mock.calls[0][0].adsEnabled).toBe(true);
+    });
+
+    /**
+     * Consent to hand the phone number over with the data. Defaults on because
+     * the leads payload always carried it; turning it off is a real withdrawal.
+     */
+    it('persists phoneShareEnabled', async () => {
+      const user = mockUser();
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
+      const result = await service.updatePreferences(1, { phoneShareEnabled: false } as any);
+      expect(userRepo.save.mock.calls[0][0].phoneShareEnabled).toBe(false);
+      expect(result.phoneShareEnabled).toBe(false);
+    });
+
+    it('leaves phoneShareEnabled untouched when the request does not mention it', async () => {
+      const user = mockUser({ phoneShareEnabled: false } as any);
+      userRepo.findOne.mockResolvedValue(user);
+      userRepo.save.mockImplementation((u: User) => Promise.resolve(u));
+      await service.updatePreferences(1, { incognitoEnabled: true } as any);
+      expect(userRepo.save.mock.calls[0][0].phoneShareEnabled).toBe(false);
+    });
+
+    /** An account predating the column reads as sharing, matching the old behaviour. */
+    it('reports phone sharing as on when the account predates the flag', async () => {
+      const user = mockUser();
+      delete (user as any).phoneShareEnabled;
+      userRepo.findOne.mockResolvedValue(user);
+      const prefs = await service.getPreferences(1);
+      expect(prefs.phoneShareEnabled).toBe(true);
+    });
+
     it('maps a preset to the four categories and stores the derived mode', async () => {
       const user = mockUser();
       userRepo.findOne.mockResolvedValue(user);
