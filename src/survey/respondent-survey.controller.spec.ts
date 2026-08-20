@@ -21,6 +21,7 @@ describe('RespondentSurveyController', () => {
     responses = {
       available: jest.fn().mockResolvedValue([]),
       submit: jest.fn().mockResolvedValue({ responseId: 55, earned: 4 }),
+      history: jest.fn().mockResolvedValue({ answered: 0, totalEarned: 0, responses: [] }),
     };
 
     const mod: TestingModule = await Test.createTestingModule({
@@ -63,5 +64,43 @@ describe('RespondentSurveyController', () => {
   it('exposes no route that reads other people’s responses', () => {
     const methods = Object.getOwnPropertyNames(RespondentSurveyController.prototype);
     expect(methods.some((m) => /respondents|whoAnswered|users/i.test(m))).toBe(false);
+  });
+});
+
+/**
+ * A respondent's own record of what they answered and earned. Scoped to the
+ * caller by the token — the route takes no user id, so one respondent can
+ * never ask for another's history.
+ */
+describe('RespondentSurveyController — my history', () => {
+  let controller: RespondentSurveyController;
+  let responses: any;
+
+  beforeEach(async () => {
+    responses = {
+      available: jest.fn(),
+      submit: jest.fn(),
+      history: jest.fn().mockResolvedValue({ answered: 2, totalEarned: 6.5, responses: [] }),
+    };
+    const mod: TestingModule = await Test.createTestingModule({
+      controllers: [RespondentSurveyController],
+      providers: [{ provide: SurveyResponseService, useValue: responses }],
+    })
+      .overrideGuard(AppAccessGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+    controller = mod.get(RespondentSurveyController);
+  });
+
+  it('answers with the caller own history', async () => {
+    const out = await controller.history({ user: { userId: 5 } } as any);
+    expect(responses.history).toHaveBeenCalledWith(5);
+    expect(out).toEqual({ answered: 2, totalEarned: 6.5, responses: [] });
+  });
+
+  it('takes the respondent from the token, not from the request', async () => {
+    await controller.history({ user: { userId: 9 } } as any);
+    expect(responses.history).toHaveBeenCalledWith(9);
+    expect(responses.history).not.toHaveBeenCalledWith(expect.anything(), expect.anything());
   });
 });

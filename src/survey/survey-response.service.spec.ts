@@ -297,5 +297,136 @@ describe('SurveyResponseService', () => {
       await expect(service.submit(5, 100, answers())).rejects.toBeInstanceOf(BadRequestException);
       expect(transactions.log).not.toHaveBeenCalled();
     });
+
+    /**
+     * A survey closes when EITHER the target is met or the time runs out
+     * (§3.3). Refusing further responses is not the same as closing: left
+     * `live`, a full survey keeps being offered to respondents who are then
+     * turned away at submit time, and the settle that returns the platform's
+     * cut on any undelivered remainder never runs.
+     */
+    it('closes the survey when the last response it paid for arrives', async () => {
+      manager.findOne.mockImplementation(async (entity: any) =>
+        entity === Survey
+          ? LIVE({ targetResponses: 2, totalPaid: '4.00' })
+          : { id: 5, walletBalance: '10' });
+
+      await service.submit(5, 100, answers());
+
+      expect(savedSurvey().status).toBe('closed');
+      expect(savedSurvey().closedAt).toBeInstanceOf(Date);
+    });
+
+    /** Below the target it stays open — closing early would strand the pot. */
+    it('leaves the survey live while responses are still wanted', async () => {
+      manager.findOne.mockImplementation(async (entity: any) =>
+        entity === Survey
+          ? LIVE({ targetResponses: 5, totalPaid: '4.00' })
+          : { id: 5, walletBalance: '10' });
+
+      await service.submit(5, 100, answers());
+
+      expect(savedSurvey().status).toBe('live');
+    });
+  });
+});
+
+/**
+ * "What have I answered, and what did it pay me?"
+ *
+ * A respondent needs a record of their own work: the app tells them a survey
+ * pays before they start, so it owes them a ledger afterwards. Everything
+ * needed is already on SurveyResponse (amountPaid, submittedAt) — this is a
+ * read, and it never touches another respondent's rows.
+ */
+describe('SurveyResponseService — my history', () => {
+  let service: SurveyResponseService;
+  let responseRepo: any;
+  let surveyRepo: any;
+
+  const ROW = (over: Record<string, unknown> = {}) => ({
+    id: 1, surveyId: 100, userId: 5,
+    startedAt: new Date('2026-08-01T10:00:00Z'),
+    submittedAt: new Date('2026-08-01T10:04:00Z'),
+    amountPaid: '4.00',
+    ...over,
+  });
+
+  beforeEach(async () => {
+    responseRepo = { find: jest.fn().mockResolvedValue([]) };
+    surveyRepo = { find: jest.fn().mockResolvedValue([]) };
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        SurveyResponseService,
+        { provide: getRepositoryToken(Survey), useValue: surveyRepo },
+        { provide: getRepositoryToken(SurveyQuestion), useValue: { find: jest.fn().mockResolvedValue([]) } },
+        { provide: getRepositoryToken(SurveyResponse), useValue: responseRepo },
+        { provide: getRepositoryToken(SurveyAnswer), useValue: { find: jest.fn() } },
+        { provide: SurveyMatchingService, useValue: { audience: jest.fn() } },
+        { provide: TransactionService, useValue: {} },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+      ],
+    }).compile();
+    service = module.get(SurveyResponseService);
+  });
+
+  it('is empty for someone who has answered nothing', async () => {
+    const out = await service.history(5);
+    expect(out.answered).toBe(0);
+    expect(out.totalEarned).toBe(0);
+    expect(out.responses).toEqual([]);
+  });
+
+  it('reports what each answered survey paid, and when', async () => {
+    responseRepo.find.mockResolvedValue([ROW()]);
+    surveyRepo.find.mockResolvedValue([
+      { id: 100, title: 'How are we doing?', category: 'telecoms' },
+    ]);
+    const out = await service.history(5);
+    expect(out.responses).toHaveLength(1);
+    expect(out.responses[0]).toEqual(
+      expect.objectContaining({ surveyId: 100, title: 'How are we doing?', category: 'telecoms', amountPaid: 4 }),
+    );
+  });
+
+  it('totals what the respondent has earned', async () => {
+    responseRepo.find.mockResolvedValue([
+      ROW({ id: 1, surveyId: 100, amountPaid: '4.00' }),
+      ROW({ id: 2, surveyId: 101, amountPaid: '2.50' }),
+    ]);
+    surveyRepo.find.mockResolvedValue([
+      { id: 100, title: 'A', category: null },
+      { id: 101, title: 'B', category: null },
+    ]);
+    const out = await service.history(5);
+    expect(out.answered).toBe(2);
+    expect(out.totalEarned).toBeCloseTo(6.5, 4);
+  });
+
+  /** A half-finished survey earns nothing, so it is not a thing they "did". */
+  it('leaves out responses that were never submitted', async () => {
+    await service.history(5);
+    const where = responseRepo.find.mock.calls[0][0].where;
+    expect(where.userId).toBe(5);
+    expect(where.submittedAt).toBeDefined();
+  });
+
+  it('asks only for this respondent rows', async () => {
+    await service.history(5);
+    expect(responseRepo.find.mock.calls[0][0].where.userId).toBe(5);
+  });
+
+  it('puts the most recent first', async () => {
+    await service.history(5);
+    expect(responseRepo.find.mock.calls[0][0].order).toEqual({ submittedAt: 'DESC' });
+  });
+
+  /** A survey deleted since answering must not blank the row's money. */
+  it('still reports the payment when the survey is gone', async () => {
+    responseRepo.find.mockResolvedValue([ROW()]);
+    surveyRepo.find.mockResolvedValue([]);
+    const out = await service.history(5);
+    expect(out.responses[0].amountPaid).toBe(4);
+    expect(out.totalEarned).toBeCloseTo(4, 4);
   });
 });

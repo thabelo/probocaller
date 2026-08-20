@@ -4,10 +4,12 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 import { SurveyPublishService } from './survey-publish.service';
 import { SurveyPricingService } from './survey-pricing.service';
+import { PushService } from '../push/push.service';
 import { SurveyMatchingService } from './survey-matching.service';
 import { TransactionService } from '../transaction/transaction.service';
 import { Survey } from './survey.entity';
 import { SurveyQuestion } from './survey-question.entity';
+import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
 
 /**
@@ -26,6 +28,8 @@ describe('SurveyPublishService', () => {
   let questionRepo: any;
   let pricing: any;
   let matching: any;
+  let push: any;
+  let userRepo: any;
   let transactions: any;
 
   const DRAFT = () => ({
@@ -80,7 +84,14 @@ describe('SurveyPublishService', () => {
         respondentTotal: 300, platformFee: 72, total: 372,
       }),
     };
-    matching = { estimateAudience: jest.fn().mockResolvedValue(500) };
+    matching = { estimateAudience: jest.fn().mockResolvedValue(500), audience: jest.fn().mockResolvedValue([]) };
+    push = { sendToUser: jest.fn().mockResolvedValue({ sent: 1, failed: 0 }) };
+    userRepo = {
+      find: jest.fn(async ({ where }: any) =>
+        (where?.id?._value ?? []).map((id: number) => ({ id, notifications: [] })),
+      ),
+      save: jest.fn(async (u: any) => u),
+    };
     transactions = { log: jest.fn().mockResolvedValue({}) };
 
     const mod: TestingModule = await Test.createTestingModule({
@@ -90,6 +101,8 @@ describe('SurveyPublishService', () => {
         { provide: getRepositoryToken(SurveyQuestion), useValue: questionRepo },
         { provide: SurveyPricingService, useValue: pricing },
         { provide: SurveyMatchingService, useValue: matching },
+        { provide: PushService, useValue: push },
+        { provide: getRepositoryToken(User), useValue: userRepo },
         { provide: TransactionService, useValue: transactions },
         {
           provide: DataSource,
@@ -149,6 +162,37 @@ describe('SurveyPublishService', () => {
       manager.findOne.mockResolvedValue({ id: 7, userId: 1, companyName: 'Acme', walletBalance: '100' });
       await expect(service.publish(1, 100)).rejects.toBeInstanceOf(BadRequestException);
       expect(transactions.log).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Rejecting is not enough — nothing may move on the way out. The existing
+     * case above only proves no ledger row was written, which would still pass
+     * if the wallet were debited or the survey flipped live before the balance
+     * check ran. These pin the order.
+     */
+    it('leaves the wallet untouched when it cannot cover the total', async () => {
+      manager.findOne.mockResolvedValue({ id: 7, userId: 1, companyName: 'Acme', walletBalance: '100' });
+      await expect(service.publish(1, 100)).rejects.toBeInstanceOf(BadRequestException);
+      expect(savedBusiness()).toBeUndefined();
+    });
+
+    it('leaves the survey a draft when it cannot cover the total', async () => {
+      manager.findOne.mockResolvedValue({ id: 7, userId: 1, companyName: 'Acme', walletBalance: '100' });
+      await expect(service.publish(1, 100)).rejects.toBeInstanceOf(BadRequestException);
+      expect(savedSurvey()).toBeUndefined();
+    });
+
+    /** The business has to be told the shortfall, not just refused. */
+    it('names what it costs and what the wallet holds', async () => {
+      manager.findOne.mockResolvedValue({ id: 7, userId: 1, companyName: 'Acme', walletBalance: '100' });
+      await expect(service.publish(1, 100)).rejects.toThrow(/372\.00[\s\S]*100\.00/);
+    });
+
+    /** Exactly enough is enough — the guard is `<`, not `<=`. */
+    it('allows a wallet that covers the total exactly', async () => {
+      manager.findOne.mockResolvedValue({ id: 7, userId: 1, companyName: 'Acme', walletBalance: '372' });
+      await expect(service.publish(1, 100)).resolves.toBeDefined();
+      expect(Number(savedBusiness().walletBalance)).toBe(0);
     });
 
     it('refuses to publish twice', async () => {
@@ -279,6 +323,169 @@ describe('SurveyPublishService', () => {
     it('leaves indefinite surveys alone', async () => {
       surveyRepo.find.mockResolvedValue([]);
       await expect(service.expireDue()).resolves.toBe(0);
+    });
+  });
+
+  /**
+   * expireDue only returns money if something actually calls it. It was fully
+   * tested and entirely unreachable — no scheduler, no route — so in
+   * production the "or the time runs out" half of §3.3 never happened and the
+   * hold on an expired survey stayed in escrow forever.
+   *
+   * Same shape as DataRetentionService's daily purge: an unref'd interval
+   * started at module init, skipped under NODE_ENV=test so suites never spin a
+   * timer, and cleared on shutdown.
+   */
+  describe('the expiry sweep is actually scheduled', () => {
+    const asScheduled = async (run: () => void | Promise<void>) => {
+      const previous = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'development';
+      jest.useFakeTimers();
+      try {
+        await run();
+      } finally {
+        service.onModuleDestroy();
+        jest.useRealTimers();
+        process.env.NODE_ENV = previous;
+      }
+    };
+
+    it('sweeps for due surveys on a timer once started', async () => {
+      const sweep = jest.spyOn(service, 'expireDue').mockResolvedValue(0);
+
+      await asScheduled(() => {
+        service.onModuleInit();
+        expect(sweep).not.toHaveBeenCalled();
+
+        jest.advanceTimersByTime(60 * 60 * 1000);
+        expect(sweep).toHaveBeenCalled();
+      });
+    });
+
+    /** A failing sweep must not take the process down with it. */
+    it('survives a sweep that throws', async () => {
+      jest.spyOn(service, 'expireDue').mockRejectedValue(new Error('db down'));
+
+      await asScheduled(async () => {
+        service.onModuleInit();
+        jest.advanceTimersByTime(60 * 60 * 1000);
+        await Promise.resolve();
+      });
+    });
+
+    /** Suites must never leave a live timer behind. */
+    it('starts no timer under test', () => {
+      const sweep = jest.spyOn(service, 'expireDue').mockResolvedValue(0);
+      jest.useFakeTimers();
+      try {
+        service.onModuleInit();
+        jest.advanceTimersByTime(24 * 60 * 60 * 1000);
+        expect(sweep).not.toHaveBeenCalled();
+      } finally {
+        service.onModuleDestroy();
+        jest.useRealTimers();
+      }
+    });
+  });
+
+
+  /**
+   * Publishing a survey has to reach the people it was aimed at.
+   *
+   * A respondent has no reason to open the app on the off-chance something has
+   * appeared, so a survey nobody is told about is a survey nobody answers — the
+   * business paid to reach an audience that never learns it exists. Everyone the
+   * filters actually match gets an alert on their device.
+   */
+  describe('SurveyPublishService — alerting the audience', () => {
+    const publishWith = async (audienceIds: number[]) => {
+      matching.audience.mockResolvedValue(audienceIds);
+      return service.publish(1, 1);
+    };
+
+    it('alerts every user the survey matches', async () => {
+      await publishWith([11, 22, 33]);
+      expect(push.sendToUser).toHaveBeenCalledTimes(3);
+      expect(push.sendToUser.mock.calls.map((c: any[]) => c[0]).sort()).toEqual([11, 22, 33]);
+    });
+
+    it('names the survey and says it pays, so the alert is worth opening', async () => {
+      await publishWith([11]);
+      const payload = push.sendToUser.mock.calls[0][1];
+      expect(`${payload.title} ${payload.body}`.toLowerCase()).toMatch(/survey/);
+      expect(payload.body.length).toBeGreaterThan(10);
+    });
+
+    /** Tapping it must land on the survey, not a generic screen. */
+    it('carries routing data so the tap opens the right thing', async () => {
+      const published = await publishWith([11]);
+      const payload = push.sendToUser.mock.calls[0][1];
+      expect(payload.data?.kind).toBe('survey');
+      // The survey that was actually published, not the id we asked to publish.
+      expect(String(payload.data?.surveyId)).toBe(String(published.id));
+    });
+
+    it('matches on the survey filters, not on everyone', async () => {
+      await publishWith([11]);
+      expect(matching.audience).toHaveBeenCalledWith(expect.anything());
+    });
+
+    /**
+     * The money has already moved by the time we get here. A push transport
+     * outage must not roll that back or surface as a failed publish.
+     */
+    it('still publishes when alerting fails', async () => {
+      push.sendToUser.mockRejectedValue(new Error('transport down'));
+      await expect(publishWith([11, 22])).resolves.toMatchObject({ status: 'live' });
+    });
+
+    it('does nothing when the filters match nobody', async () => {
+      await publishWith([]);
+      expect(push.sendToUser).not.toHaveBeenCalled();
+      expect(userRepo.save).not.toHaveBeenCalled();
+    });
+
+    /**
+     * Push has no live transport yet, so the notification row IS the delivery:
+     * the app polls it and raises the tray alert. Writing only to push would
+     * mean the feature quietly reaches nobody until FCM is wired up.
+     */
+    it('leaves a notification for every matched user, so the app can surface it', async () => {
+      await publishWith([11, 22]);
+      const saved = userRepo.save.mock.calls.map((c: any[]) => c[0]);
+      expect(saved.map((u: any) => u.id).sort()).toEqual([11, 22]);
+      saved.forEach((u: any) => {
+        expect(u.notifications).toHaveLength(1);
+        expect(u.notifications[0].message.toLowerCase()).toMatch(/survey/);
+        expect(u.notifications[0].read).toBe(false);
+      });
+    });
+
+    /**
+     * The row has to say WHICH survey, not just that one exists.
+     * Without it the app can only open the survey list, and a respondent who
+     * already had a different survey open lands on that one instead — the
+     * alert names one survey and delivers another.
+     */
+    it('records which survey the alert is about', async () => {
+      const published = await publishWith([11]);
+      const note = userRepo.save.mock.calls[0][0].notifications[0];
+      expect(note.kind).toBe('survey');
+      expect(String(note.target)).toBe(String(published.id));
+    });
+
+    it('keeps notifications the user already had', async () => {
+      userRepo.find.mockResolvedValue([
+        { id: 11, notifications: [{ id: 1, message: 'older', timestamp: new Date(), read: true }] },
+      ]);
+      await publishWith([11]);
+      expect(userRepo.save.mock.calls[0][0].notifications).toHaveLength(2);
+    });
+
+    /** The survey is live and paid for; a failed write must not undo that. */
+    it('still publishes when the notification write fails', async () => {
+      userRepo.save.mockRejectedValue(new Error('db down'));
+      await expect(publishWith([11])).resolves.toMatchObject({ status: 'live' });
     });
   });
 });

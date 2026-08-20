@@ -2,7 +2,7 @@ import {
   BadRequestException, ForbiddenException, Injectable, NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Not, IsNull, Repository } from 'typeorm';
 import { Survey } from './survey.entity';
 import { SurveyQuestion } from './survey-question.entity';
 import { SurveyResponse } from './survey-response.entity';
@@ -55,6 +55,48 @@ export class SurveyResponseService {
    * respondent must know both before starting — App Detail promises "Each
    * survey states what it pays before you start."
    */
+  /**
+   * What this respondent has answered, and what it paid them.
+   *
+   * The app states what a survey pays before they start, so it owes them the
+   * record afterwards. Only SUBMITTED responses count — a half-finished survey
+   * earns nothing (§1.3), so it is not something they "did".
+   *
+   * The money comes off the response row, not the survey: a survey re-priced
+   * or deleted since must not rewrite what someone was actually paid.
+   */
+  async history(userId: number) {
+    const responses = await this.responseRepository.find({
+      where: { userId, submittedAt: Not(IsNull()) },
+      order: { submittedAt: 'DESC' },
+    });
+    if (!responses.length) return { answered: 0, totalEarned: 0, responses: [] };
+
+    const surveys = await this.surveyRepository.find({
+      where: { id: In(responses.map((r) => r.surveyId)) },
+    });
+    const byId = new Map(surveys.map((s) => [s.id, s]));
+
+    const rows = responses.map((r) => {
+      const survey = byId.get(r.surveyId);
+      return {
+        id: r.id,
+        surveyId: r.surveyId,
+        // A survey deleted since answering still owes an honest ledger line.
+        title: survey?.title ?? 'Survey no longer available',
+        category: survey?.category ?? null,
+        amountPaid: Number(r.amountPaid),
+        submittedAt: r.submittedAt,
+      };
+    });
+
+    return {
+      answered: rows.length,
+      totalEarned: parseFloat(rows.reduce((sum, r) => sum + r.amountPaid, 0).toFixed(2)),
+      responses: rows,
+    };
+  }
+
   async available(userId: number) {
     const live = await this.surveyRepository.find({
       where: { status: 'live' },
@@ -190,6 +232,16 @@ export class SurveyResponseService {
       await manager.save(User, user);
 
       survey.totalPaid = String(toCents(paid + price));
+      // A survey closes when EITHER the target is met or the time runs out
+      // (§3.3). This was the last response the pot covers, so nothing is left
+      // undelivered and the refund a settle would compute is exactly zero —
+      // the status and the timestamp are all that is left to record. Refusing
+      // later responses is not the same as closing: left `live`, a full survey
+      // keeps being offered to people who are then turned away here.
+      if (delivered + 1 >= survey.targetResponses) {
+        survey.status = 'closed';
+        survey.closedAt = new Date();
+      }
       await manager.save(Survey, survey);
 
       await this.transactions.log(

@@ -35,6 +35,16 @@ export class RespondentSurveyController {
     return this.responses.available(req.user.userId);
   }
 
+  /**
+   * What this respondent has answered and earned. Scoped to the token — there
+   * is no user parameter, so one respondent cannot ask for another's record.
+   */
+  @Get('history')
+  @ApiOperation({ summary: 'Surveys I have answered, and what each one paid me' })
+  history(@Request() req) {
+    return this.responses.history(req.user.userId);
+  }
+
   @Post(':id/submit')
   @ApiOperation({ summary: 'Submit answers and get paid' })
   submit(
