@@ -162,6 +162,27 @@ describe('SurveyService — creating a draft', () => {
         service.createDraft(1, input({ questions: [{ type: 'dropdown', prompt: 'Pick' }] })),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
+
+    /**
+     * Every other protection on survey answers guards how they are REPORTED.
+     * A question that asks outright for a number defeats all of it, so the
+     * refusal has to sit at the point the question is written.
+     */
+    it('refuses to create a survey whose question asks for a phone number', async () => {
+      await expect(
+        service.createDraft(1, input({
+          questions: [{ type: 'free_text', prompt: 'What is your cell number?' }],
+        })),
+      ).rejects.toThrow(/anonymous/i);
+    });
+
+    it('still allows a question that merely mentions a branch name', async () => {
+      await expect(
+        service.createDraft(1, input({
+          questions: [{ type: 'free_text', prompt: 'What is the name of the branch you visited?' }],
+        })),
+      ).resolves.toBeDefined();
+    });
   });
 
   describe('from a template', () => {

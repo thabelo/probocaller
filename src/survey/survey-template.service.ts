@@ -4,6 +4,7 @@ import { Repository } from 'typeorm';
 import { SurveyTemplate, TemplateQuestion } from './survey-template.entity';
 import { CHOICE_TYPES, isQuestionType } from './question-type';
 import { TEMPLATE_LIBRARY } from './survey-template-library';
+import { assertPromptCollectsNoIdentity } from './prompt-screen';
 
 export interface CreateTemplateInput {
   key: string;
@@ -135,6 +136,10 @@ export class SurveyTemplateService {
       if (CHOICE_TYPES.includes(question.type) && !question.options?.length) {
         throw new BadRequestException(`A ${question.type} question needs options`);
       }
+      // A template is copied into every survey built from it, so one that asks
+      // who someone is would spread further than any single business could
+      // take it.
+      assertPromptCollectsNoIdentity(question.prompt);
     }
   }
 }

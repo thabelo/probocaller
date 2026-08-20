@@ -10,6 +10,7 @@ import { Business } from '../business/business.entity';
 import { SurveyPricingService } from './survey-pricing.service';
 import { SurveyMatchingService } from './survey-matching.service';
 import { CHOICE_TYPES, QuestionType, isQuestionType } from './question-type';
+import { assertPromptCollectsNoIdentity } from './prompt-screen';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -259,6 +260,10 @@ export class SurveyService {
       if (CHOICE_TYPES.includes(question.type) && !question.options?.length) {
         throw new BadRequestException(`A ${question.type} question needs options`);
       }
+      // Answers are reported as distributions with small groups held back, but
+      // none of that helps if the question itself asks who someone is. This is
+      // the only check that stops the data being collected at all.
+      assertPromptCollectsNoIdentity(question.prompt);
     }
   }
 

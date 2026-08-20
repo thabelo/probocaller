@@ -114,3 +114,28 @@ describe('seed-settings — the phone-number price', () => {
   });
 });
 
+
+/**
+ * The two numbers that decide whether a survey may report back at all.
+ *
+ * They live in `settings` rather than in code because every other rule that
+ * governs money or exposure on this platform is admin-tunable, and an operator
+ * facing a regulator needs to be able to raise them without a deploy. They are
+ * clamped one-way at the reader (survey-results.thresholds.ts) so tuning can
+ * only ever make them stricter.
+ */
+describe('seed-settings — the survey results thresholds', () => {
+  const row = (key: string) => DEFAULT_SETTINGS.find((s) => s.key === key);
+
+  it('seeds the survey results thresholds', () => {
+    expect(row('SURVEY_RESULTS_MIN_CELL')!.value).toBe('5');
+    expect(row('SURVEY_RESULTS_RELEASE_THRESHOLD')!.value).toBe('10');
+    expect(row('SURVEY_RESULTS_BATCH')!.value).toBe('10');
+  });
+
+  it('tells an admin these can only be raised', () => {
+    for (const key of ['SURVEY_RESULTS_MIN_CELL', 'SURVEY_RESULTS_RELEASE_THRESHOLD', 'SURVEY_RESULTS_BATCH']) {
+      expect(row(key)!.description).toMatch(/stricter|raise|lower/i);
+    }
+  });
+});

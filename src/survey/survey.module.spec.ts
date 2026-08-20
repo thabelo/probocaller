@@ -38,8 +38,10 @@ import { DeviceToken } from '../push/device-token.entity';
 import { SurveyAnswer } from './survey-answer.entity';
 import { SurveyPublishService } from './survey-publish.service';
 import { SurveyResponseService } from './survey-response.service';
+import { SurveyResultsService } from './survey-results.service';
 import { RespondentSurveyController } from './respondent-survey.controller';
 import { User } from '../user/user.entity';
+import { DataAccessLog } from '../profile/data-access-log.entity';
 
 /**
  * The module must actually PROVIDE what the service asks for — unit tests hand
@@ -68,6 +70,9 @@ describe('SurveyModule wiring', () => {
       .useValue({ find: jest.fn().mockResolvedValue([]) })
       .overrideProvider(getRepositoryToken(ProfileField))
       .useValue({ find: jest.fn().mockResolvedValue([]) })
+      // Releasing a cohort of answers logs the disclosure to each respondent.
+      .overrideProvider(getRepositoryToken(DataAccessLog))
+      .useValue({ create: jest.fn((d: any) => d), save: jest.fn(async (d: any) => d) })
       // The money path writes its audit row on the caller's transaction, so
       // TransactionModule (and a DataSource to run one) come along with it.
       .overrideProvider(getRepositoryToken(Transaction))
@@ -152,6 +157,17 @@ describe('SurveyModule wiring', () => {
     const moduleRef = await compile();
     expect(moduleRef.get(SurveyPublishService)).toBeInstanceOf(SurveyPublishService);
     expect(moduleRef.get(SurveyResponseService)).toBeInstanceOf(SurveyResponseService);
+  });
+
+  /**
+   * The one service that reads answers back. If it cannot be constructed from
+   * this module's own injector — it needs the ProfileField and DataAccessLog
+   * repositories, neither of which the survey module needed before — the
+   * results route compiles, boots and then throws on the first real request.
+   */
+  it('provides SurveyResultsService', async () => {
+    const moduleRef = await compile();
+    expect(moduleRef.get(SurveyResultsService)).toBeInstanceOf(SurveyResultsService);
   });
 
   it('declares the respondent controller', () => {

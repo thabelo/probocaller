@@ -105,6 +105,29 @@ export class Survey {
   @Column({ type: 'timestamp', nullable: true })
   publishedAt: Date | null;
 
+  /**
+   * How many people the filters reached at the moment of publish.
+   *
+   * Recorded because publishing now REFUSES an audience too small to ever
+   * report back, and a refusal that leaves no trace is impossible to answer
+   * questions about later — "why did my survey only get seven answers" is a
+   * different conversation when the number it was sold against is on the row.
+   */
+  @Column({ type: 'int', nullable: true })
+  audienceAtPublish: number | null;
+
+  /**
+   * The size of the largest cohort whose release has already been written to
+   * the respondents' access logs.
+   *
+   * Results are released in whole batches, and each newly-opened batch owes
+   * every respondent in it a line in their own access log. Without this the
+   * business could refresh the results page and write the same disclosure a
+   * hundred times over.
+   */
+  @Column({ type: 'int', default: 0 })
+  resultsCohortLogged: number;
+
   @Column({ type: 'timestamp', nullable: true })
   closedAt: Date | null;
 

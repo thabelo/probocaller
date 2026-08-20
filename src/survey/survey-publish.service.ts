@@ -14,6 +14,9 @@ import { PushService } from '../push/push.service';
 import { SurveyMatchingService } from './survey-matching.service';
 import { TransactionService } from '../transaction/transaction.service';
 import { QuestionType, feeSettingKey } from './question-type';
+import { assertPromptCollectsNoIdentity } from './prompt-screen';
+import { SettingsReaderService } from '../config/settings-reader.service';
+import { readResultThresholds } from './survey-results.thresholds';
 
 /** Round to cents, so a hold and its refunds still reconcile. */
 const toCents = (amount: number) => Math.round(amount * 100) / 100;
@@ -77,6 +80,7 @@ export class SurveyPublishService implements OnModuleInit, OnModuleDestroy {
     private readonly userRepository: Repository<User>,
     private readonly transactions: TransactionService,
     private readonly dataSource: DataSource,
+    private readonly settingsReader: SettingsReaderService,
   ) {}
 
   private async ownedSurvey(userId: number, id: number): Promise<Survey> {
@@ -91,10 +95,16 @@ export class SurveyPublishService implements OnModuleInit, OnModuleDestroy {
   /**
    * Take the money and go live.
    *
-   * A narrow filter does NOT block publishing — the business is told how many
-   * people it can actually reach and the unfilled remainder refunds on expiry.
-   * Blocking would leave a business stuck with no clear way forward; saying
-   * nothing would let it pay for responses that were never reachable.
+   * A narrow filter is still allowed, up to a point: the business is told how
+   * many people it can actually reach and the unfilled remainder refunds on
+   * expiry. But below the results release threshold it is now REFUSED, which
+   * reverses what this comment used to say, and the reason is worth writing
+   * down. Results are only ever shown for ten answers or more — a survey aimed
+   * at six people could take the money, be answered honestly, and then never
+   * report anything back, because reporting it would mean identifying the six.
+   * Selling that is worse than refusing it, and the refusal names the way out:
+   * widen the targeting, or use Audience & Leads, which is the product for
+   * reaching named people and where users consented to exactly that.
    */
   async publish(userId: number, surveyId: number) {
     const survey = await this.ownedSurvey(userId, surveyId);
@@ -110,11 +120,30 @@ export class SurveyPublishService implements OnModuleInit, OnModuleDestroy {
       throw new BadRequestException('A survey needs at least one question before it can go live.');
     }
 
+    // Screened at the builder too, but a draft written before that screen
+    // shipped is still a draft, and this is the last moment before real people
+    // are asked the question.
+    for (const question of questions) assertPromptCollectsNoIdentity(question.prompt);
+
     const quote = await this.pricing.quote(
       questions.map((q) => q.type as QuestionType),
       survey.targetResponses,
     );
     const audienceSize = await this.matching.estimateAudience(survey.filtersJson ?? {});
+
+    // Both floors are checked BEFORE the transaction opens, so a refusal never
+    // has to unwind a wallet debit.
+    const { releaseThreshold } = await readResultThresholds(this.settingsReader);
+    if (audienceSize < releaseThreshold) {
+      throw new BadRequestException(
+        `You are targeting ${audienceSize} ${audienceSize === 1 ? 'person' : 'people'}. Results are only ever shown for ${releaseThreshold} answers or more, so this survey could never report back. Widen your targeting, or use Audience & Leads if you need to reach named people.`,
+      );
+    }
+    if (survey.targetResponses < releaseThreshold) {
+      throw new BadRequestException(
+        `You are asking for ${survey.targetResponses} responses. Results are only ever shown for ${releaseThreshold} answers or more, so this survey could never report back. Ask for at least ${releaseThreshold}.`,
+      );
+    }
 
     // Per-type rates, frozen onto each question so an admin retuning a rate
     // later cannot change what this survey owes.
@@ -147,6 +176,9 @@ export class SurveyPublishService implements OnModuleInit, OnModuleDestroy {
 
       survey.status = 'live';
       survey.publishedAt = new Date();
+      // What it was sold against. A survey that settles short is a different
+      // conversation when the number it was quoted on is on the row.
+      survey.audienceAtPublish = audienceSize;
       survey.pricePerResponse = String(quote.pricePerResponse);
       survey.totalHeld = String(quote.total);
       survey.totalPaid = '0';
@@ -221,6 +253,15 @@ export class SurveyPublishService implements OnModuleInit, OnModuleDestroy {
    * The refund is proportional to responses NEVER DELIVERED, which returns the
    * platform's cut on those alongside the respondent's fee — the platform must
    * not keep a share for work nobody did.
+   *
+   * With ONE exception, and it is a whole-hold refund rather than a
+   * proportional one. Results are never shown below the release threshold,
+   * because reporting seven answers would mean identifying the seven. A survey
+   * that stops there therefore delivers the business nothing at all, and
+   * charging for nothing would make the privacy rule a bait-and-switch the
+   * first time it bit. The respondents keep every cent they earned and the
+   * platform absorbs the difference — that is the cost of the rule, and it is
+   * bounded by one short survey's respondent pay.
    */
   private async settle(
     manager: EntityManager,
@@ -235,7 +276,19 @@ export class SurveyPublishService implements OnModuleInit, OnModuleDestroy {
 
     const delivered = price > 0 ? Math.round(paid / price) : 0;
     const undelivered = Math.max(0, target - delivered);
-    const refund = target > 0 ? toCents((held * undelivered) / target) : 0;
+
+    const { releaseThreshold } = await readResultThresholds(this.settingsReader);
+    const neverReported = delivered < releaseThreshold;
+
+    const refund = neverReported
+      ? held
+      : target > 0
+        ? toCents((held * undelivered) / target)
+        : 0;
+
+    const reason = neverReported
+      ? `Refund from survey "${survey.title}" — ${delivered} ${delivered === 1 ? 'answer' : 'answers'}, too few to report on without identifying someone`
+      : `Refund from survey "${survey.title}" — ${undelivered} of ${target} responses unfilled`;
 
     if (refund > 0) {
       const business = await manager.findOne(Business, {
@@ -252,7 +305,7 @@ export class SurveyPublishService implements OnModuleInit, OnModuleDestroy {
         userId ?? business.userId,
         'SURVEY_ESCROW_REFUNDED',
         refund,
-        `Refund from survey "${survey.title}" — ${undelivered} of ${target} responses unfilled`,
+        reason,
         undefined,
         manager,
         survey.businessId,

@@ -11,6 +11,7 @@ import { SurveyPricingService } from './survey-pricing.service';
 import { CreateSurveyDto, QuoteSurveyDto, UpdateSurveyDto, AudienceDto } from './dto/survey.dto';
 import { SurveyPublishService } from './survey-publish.service';
 import { SurveyMatchingService } from './survey-matching.service';
+import { SurveyResultsService } from './survey-results.service';
 
 
 /**
@@ -37,6 +38,7 @@ export class SurveyController {
     private readonly pricing: SurveyPricingService,
     private readonly publishing: SurveyPublishService,
     private readonly matching: SurveyMatchingService,
+    private readonly surveyResults: SurveyResultsService,
   ) {}
 
   @Get('templates')
@@ -90,6 +92,20 @@ export class SurveyController {
   @ApiOperation({ summary: 'How many respondents match these filters' })
   async audience(@Body() body: AudienceDto) {
     return { audienceSize: await this.matching.estimateAudience(body.filters ?? {}) };
+  }
+
+  /**
+   * The answers this survey bought.
+   *
+   * Distributions, never responses: a business sees how people answered, in
+   * whole cohorts, with any group smaller than the minimum held back. The
+   * whole rule is enforced in SurveyResultsService — the controller reads
+   * nothing itself, so there is exactly one file to review for it.
+   */
+  @Get(':id/results')
+  @ApiOperation({ summary: 'How people answered — totals only, small groups held back' })
+  results(@Request() req, @Param('id', ParseIntPipe) id: number) {
+    return this.surveyResults.forBusiness(req.user.userId, id);
   }
 
   @Post(':id/publish')

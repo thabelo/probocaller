@@ -4,6 +4,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { SurveyTemplateService } from './survey-template.service';
 import { SurveyTemplate } from './survey-template.entity';
 import { TEMPLATE_LIBRARY } from './survey-template-library';
+import { promptCollectsIdentity } from './prompt-screen';
 
 /**
  * The admin-curated template library (surveys-spec §3.1). Adding "Insurance
@@ -113,6 +114,20 @@ describe('SurveyTemplateService', () => {
         }),
       ).rejects.toBeInstanceOf(BadRequestException);
     });
+
+    /**
+     * A curated template is the path of least resistance into every survey
+     * built from it, so a template that asks for an identity would spread the
+     * problem faster than any single business could.
+     */
+    it('refuses a curated template question that asks for identifying details', async () => {
+      await expect(
+        service.create({
+          key: 'k', name: 'n',
+          questions: [{ type: 'free_text', prompt: 'What is your ID number?' }],
+        }),
+      ).rejects.toThrow(/anonymous/i);
+    });
   });
 
   describe('updating', () => {
@@ -153,6 +168,18 @@ describe('SurveyTemplateService', () => {
    * there, or the first deploy after an admin reworded a template would quietly
    * undo them.
    */
+  /**
+   * The shipped library is 476 questions nobody re-reads. If one of them asks
+   * for a name, every business that picks that template inherits it — and the
+   * screen would reject it at seed time, breaking boot.
+   */
+  it('ships a library where no question asks for identifying details', () => {
+    const offenders = TEMPLATE_LIBRARY.flatMap((t) =>
+      t.questions.filter((q) => promptCollectsIdentity(q.prompt)).map((q) => `${t.key}: ${q.prompt}`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
   describe('seeding the shipped library', () => {
     it('adds every shipped template the database does not have yet', async () => {
       repo.find.mockResolvedValue([]);

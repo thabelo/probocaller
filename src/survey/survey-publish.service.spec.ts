@@ -11,6 +11,7 @@ import { Survey } from './survey.entity';
 import { SurveyQuestion } from './survey-question.entity';
 import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
+import { SettingsReaderService } from '../config/settings-reader.service';
 
 /**
  * Build-order step 3 — the money-critical one.
@@ -104,6 +105,8 @@ describe('SurveyPublishService', () => {
         { provide: PushService, useValue: push },
         { provide: getRepositoryToken(User), useValue: userRepo },
         { provide: TransactionService, useValue: transactions },
+        // Results thresholds fall back to their floors when unset (5/10/10).
+        { provide: SettingsReaderService, useValue: { getNumber: jest.fn(async () => NaN) } },
         {
           provide: DataSource,
           useValue: { transaction: (fn: any) => fn(manager) },
@@ -211,6 +214,19 @@ describe('SurveyPublishService', () => {
     });
 
     /**
+     * Screened at the builder AND again here. A question written before the
+     * screen shipped is still sitting in a draft somewhere, and publish is the
+     * last point before real people are asked it.
+     */
+    it('refuses to publish a survey with a question that asks for identifying details', async () => {
+      questionRepo.find.mockResolvedValue([
+        { id: 1, surveyId: 100, type: 'free_text', prompt: 'What is your ID number?', position: 0, feeAtPublish: '0' },
+      ]);
+      await expect(service.publish(1, 100)).rejects.toThrow(/anonymous/i);
+      expect(transactions.log).not.toHaveBeenCalled();
+    });
+
+    /**
      * A narrow filter is allowed to publish — the business is warned and the
      * unfilled remainder refunds on expiry — but it must be TOLD, or it pays
      * for responses that were never reachable.
@@ -228,6 +244,49 @@ describe('SurveyPublishService', () => {
     it('reports no shortfall when the audience is big enough', async () => {
       const result = await service.publish(1, 100);
       expect(result.shortfall).toBe(0);
+    });
+
+    /**
+     * Results are only ever shown for ten answers or more, so a survey aimed at
+     * fewer than ten people could never report back — the business would pay,
+     * people would answer, and the page would say "not enough answers" forever.
+     * Selling that is worse than refusing it.
+     */
+    describe('a survey that could never report back', () => {
+      it('refuses to publish to an audience smaller than the release threshold', async () => {
+        matching.estimateAudience.mockResolvedValue(6);
+        await expect(service.publish(1, 100)).rejects.toBeInstanceOf(BadRequestException);
+      });
+
+      it('says what to do about it rather than just refusing', async () => {
+        matching.estimateAudience.mockResolvedValue(6);
+        await expect(service.publish(1, 100)).rejects.toThrow(/widen|Audience & Leads/i);
+      });
+
+      it('takes no money for a survey it refuses', async () => {
+        matching.estimateAudience.mockResolvedValue(6);
+        await expect(service.publish(1, 100)).rejects.toThrow();
+        expect(savedBusiness()).toBeUndefined();
+        expect(transactions.log).not.toHaveBeenCalled();
+      });
+
+      it('refuses to publish for fewer responses than the release threshold', async () => {
+        surveyRepo.findOne.mockResolvedValue({ ...DRAFT(), targetResponses: 5 });
+        await expect(service.publish(1, 100)).rejects.toThrow(/10/);
+      });
+
+      /** Exactly ten is enough — the guard is `<`, not `<=`. */
+      it('allows an audience of exactly the release threshold', async () => {
+        matching.estimateAudience.mockResolvedValue(10);
+        await expect(service.publish(1, 100)).resolves.toBeDefined();
+      });
+    });
+
+    /** What it was sold against, so a survey that settles short is answerable. */
+    it('records the audience it was published to', async () => {
+      matching.estimateAudience.mockResolvedValue(20);
+      await service.publish(1, 100);
+      expect(savedSurvey().audienceAtPublish).toBe(20);
     });
   });
 
@@ -283,6 +342,50 @@ describe('SurveyPublishService', () => {
       surveyRepo.findOne.mockResolvedValue(LIVE({ totalPaid: '300' }));
       await service.close(1, 100);
       expect(transactions.log).not.toHaveBeenCalled();
+    });
+
+    /**
+     * A survey that stops below the release threshold shows the business
+     * NOTHING — reporting seven answers would mean identifying the seven. It
+     * has to be free, or the privacy rule is a bait-and-switch the first time
+     * it bites: money taken, answers given, nothing delivered.
+     *
+     * The respondents keep every cent they earned. The platform absorbs the
+     * difference; that is the cost of a rule that protects people.
+     */
+    describe('a survey that stopped before it could ever report', () => {
+      // 7 of 100 delivered at R3 = R21 paid. The proportional refund would be
+      // 93% of R372 = R345.96 — this returns the whole R372 instead.
+      const SHORT = () => LIVE({ totalPaid: '21' });
+
+      it('refunds the whole hold when a survey settles below the release threshold', async () => {
+        surveyRepo.findOne.mockResolvedValue(SHORT());
+        await service.close(1, 100);
+        expect(Number(savedBusiness().walletBalance)).toBe(1000 + 372);
+      });
+
+      it('says in the ledger why the whole hold came back', async () => {
+        surveyRepo.findOne.mockResolvedValue(SHORT());
+        await service.close(1, 100);
+        expect(transactions.log).toHaveBeenCalledWith(
+          1, 'SURVEY_ESCROW_REFUNDED', 372,
+          expect.stringMatching(/too few to report/i), undefined, manager, 7,
+        );
+      });
+
+      it('still refunds only the undelivered share when the survey did report', async () => {
+        // 40 delivered — comfortably over the threshold, so the usual rule holds.
+        surveyRepo.findOne.mockResolvedValue(LIVE({ totalPaid: '120' }));
+        await service.close(1, 100);
+        expect(Number(savedBusiness().walletBalance)).toBe(1000 + 223.2);
+      });
+
+      /** Exactly ten reported, so the usual proportional refund applies. */
+      it('treats exactly the release threshold as having reported', async () => {
+        surveyRepo.findOne.mockResolvedValue(LIVE({ totalPaid: '30' }));
+        await service.close(1, 100);
+        expect(Number(savedBusiness().walletBalance)).toBe(1000 + 334.8);
+      });
     });
 
     /** Closing twice would refund the hold twice. */

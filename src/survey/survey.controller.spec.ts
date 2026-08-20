@@ -6,6 +6,7 @@ import { SurveyTemplateService } from './survey-template.service';
 import { SurveyPricingService } from './survey-pricing.service';
 import { SurveyPublishService } from './survey-publish.service';
 import { SurveyMatchingService } from './survey-matching.service';
+import { SurveyResultsService } from './survey-results.service';
 import { AppAccessGuard, REQUIRES_APP } from '../marketplace/app-access.guard';
 
 /**
@@ -19,6 +20,7 @@ describe('SurveyController', () => {
   let pricing: any;
   let publishing: any;
   let matching: any;
+  let results: any;
 
   const req = { user: { userId: 1 } };
 
@@ -41,6 +43,7 @@ describe('SurveyController', () => {
       close: jest.fn().mockResolvedValue({ id: 100 }),
     };
     matching = { estimateAudience: jest.fn().mockResolvedValue(42) };
+    results = { forBusiness: jest.fn().mockResolvedValue({ surveyId: 100, release: { state: 'released' } }) };
 
     const mod: TestingModule = await Test.createTestingModule({
       controllers: [SurveyController],
@@ -50,6 +53,7 @@ describe('SurveyController', () => {
         { provide: SurveyPricingService, useValue: pricing },
         { provide: SurveyPublishService, useValue: publishing },
         { provide: SurveyMatchingService, useValue: matching },
+        { provide: SurveyResultsService, useValue: results },
       ],
     })
       .overrideGuard(AppAccessGuard)
@@ -136,5 +140,22 @@ describe('SurveyController', () => {
   it('estimates how many people a filter can reach', async () => {
     await controller.audience({ filters: { province: 'Gauteng' } } as any);
     expect(matching.estimateAudience).toHaveBeenCalledWith({ province: 'Gauteng' });
+  });
+
+  /**
+   * The answers a business paid for. Scoped to what the caller owns by the
+   * same ownership check every other route here uses — someone else's survey
+   * is refused before a single answer is touched.
+   */
+  describe('results', () => {
+    it('returns results for a survey I own', async () => {
+      await expect(controller.results(req, 100)).resolves.toMatchObject({ surveyId: 100 });
+      expect(results.forBusiness).toHaveBeenCalledWith(1, 100);
+    });
+
+    it('asks the results service rather than reading answers itself', async () => {
+      await controller.results(req, 100);
+      expect(surveys.get).not.toHaveBeenCalled();
+    });
   });
 });

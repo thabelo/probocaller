@@ -41,8 +41,6 @@ export class SurveyResponseService {
     private readonly questionRepository: Repository<SurveyQuestion>,
     @InjectRepository(SurveyResponse)
     private readonly responseRepository: Repository<SurveyResponse>,
-    @InjectRepository(SurveyAnswer)
-    private readonly answerRepository: Repository<SurveyAnswer>,
     private readonly matching: SurveyMatchingService,
     private readonly transactions: TransactionService,
     private readonly dataSource: DataSource,

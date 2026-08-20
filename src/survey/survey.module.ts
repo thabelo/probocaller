@@ -12,12 +12,14 @@ import { SurveyService } from './survey.service';
 import { SurveyMatchingService } from './survey-matching.service';
 import { SurveyPublishService } from './survey-publish.service';
 import { SurveyResponseService } from './survey-response.service';
+import { SurveyResultsService } from './survey-results.service';
 import { RespondentSurveyController } from './respondent-survey.controller';
 import { SurveyResponse } from './survey-response.entity';
 import { SurveyAnswer } from './survey-answer.entity';
 import { TransactionModule } from '../transaction/transaction.module';
 import { UserProfile } from '../profile/user-profile.entity';
 import { ProfileField } from '../profile/profile-field.entity';
+import { DataAccessLog } from '../profile/data-access-log.entity';
 import { AppInstall } from '../marketplace/app-install.entity';
 import { Survey } from './survey.entity';
 import { SurveyQuestion } from './survey-question.entity';
@@ -47,6 +49,9 @@ import { User } from '../user/user.entity';
       // they said about themselves.
       AppInstall, UserProfile, ProfileField,
       SurveyResponse, SurveyAnswer,
+      // Releasing a cohort of answers to a business writes a line in each
+      // respondent's own access log — the same trail Databroker writes to.
+      DataAccessLog,
     ]),
     // AdminGuard authenticates via the 'jwt' strategy, same as every other
     // admin-guarded controller.
@@ -67,9 +72,10 @@ import { User } from '../user/user.entity';
   providers: [
     SurveyPricingService, SurveyTemplateService, SurveyService,
     SurveyMatchingService, SurveyPublishService, SurveyResponseService,
+    SurveyResultsService,
     AdminGuard,
   ],
   controllers: [AdminSurveyController, SurveyController, RespondentSurveyController],
-  exports: [SurveyPricingService, SurveyTemplateService, SurveyService, SurveyMatchingService, SurveyPublishService, SurveyResponseService],
+  exports: [SurveyPricingService, SurveyTemplateService, SurveyService, SurveyMatchingService, SurveyPublishService, SurveyResponseService, SurveyResultsService],
 })
 export class SurveyModule {}
