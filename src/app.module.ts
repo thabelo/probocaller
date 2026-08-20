@@ -32,6 +32,7 @@ import { CampaignModule } from './campaign/campaign.module';
 import { Transaction } from './transaction/transaction.entity';
 import { TransactionModule } from './transaction/transaction.module';
 import { ReferralModule } from './referral/referral.module';
+import { AdRevenueModule } from './ad-revenue/ad-revenue.module';
 
 import { DataMigrationModule } from './migration/data-migration.module';
 import { DataMigrationService } from './migration/data-migration.service';
@@ -48,6 +49,7 @@ import { PhoneReportVote } from './report/phone-report-vote.entity';
 import { ProfileModule } from './profile/profile.module';
 import { FxModule } from './fx/fx.module';
 import { ProfileService } from './profile/profile.service';
+import { SurveyTemplateService } from './survey/survey-template.service';
 import { ProfileField } from './profile/profile-field.entity';
 import { UserProfile } from './profile/user-profile.entity';
 import { DataAccessLog } from './profile/data-access-log.entity';
@@ -70,6 +72,8 @@ import { ReportedSmsModule } from './reported-sms/reported-sms.module';
 import { FeedbackModule } from './feedback/feedback.module';
 import { InviteModule } from './invite/invite.module';
 import { ErrorLogModule } from './error-log/error-log.module';
+import { PushModule } from './push/push.module';
+import { MetricsModule } from './metrics/metrics.module';
 import { AuditModule } from './audit/audit.module';
 import { RetentionModule } from './retention/retention.module';
 import { LegalModule } from './legal/legal.module';
@@ -174,6 +178,7 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
     // ReferralModule: UserController (also declared here) reads the live
     // referral commission rate via ReferralService.getCommissionRate().
     ReferralModule,
+    AdRevenueModule,
     UserModule,
     CallModule,
     AdminModule,
@@ -200,6 +205,8 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
     FeedbackModule,
     InviteModule,
     ErrorLogModule,
+    PushModule,
+    MetricsModule,
     AuditModule,
     RetentionModule,
     LegalModule,
@@ -233,6 +240,7 @@ export class AppModule implements OnModuleInit {
     private readonly migrationService: DataMigrationService,
     private readonly adminService: AdminService,
     private readonly profileService: ProfileService,
+    private readonly surveyTemplateService: SurveyTemplateService,
   ) {}
 
   async onModuleInit() {
@@ -243,5 +251,9 @@ export class AppModule implements OnModuleInit {
     }
     await this.adminService.seedDefaultConfig();
     await this.profileService.seedDefaultFields();
+    // Shipping templates is a deploy, not an admin retyping 120 of them. Only
+    // missing keys are added, so anything curated in the console survives.
+    const templates = await this.surveyTemplateService.seedDefaultTemplates();
+    if (templates) this.logger.log(`Seeded ${templates} survey template(s).`);
   }
 }

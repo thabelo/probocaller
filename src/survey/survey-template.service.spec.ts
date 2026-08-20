@@ -3,6 +3,7 @@ import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { SurveyTemplateService } from './survey-template.service';
 import { SurveyTemplate } from './survey-template.entity';
+import { TEMPLATE_LIBRARY } from './survey-template-library';
 
 /**
  * The admin-curated template library (surveys-spec §3.1). Adding "Insurance
@@ -144,6 +145,57 @@ describe('SurveyTemplateService', () => {
       await service.update('insurance-nps', { isActive: false });
       expect(repo.save).toHaveBeenCalledWith(expect.objectContaining({ isActive: false }));
       expect(repo.delete).toBeUndefined();
+    });
+  });
+  /**
+   * The library ships with the product; the database is where an admin curates
+   * it. Seeding has to add what is missing without ever overwriting what is
+   * there, or the first deploy after an admin reworded a template would quietly
+   * undo them.
+   */
+  describe('seeding the shipped library', () => {
+    it('adds every shipped template the database does not have yet', async () => {
+      repo.find.mockResolvedValue([]);
+
+      const added = await service.seedDefaultTemplates();
+
+      expect(added).toBe(TEMPLATE_LIBRARY.length);
+      const keys = repo.save.mock.calls.map(([row]: any) => row.key);
+      expect(keys).toEqual(TEMPLATE_LIBRARY.map((t) => t.key));
+    });
+
+    it('leaves a template that already exists alone, so admin edits survive a deploy', async () => {
+      const [first] = TEMPLATE_LIBRARY;
+      repo.find.mockResolvedValue([{ key: first.key, name: 'Renamed by an admin' }]);
+
+      const added = await service.seedDefaultTemplates();
+
+      const keys = repo.save.mock.calls.map(([row]: any) => row.key);
+      expect(keys).not.toContain(first.key);
+      expect(added).toBe(TEMPLATE_LIBRARY.length - 1);
+    });
+
+    it('seeds them on offer, tagged, and with their questions', async () => {
+      repo.find.mockResolvedValue([]);
+      const [first] = TEMPLATE_LIBRARY;
+
+      await service.seedDefaultTemplates();
+
+      expect(repo.save.mock.calls[0][0]).toMatchObject({
+        key: first.key,
+        name: first.name,
+        category: first.category,
+        questionsJson: first.questions,
+        isActive: true,
+      });
+    });
+
+    /** One read for the keys, not one per template — this runs at every boot. */
+    it('asks the database what it already has exactly once', async () => {
+      repo.find.mockResolvedValue([]);
+      await service.seedDefaultTemplates();
+      expect(repo.find).toHaveBeenCalledTimes(1);
+      expect(repo.findOne).not.toHaveBeenCalled();
     });
   });
 });

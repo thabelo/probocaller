@@ -28,12 +28,25 @@ export function matchesFilters(
     // An empty filter is "no preference", not "match nobody".
     if (!accepted.length) continue;
 
-    const held = profileData?.[field];
+    const raw = profileData?.[field];
     // Never treat an unanswered field as a match: a business paid to reach
-    // people who said something, not people who said nothing.
-    if (held === undefined || held === null || held === '') return false;
+    // people who said something, not people who said nothing. An empty
+    // multi-select is just as unanswered as a blank one.
+    if (raw === undefined || raw === null || raw === '') return false;
+    const held = (Array.isArray(raw) ? raw : [raw]).filter(
+      (v) => v !== '' && v !== null && v !== undefined,
+    );
+    if (!held.length) return false;
 
-    if (!accepted.some((value) => String(value) === String(held))) return false;
+    // Multi-select fields — Interests above all — hold several values at once,
+    // and one overlap is a match. Stringifying the whole array instead would
+    // turn ['telecoms','health'] into a value no filter can ever equal, quietly
+    // excluding exactly the people who told us the most about themselves.
+    //
+    // 'all' is the opt-in-to-everything answer: someone who chose it is
+    // interested in whatever is being asked.
+    if (held.some((v) => String(v) === 'all')) continue;
+    if (!accepted.some((value) => held.some((v) => String(value) === String(v)))) return false;
   }
   return true;
 }

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { PushModule } from '../push/push.module';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule } from '../config/config.module';
 import { SurveyPricingService } from './survey-pricing.service';
@@ -50,6 +51,9 @@ import { User } from '../user/user.entity';
     // AdminGuard authenticates via the 'jwt' strategy, same as every other
     // admin-guarded controller.
     PassportModule.register({ defaultStrategy: 'jwt' }),
+    // Publishing alerts everyone the survey matches, so respondents learn a
+    // survey exists rather than having to go looking for one.
+    PushModule,
     ConfigModule,
     // AppAccessGuard gates the builder on the survey-campaigns install, so
     // entitlement is never re-derived here.

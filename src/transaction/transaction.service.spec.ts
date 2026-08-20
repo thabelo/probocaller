@@ -175,3 +175,57 @@ describe('TransactionService.sumByType', () => {
     expect(await service.sumByType('REFERRAL_COMMISSION')).toBe(0);
   });
 });
+
+/**
+ * Every ledger row is money actually moving, so this is the one choke point
+ * where the `money_moved_zar_total` metric can be recorded for ALL flows —
+ * call charges, earnings, referral commission, ad revenue share, escrow.
+ * Without it the NoMoneyMoving alert can never fire and billing can stop
+ * silently while the API still answers /health.
+ */
+describe('TransactionService.log — money metrics', () => {
+  const build = async (metrics?: any) => {
+    const repo: any = { create: jest.fn((d: any) => ({ ...d })), save: jest.fn(async (x: any) => x) };
+    const providers: any[] = [
+      TransactionService,
+      { provide: getRepositoryToken(Transaction), useValue: repo },
+    ];
+    if (metrics) {
+      const { MetricsService } = require('../metrics/metrics.service');
+      providers.push({ provide: MetricsService, useValue: metrics });
+    }
+    const module: TestingModule = await Test.createTestingModule({ providers }).compile();
+    return { service: module.get(TransactionService), repo };
+  };
+
+  it('records the amount against the ledger type', async () => {
+    const metrics = { recordMoneyMoved: jest.fn() };
+    const { service } = await build(metrics);
+    await service.log(1, 'CALL_CHARGE', 12.5, 'call');
+    expect(metrics.recordMoneyMoved).toHaveBeenCalledWith('CALL_CHARGE', 12.5);
+  });
+
+  it('records for a manager-scoped write too (the atomic money paths)', async () => {
+    const metrics = { recordMoneyMoved: jest.fn() };
+    const { service } = await build(metrics);
+    const manager: any = { create: jest.fn((_e: any, d: any) => d), save: jest.fn(async (_e: any, x: any) => x) };
+    await service.log(1, 'CALL_EARN', 9.5, 'earn', undefined, manager);
+    expect(metrics.recordMoneyMoved).toHaveBeenCalledWith('CALL_EARN', 9.5);
+  });
+
+  // Metrics are observability, not business logic: a broken counter must never
+  // roll back or fail a wallet move.
+  it('still writes the ledger row when recording the metric throws', async () => {
+    const metrics = { recordMoneyMoved: jest.fn(() => { throw new Error('registry blew up'); }) };
+    const { service, repo } = await build(metrics);
+    await expect(service.log(1, 'CALL_CHARGE', 5, 'call')).resolves.toBeDefined();
+    expect(repo.save).toHaveBeenCalled();
+  });
+
+  // Most existing call sites construct this service without the metrics module.
+  it('works when no metrics service is injected at all', async () => {
+    const { service, repo } = await build();
+    await expect(service.log(1, 'CALL_CHARGE', 5, 'call')).resolves.toBeDefined();
+    expect(repo.save).toHaveBeenCalled();
+  });
+});

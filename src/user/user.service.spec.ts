@@ -71,6 +71,26 @@ describe('UserService', () => {
     jwt = module.get(JwtService);
   });
 
+  // Backs the wallet top-up gate: only an admin may credit a wallet manually
+  // once payments are wired, so the role must come from the DB row, never from
+  // the JWT (which a client controls the shape of).
+  describe('isAdmin', () => {
+    it('is true only when the stored role is admin', async () => {
+      repo.findOne.mockResolvedValue({ id: 7, role: 'admin' });
+      await expect(service.isAdmin(7)).resolves.toBe(true);
+    });
+
+    it('is false for a normal user', async () => {
+      repo.findOne.mockResolvedValue({ id: 7, role: 'user' });
+      await expect(service.isAdmin(7)).resolves.toBe(false);
+    });
+
+    it('is false when the user no longer exists', async () => {
+      repo.findOne.mockResolvedValue(null);
+      await expect(service.isAdmin(7)).resolves.toBe(false);
+    });
+  });
+
   describe('login', () => {
     it('returns tokens and user for existing user', async () => {
       const user = mockUser();

@@ -1,5 +1,6 @@
 import {
   BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException,
+  OnModuleDestroy, OnModuleInit,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, LessThanOrEqual, Repository } from 'typeorm';
@@ -7,12 +8,18 @@ import { Survey } from './survey.entity';
 import { SurveyQuestion } from './survey-question.entity';
 import { Business } from '../business/business.entity';
 import { SurveyPricingService } from './survey-pricing.service';
+import { In } from 'typeorm';
+import { User } from '../user/user.entity';
+import { PushService } from '../push/push.service';
 import { SurveyMatchingService } from './survey-matching.service';
 import { TransactionService } from '../transaction/transaction.service';
 import { QuestionType, feeSettingKey } from './question-type';
 
 /** Round to cents, so a hold and its refunds still reconcile. */
 const toCents = (amount: number) => Math.round(amount * 100) / 100;
+
+/** How often to look for surveys whose time limit has passed. */
+const EXPIRY_SWEEP_MS = 60 * 60 * 1000;
 
 /**
  * Publishing, closing and expiring — where surveys move money (§1.2).
@@ -28,8 +35,35 @@ const toCents = (amount: number) => Math.round(amount * 100) / 100;
  * business could no longer fund.
  */
 @Injectable()
-export class SurveyPublishService {
+export class SurveyPublishService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SurveyPublishService.name);
+
+  private timer: NodeJS.Timeout | null = null;
+
+  /**
+   * Start the expiry sweep. Without it `expireDue` has no caller at all, and
+   * the "or the time runs out" half of §3.3 never happens in production — the
+   * hold on an expired survey would sit in escrow forever.
+   *
+   * Hourly rather than the daily cadence the retention purge uses: this one is
+   * holding a business's money, so a day's lag is a day of someone else's cash
+   * sitting in escrow after the survey stopped being answerable.
+   */
+  onModuleInit(): void {
+    // Don't spin a timer in tests; unit tests call expireDue directly.
+    if (process.env.NODE_ENV === 'test') return;
+    this.timer = setInterval(() => {
+      this.expireDue().catch((error) =>
+        this.logger.error('Scheduled survey expiry sweep failed', error as Error),
+      );
+    }, EXPIRY_SWEEP_MS);
+    // Don't keep the process alive solely for this timer.
+    this.timer.unref?.();
+  }
+
+  onModuleDestroy(): void {
+    if (this.timer) clearInterval(this.timer);
+  }
 
   constructor(
     @InjectRepository(Survey)
@@ -38,6 +72,9 @@ export class SurveyPublishService {
     private readonly questionRepository: Repository<SurveyQuestion>,
     private readonly pricing: SurveyPricingService,
     private readonly matching: SurveyMatchingService,
+    private readonly push: PushService,
+    @InjectRepository(User)
+    private readonly userRepository: Repository<User>,
     private readonly transactions: TransactionService,
     private readonly dataSource: DataSource,
   ) {}
@@ -130,6 +167,8 @@ export class SurveyPublishService {
         survey.businessId,
       );
     });
+
+    await this.alertAudience(survey);
 
     return {
       ...survey,
@@ -224,4 +263,71 @@ export class SurveyPublishService {
     survey.closedAt = new Date();
     await manager.save(Survey, survey);
   }
+
+  /**
+   * Tell the people it was aimed at that it exists.
+   *
+   * A respondent has no reason to open the app on the off-chance something new
+   * has appeared, so a survey nobody is alerted to is one nobody answers — the
+   * business would have paid to reach an audience that never learns of it.
+   *
+   * Deliberately after the transaction and deliberately swallowing failures:
+   * the money has already moved and the survey is already live, so a push
+   * transport outage must not roll that back or surface as a failed publish.
+   * The worst case is a live survey that people find by opening Surveys.
+   */
+  private async alertAudience(survey: Survey): Promise<void> {
+    try {
+      const audience = await this.matching.audience(survey.filtersJson ?? {});
+      const pays = Number(survey.pricePerResponse ?? 0);
+      const reward = pays > 0 ? ` — answer it and earn ${pays.toFixed(2)} credits.` : '.';
+      // Push carries its own "New survey for you" title, but the notification
+      // row is one line in a tray with no title beside it. "How are we doing?
+      // — earn 3.00 credits" gives the reader nothing to tell them what it is,
+      // so this one says so on its own.
+      const body = `${survey.title}${reward}`;
+      const message = `New survey: ${survey.title}${reward}`;
+
+      await Promise.all(
+        audience.map((userId) =>
+          this.push
+            .sendToUser(userId, {
+              title: 'New survey for you',
+              body,
+              // Routing, so tapping the alert opens THIS survey rather than a
+              // list the user then has to search.
+              data: { kind: 'survey', surveyId: String(survey.id) },
+            })
+            .catch(() => undefined),
+        ),
+      );
+
+      // The notification row is what actually reaches a handset today: push has
+      // no live transport yet, and the app polls this list to raise its tray
+      // alert. Writing only to push would leave the feature reaching nobody.
+      const recipients = await this.userRepository.find({ where: { id: In(audience) } });
+      await Promise.all(
+        recipients.map((user) => {
+          const notifications = user.notifications || [];
+          notifications.push({
+            id: Date.now(),
+            message,
+            timestamp: new Date(),
+            read: false,
+            // Which survey, so a tap opens THIS one. Without it the app can
+            // only reach the list, and a respondent who already had another
+            // survey open would land on that one — the alert naming one
+            // survey and delivering another.
+            kind: 'survey',
+            target: String(survey.id),
+          });
+          user.notifications = notifications;
+          return this.userRepository.save(user).catch(() => undefined);
+        }),
+      );
+    } catch {
+      /* already live and paid for — never fail the publish over an alert */
+    }
+  }
+
 }

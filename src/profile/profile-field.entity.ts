@@ -11,7 +11,8 @@ export class ProfileField {
   @Column()
   label: string;
 
-  // 'select' | 'number' | 'boolean' | 'text'
+  // 'select' | 'multi_select' | 'number' | 'boolean' | 'text'
+  // multi_select holds an array of option values; 'all' means every option.
   @Column({ default: 'select' })
   type: string;
 

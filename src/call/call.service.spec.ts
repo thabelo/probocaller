@@ -266,6 +266,108 @@ describe('CallService — LOW_FUNDS blocking', () => {
 });
 
 // ─── completeCall reward crediting (CALL_CHARGE / CALL_EARN) ──────────────────
+/**
+ * Blocked calls are user-visible failures — an empty wallet, a call rule, a
+ * closed calling window. A spike in one reason is the signal worth paging on,
+ * so every block must reach calls_blocked_total{reason}; without it the
+ * BlockedCallSpike alert can never fire.
+ */
+describe('CallService — blocked calls are counted for alerting', () => {
+  let service: CallService;
+  let userRepo: ReturnType<typeof mockRepo>;
+  let callRepo: ReturnType<typeof mockRepo>;
+  let metrics: { recordBlockedCall: jest.Mock };
+
+  beforeEach(async () => {
+    metrics = { recordBlockedCall: jest.fn() };
+    const { MetricsService } = require('../metrics/metrics.service');
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        CallService,
+        { provide: getRepositoryToken(CallLog),    useFactory: mockRepo },
+        { provide: getRepositoryToken(CallRating), useFactory: mockRepo },
+        { provide: getRepositoryToken(User),       useFactory: mockRepo },
+        { provide: getRepositoryToken(Business),   useFactory: mockRepo },
+        { provide: getRepositoryToken(BusinessNumber), useFactory: mockRepo },
+        { provide: SettingsReaderService, useFactory: mockSettingsReader },
+        { provide: TransactionService, useValue: { log: jest.fn() } },
+        { provide: DataBrokerService,  useValue: { hasApproval: jest.fn().mockResolvedValue(true), isFreeWhitelisted: jest.fn().mockResolvedValue(false) } },
+        { provide: ReferralService, useValue: { payCommission: jest.fn().mockResolvedValue(undefined) } },
+        { provide: DataSource, useValue: { transaction: jest.fn() } },
+        { provide: MetricsService, useValue: metrics },
+      ],
+    }).compile();
+    service  = module.get(CallService);
+    userRepo = module.get(getRepositoryToken(User));
+    callRepo = module.get(getRepositoryToken(CallLog));
+  });
+
+  it('counts a LOW_FUNDS block with its reason', async () => {
+    const caller = mockUser({ id: 1, isBusiness: true, walletBalance: 0 });
+    const receiver = mockUser({ id: 2, phoneNumber: '+27829999999', isBusiness: false, walletBalance: 0 });
+    userRepo.findOne
+      .mockResolvedValueOnce(caller)
+      .mockResolvedValueOnce(receiver)
+      .mockResolvedValue(caller);
+    userRepo.save.mockResolvedValue(caller);
+
+    await service.initiateCall(caller.id, receiver.phoneNumber);
+    expect(metrics.recordBlockedCall).toHaveBeenCalledWith('LOW_FUNDS');
+  });
+
+  it('does not count a call that was allowed through', async () => {
+    const caller = mockUser({ id: 1, isBusiness: true, walletBalance: 1000 });
+    const receiver = mockUser({ id: 2, phoneNumber: '+27829999999', isBusiness: false, walletBalance: 0 });
+    userRepo.findOne
+      .mockResolvedValueOnce(caller)
+      .mockResolvedValueOnce(receiver)
+      .mockResolvedValue(caller);
+    userRepo.save.mockResolvedValue(caller);
+    callRepo.save.mockResolvedValue({ id: 1 });
+
+    await service.initiateCall(caller.id, receiver.phoneNumber);
+    expect(metrics.recordBlockedCall).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Regression: each block site must record EXACTLY once. A double-count
+   * inflates calls_blocked_total and would trip BlockedCallSpike on normal
+   * traffic — an alert that cries wolf gets muted, which is worse than no alert.
+   * (The charged-personal-caller path did double-count when this was wired.)
+   */
+  it('counts a charged personal caller’s block exactly once', async () => {
+    const caller = mockUser({ id: 1, isBusiness: false, walletBalance: 0 });
+    const receiver = mockUser({
+      id: 2, phoneNumber: '+27829999999', isBusiness: false, walletBalance: 50,
+      businessCallPolicy: 'paid', newCallPolicy: 'paid', unknownCallPolicy: 'paid',
+    });
+    userRepo.findOne
+      .mockResolvedValueOnce(caller)
+      .mockResolvedValueOnce(receiver)
+      .mockResolvedValue(caller);
+    userRepo.save.mockResolvedValue(caller);
+
+    await service.initiateCall(caller.id, receiver.phoneNumber);
+    expect(metrics.recordBlockedCall).toHaveBeenCalledTimes(1);
+    expect(metrics.recordBlockedCall).toHaveBeenCalledWith('LOW_FUNDS');
+  });
+
+  // Observability must never turn a blocked call into a 500 for the caller.
+  it('still blocks the call when recording the metric throws', async () => {
+    metrics.recordBlockedCall.mockImplementation(() => { throw new Error('registry blew up'); });
+    const caller = mockUser({ id: 1, isBusiness: true, walletBalance: 0 });
+    const receiver = mockUser({ id: 2, phoneNumber: '+27829999999', isBusiness: false, walletBalance: 0 });
+    userRepo.findOne
+      .mockResolvedValueOnce(caller)
+      .mockResolvedValueOnce(receiver)
+      .mockResolvedValue(caller);
+    userRepo.save.mockResolvedValue(caller);
+
+    const result = await service.initiateCall(caller.id, receiver.phoneNumber);
+    expect(result.blocked).toBe(true);
+  });
+});
+
 describe('CallService — completeCall reward integrity', () => {
   let service: CallService;
   let userRepo: ReturnType<typeof mockRepo>;

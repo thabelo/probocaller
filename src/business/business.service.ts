@@ -12,6 +12,8 @@ import { User } from '../user/user.entity';
 import { TransactionService } from '../transaction/transaction.service';
 import { normalizeNumber } from '../suppression/number-hash';
 import { SettingsReaderService } from '../config/settings-reader.service';
+import { assertTopUpAllowed, readAllowUnverifiedTopUp } from '../common/billing/topup-authorization';
+import { resolveAppConfig } from '../common/config/app-config';
 
 /**
  * The Probocaller-branded placeholder logo every business gets when its owner
@@ -87,6 +89,15 @@ export class BusinessService {
   async topUpWallet(businessId: number, requesterUserId: number, amount: number) {
     amount = await this.assertMoneyAmount(amount);
     const business = await this.ownedBusinessOrThrow(businessId, requesterUserId);
+    // Crediting a wallet from nothing is a free-money faucet until a payment
+    // provider confirms the money arrived. Admins may still credit manually;
+    // everyone else needs an explicit opt-in that production ignores outright.
+    const requester = await this.userRepo.findOne({ where: { id: requesterUserId } });
+    assertTopUpAllowed({
+      isAdmin: requester?.role === 'admin',
+      environment: resolveAppConfig().environment,
+      allowUnverifiedTopUp: readAllowUnverifiedTopUp(),
+    });
 
     return this.dataSource.transaction(async (manager) => {
       const biz = await manager.findOne(Business, {

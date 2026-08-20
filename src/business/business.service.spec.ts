@@ -136,6 +136,9 @@ describe('BusinessService — API keys', () => {
   describe('topUpWallet', () => {
     it("credits the BUSINESS wallet atomically (not the owner's) and logs a business-scoped transaction", async () => {
       businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9, companyName: 'Acme' });
+      // About the crediting mechanics, not the top-up gate (covered below) —
+      // run as an admin so the gate never masks the assertion.
+      userRepo.findOne.mockResolvedValue({ id: 9, role: 'admin' });
       const manager = {
         findOne: jest.fn().mockResolvedValue({ id: 5, userId: 9, walletBalance: '100.0000' }),
         save: jest.fn().mockImplementation(async (...args: any[]) => args[args.length - 1]),
@@ -164,6 +167,67 @@ describe('BusinessService — API keys', () => {
     it('forbids topping up a wallet the caller does not own', async () => {
       businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9 });
       await expect(service.topUpWallet(5, 999, 50)).rejects.toBeInstanceOf(ForbiddenException);
+    });
+
+    /**
+     * The wallet faucet (LAUNCH BLOCKER): this endpoint credits a business
+     * wallet from nothing. Until a payment provider verifies the money arrived,
+     * an ordinary owner may only self-credit outside production, behind an
+     * explicit opt-in that production ignores.
+     */
+    describe('gated until payments are wired', () => {
+      const withEnv = async (env: string, allow: string | undefined, fn: () => Promise<void>) => {
+        const prevEnv = process.env.NODE_ENV;
+        const prevAllow = process.env.ALLOW_UNVERIFIED_TOPUP;
+        process.env.NODE_ENV = env;
+        if (allow === undefined) delete process.env.ALLOW_UNVERIFIED_TOPUP;
+        else process.env.ALLOW_UNVERIFIED_TOPUP = allow;
+        try { await fn(); } finally {
+          process.env.NODE_ENV = prevEnv;
+          if (prevAllow === undefined) delete process.env.ALLOW_UNVERIFIED_TOPUP;
+          else process.env.ALLOW_UNVERIFIED_TOPUP = prevAllow;
+        }
+      };
+
+      const arrange = (role: string) => {
+        businessRepo.findOne.mockResolvedValue({ id: 5, userId: 9, companyName: 'Acme' });
+        userRepo.findOne.mockResolvedValue({ id: 9, role });
+        const manager = {
+          findOne: jest.fn().mockResolvedValue({ id: 5, userId: 9, walletBalance: '100.0000' }),
+          save: jest.fn().mockImplementation(async (...args: any[]) => args[args.length - 1]),
+        };
+        dataSource.transaction.mockImplementation(async (cb: any) => cb(manager));
+      };
+
+      it('refuses an owner self-top-up in production, opt-in or not', async () => {
+        await withEnv('production', 'true', async () => {
+          arrange('user');
+          await expect(service.topUpWallet(5, 9, 50)).rejects.toThrow(/payment/i);
+          expect(dataSource.transaction).not.toHaveBeenCalled();
+        });
+      });
+
+      it('refuses an owner self-top-up outside production without the explicit opt-in', async () => {
+        await withEnv('development', undefined, async () => {
+          arrange('user');
+          await expect(service.topUpWallet(5, 9, 50)).rejects.toThrow(/payment/i);
+          expect(dataSource.transaction).not.toHaveBeenCalled();
+        });
+      });
+
+      it('allows an opted-in owner self-top-up outside production (dev/e2e funding)', async () => {
+        await withEnv('development', 'true', async () => {
+          arrange('user');
+          await expect(service.topUpWallet(5, 9, 50)).resolves.toEqual({ businessId: 5, balance: 150 });
+        });
+      });
+
+      it('always allows an admin to credit a business wallet, even in production', async () => {
+        await withEnv('production', undefined, async () => {
+          arrange('admin');
+          await expect(service.topUpWallet(5, 9, 50)).resolves.toEqual({ businessId: 5, balance: 150 });
+        });
+      });
     });
   });
 

@@ -40,4 +40,24 @@ describe('AppModule wiring', () => {
     const imports = Reflect.getMetadata('imports', AppModule) || [];
     expect(imports).toContain(SurveyModule);
   });
+  /**
+   * The shipped survey templates are seeded at boot, the same way the app
+   * catalogue and the profile fields are: a deploy is what puts new ones in
+   * front of businesses, without an admin having to retype them.
+   */
+  it('seeds the shipped survey templates at boot', async () => {
+    const { AppModule } = require('./app.module');
+
+    const migrationService = { run: jest.fn() };
+    const adminService = { seedDefaultConfig: jest.fn() };
+    const profileService = { seedDefaultFields: jest.fn() };
+    const templateService = { seedDefaultTemplates: jest.fn().mockResolvedValue(120) };
+
+    const app = new AppModule(
+      migrationService as any, adminService as any, profileService as any, templateService as any,
+    );
+    await app.onModuleInit();
+
+    expect(templateService.seedDefaultTemplates).toHaveBeenCalled();
+  });
 });

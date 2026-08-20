@@ -386,6 +386,16 @@ export class UserService {
     return user.spamList || [];
   }
 
+  /**
+   * Role check for the wallet top-up gate. Read from the DB row, never from the
+   * JWT payload — the token's shape is client-supplied and the role is not in
+   * it. Missing user is not an admin (fail closed).
+   */
+  async isAdmin(userId: number): Promise<boolean> {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    return user?.role === 'admin';
+  }
+
   async addCredit(userId: number, amount: number): Promise<User> {
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');

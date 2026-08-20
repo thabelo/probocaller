@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException, ConflictException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException, ConflictException, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import { MetricsService } from '../metrics/metrics.service';
 import { DataSource, Like, Repository } from 'typeorm';
 import { CallLog } from './call.entity';
 import { CallRating } from './call-rating.entity';
@@ -29,7 +30,24 @@ export class CallService {
     private readonly dataBrokerService: DataBrokerService,
     private readonly referralService: ReferralService,
     private readonly ds: DataSource,
+    // Optional: most unit tests construct this service without the metrics
+    // module, and observability must never be a hard dependency of the call path.
+    @Optional() private readonly metrics?: MetricsService,
   ) {}
+
+  /**
+   * A blocked call is a user-visible failure (empty wallet, call rules, closed
+   * calling window). Feeding calls_blocked_total{reason} is what lets a spike in
+   * any single reason be paged on. Guarded — observability must never turn a
+   * blocked call into a 500 for the caller.
+   */
+  private countBlocked(reason: string) {
+    try {
+      this.metrics?.recordBlockedCall(reason);
+    } catch {
+      /* observability only */
+    }
+  }
 
   private getRatePerSecond(): Promise<number> {
     return this.settingsReader.getNumber('RATE_PER_SECOND');
@@ -157,6 +175,7 @@ export class CallService {
         completedAt: new Date(),
       });
       await this.callRepository.save(blockedCall);
+      this.countBlocked(blockedCall.blockedReason);
       await this.addNotification(
         toUser.id,
         'An incoming call was blocked because your wallet balance is too low. Top up your account to receive calls.',
@@ -186,6 +205,7 @@ export class CallService {
         completedAt: new Date(),
       });
       await this.callRepository.save(blockedCall);
+      this.countBlocked(blockedCall.blockedReason);
       return { call: blockedCall, blocked: true, voiceNote: true, message: 'This person is not accepting calls at this time.' };
     }
 
@@ -204,6 +224,7 @@ export class CallService {
         completedAt: new Date(),
       });
       await this.callRepository.save(blockedCall);
+      this.countBlocked(blockedCall.blockedReason);
       return { call: blockedCall, blocked: true, voiceNote: true, message: 'This person is not accepting calls through Probo Caller.' };
     }
     // Tier 1: business rings free — the call carries a zero rate, so no one is
@@ -231,6 +252,7 @@ export class CallService {
           completedAt: new Date(),
         });
         await this.callRepository.save(blockedCall);
+        this.countBlocked(blockedCall.blockedReason);
         await this.addNotification(
           payer.id,
           'Your call was blocked — wallet balance is too low. Please top up your account to continue making calls.',
@@ -258,6 +280,7 @@ export class CallService {
         completedAt: new Date(),
       });
       await this.callRepository.save(blockedCall);
+      this.countBlocked(blockedCall.blockedReason);
       return { call: blockedCall, blocked: true, voiceNote: false, message: 'You have blocked this number.' };
     }
 

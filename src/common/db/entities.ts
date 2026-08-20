@@ -35,6 +35,7 @@ import { AdminInvite } from '../../admin/admin-invite.entity';
 import { AuditLog } from '../../audit/audit-log.entity';
 import { UserConsent } from '../../consent/user-consent.entity';
 import { ErrorLog } from '../../error-log/error-log.entity';
+import { DeviceToken } from '../../push/device-token.entity';
 import { SuppressionEntry } from '../../suppression/suppression.entity';
 import { ReverseLookupEvent } from '../../lookup/reverse-lookup-event.entity';
 import { ScamKeyword } from '../../scam-keyword/scam-keyword.entity';
@@ -96,6 +97,7 @@ export const ENTITIES = [
   AuditLog,
   UserConsent,
   ErrorLog,
+  DeviceToken,
   SuppressionEntry,
   ReverseLookupEvent,
   ScamKeyword,

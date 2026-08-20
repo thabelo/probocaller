@@ -19,9 +19,9 @@ export class UpsertProfileFieldDto {
   @IsString()
   label: string;
 
-  @ApiPropertyOptional({ enum: ['select', 'number', 'boolean', 'text'] })
+  @ApiPropertyOptional({ enum: ['select', 'multi_select', 'number', 'boolean', 'text'] })
   @IsOptional()
-  @IsIn(['select', 'number', 'boolean', 'text'])
+  @IsIn(['select', 'multi_select', 'number', 'boolean', 'text'])
   type?: string;
 
   @ApiPropertyOptional()

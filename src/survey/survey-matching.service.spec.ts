@@ -130,3 +130,39 @@ describe('SurveyMatchingService', () => {
     });
   });
 });
+
+/**
+ * Interests are a multi-select: one person holds several industries at once,
+ * and "All" means every one of them.
+ *
+ * The comparison used to stringify whatever was held, so an array of interests
+ * became "telecoms,health" and matched a Telecoms filter only by accident of
+ * spelling. A business paying to reach people interested in Health would have
+ * silently reached nobody who listed more than one industry.
+ */
+describe('matchesFilters — multi-select answers', () => {
+  const { matchesFilters } = require('./survey-matching.service');
+
+  it('matches when one of the held values is wanted', () => {
+    expect(matchesFilters({ interests: ['health'] }, { interests: ['telecoms', 'health'] })).toBe(true);
+  });
+
+  it('does not match when none of the held values is wanted', () => {
+    expect(matchesFilters({ interests: ['insurance'] }, { interests: ['telecoms', 'health'] })).toBe(false);
+  });
+
+  it('still matches a single held value', () => {
+    expect(matchesFilters({ interests: ['health'] }, { interests: 'health' })).toBe(true);
+  });
+
+  /** Someone who said "All" is interested in whatever is asked. */
+  it('treats "all" as matching every filter', () => {
+    expect(matchesFilters({ interests: ['insurance'] }, { interests: ['all'] })).toBe(true);
+    expect(matchesFilters({ interests: ['telecoms'] }, { interests: ['all'] })).toBe(true);
+  });
+
+  /** An empty list is an unanswered field, not a match. */
+  it('does not treat an empty selection as an answer', () => {
+    expect(matchesFilters({ interests: ['health'] }, { interests: [] })).toBe(false);
+  });
+});

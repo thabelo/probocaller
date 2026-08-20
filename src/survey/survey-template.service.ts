@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SurveyTemplate, TemplateQuestion } from './survey-template.entity';
 import { CHOICE_TYPES, isQuestionType } from './question-type';
+import { TEMPLATE_LIBRARY } from './survey-template-library';
 
 export interface CreateTemplateInput {
   key: string;
@@ -76,6 +77,41 @@ export class SurveyTemplateService {
     if (input.isActive !== undefined) template.isActive = input.isActive;
 
     return this.templateRepository.save(template);
+  }
+
+  /**
+   * Put the shipped library (survey-template-library.ts) into the database,
+   * adding only what is missing.
+   *
+   * Missing-only, never an upsert: once a template is a row, the admin console
+   * owns it — renaming one, reworking its questions or retiring it are all
+   * things an admin does deliberately, and a deploy that overwrote them would
+   * undo that work silently. The catalogue and the profile fields seed the
+   * same way for the same reason.
+   *
+   * Returns how many it added, for the boot log.
+   */
+  async seedDefaultTemplates(): Promise<number> {
+    // One read rather than a lookup per template: this runs at every boot.
+    const existing = await this.templateRepository.find({ select: { key: true } });
+    const known = new Set(existing.map((t) => t.key));
+
+    let added = 0;
+    for (const seed of TEMPLATE_LIBRARY) {
+      if (known.has(seed.key)) continue;
+      await this.templateRepository.save(
+        this.templateRepository.create({
+          key: seed.key,
+          name: seed.name,
+          description: seed.description,
+          category: seed.category,
+          questionsJson: seed.questions,
+          isActive: true,
+        }),
+      );
+      added += 1;
+    }
+    return added;
   }
 
   /**

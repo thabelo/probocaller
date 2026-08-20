@@ -1,13 +1,18 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { EntityManager, Repository } from 'typeorm';
 import { Transaction } from './transaction.entity';
+import { MetricsService } from '../metrics/metrics.service';
 
 @Injectable()
 export class TransactionService {
   constructor(
     @InjectRepository(Transaction)
     private txRepo: Repository<Transaction>,
+    // Optional: many call sites (and most unit tests) construct this service
+    // without the metrics module, and observability must never be a hard
+    // dependency of a money path.
+    @Optional() private readonly metrics?: MetricsService,
   ) {}
 
   /**
@@ -28,6 +33,14 @@ export class TransactionService {
     businessId?: number,
   ): Promise<Transaction> {
     const data = { userId, type, amount, description, callId: callId ?? null, businessId: businessId ?? null };
+    // Every ledger row is money actually moving, so this single choke point
+    // feeds money_moved_zar_total for ALL flows. Guarded because a broken
+    // counter must never roll back or fail the wallet move it is measuring.
+    try {
+      this.metrics?.recordMoneyMoved(type, Number(amount));
+    } catch {
+      /* observability only — never break the ledger write */
+    }
     if (manager) {
       const tx = manager.create(Transaction, data);
       return manager.save(Transaction, tx);

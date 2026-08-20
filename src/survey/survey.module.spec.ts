@@ -34,6 +34,7 @@ import { Global, Module } from '@nestjs/common';
   exports: [DataSource],
 })
 class FakeDataSourceModule {}
+import { DeviceToken } from '../push/device-token.entity';
 import { SurveyAnswer } from './survey-answer.entity';
 import { SurveyPublishService } from './survey-publish.service';
 import { SurveyResponseService } from './survey-response.service';
@@ -75,6 +76,10 @@ describe('SurveyModule wiring', () => {
       .useValue({ find: jest.fn().mockResolvedValue([]), findOne: jest.fn(), create: jest.fn(), save: jest.fn() })
       .overrideProvider(getRepositoryToken(SurveyAnswer))
       .useValue({ find: jest.fn(), save: jest.fn() })
+      // Publishing alerts the matched audience, so PushModule (and its device
+      // registry) come along with it.
+      .overrideProvider(getRepositoryToken(DeviceToken))
+      .useValue({ find: jest.fn().mockResolvedValue([]), findOne: jest.fn(), create: jest.fn(), save: jest.fn(), remove: jest.fn() })
       .overrideProvider(getRepositoryToken(Survey))
       .useValue({ find: jest.fn(), findOne: jest.fn(), create: jest.fn(), save: jest.fn() })
       .overrideProvider(getRepositoryToken(SurveyQuestion))
