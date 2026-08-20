@@ -39,16 +39,7 @@ function toCents(amount: number): number {
 export class SurveyPricingService {
   constructor(private readonly settingsReader: SettingsReaderService) {}
 
-  /**
-   * @param collectPhoneNumber Whether this survey asks respondents for their
-   *   number. Adds SURVEY_FEE_PHONE_NUMBER once per response — its own price,
-   *   independent of the data-broking PHONE_NUMBER_CREDIT_COST, because a
-   *   survey buys a number in the narrow context of that survey.
-   */
-  async pricePerResponse(
-    questionTypes: QuestionType[],
-    collectPhoneNumber = false,
-  ): Promise<number> {
+  async pricePerResponse(questionTypes: QuestionType[]): Promise<number> {
     if (questionTypes.length === 0) {
       throw new BadRequestException('A survey must have at least one question');
     }
@@ -68,14 +59,7 @@ export class SurveyPricingService {
       ),
     );
 
-    const questionsTotal = questionTypes.reduce((sum, type) => sum + rates.get(type)!, 0);
-    // Once per response, not once per question — the number is one datum
-    // however many things the survey asks alongside it.
-    const phoneFee = collectPhoneNumber
-      ? await this.settingsReader.getNumber('SURVEY_FEE_PHONE_NUMBER')
-      : 0;
-
-    return toCents(questionsTotal + phoneFee);
+    return toCents(questionTypes.reduce((sum, type) => sum + rates.get(type)!, 0));
   }
 
   /**
@@ -92,14 +76,13 @@ export class SurveyPricingService {
   async quoteForBudget(
     questionTypes: QuestionType[],
     budget: number,
-    collectPhoneNumber = false,
   ): Promise<SurveyQuote> {
     if (!Number.isFinite(budget) || budget <= 0) {
       throw new BadRequestException('Give a budget greater than zero.');
     }
 
     const [pricePerResponse, cutRate] = await Promise.all([
-      this.pricePerResponse(questionTypes, collectPhoneNumber),
+      this.pricePerResponse(questionTypes),
       this.settingsReader.getNumber('PLATFORM_CUT_RATE'),
     ]);
 
@@ -112,7 +95,7 @@ export class SurveyPricingService {
       );
     }
 
-    return this.quote(questionTypes, targetResponses, collectPhoneNumber);
+    return this.quote(questionTypes, targetResponses);
   }
 
   /**
@@ -128,14 +111,13 @@ export class SurveyPricingService {
   async quote(
     questionTypes: QuestionType[],
     targetResponses: number,
-    collectPhoneNumber = false,
   ): Promise<SurveyQuote> {
     if (!Number.isInteger(targetResponses) || targetResponses <= 0) {
       throw new BadRequestException('Target responses must be a whole number greater than zero');
     }
 
     const [pricePerResponse, cutRate] = await Promise.all([
-      this.pricePerResponse(questionTypes, collectPhoneNumber),
+      this.pricePerResponse(questionTypes),
       this.settingsReader.getNumber('PLATFORM_CUT_RATE'),
     ]);
 

@@ -27,12 +27,6 @@ export interface CreateSurveyInput {
   category?: string;
   filters?: SurveyFilters;
   targetResponses: number;
-  /**
-   * Ask respondents for their phone number. Opt-in and priced per response
-   * (SURVEY_FEE_PHONE_NUMBER) on top of the question fees — its own price,
-   * separate from the data-broking one-off.
-   */
-  collectPhoneNumber?: boolean;
   /** Days the survey runs for; null means indefinite (§3.3). */
   durationDays: number | null;
   /** Either give questions outright, or name a template to copy them from. */
@@ -113,7 +107,6 @@ export class SurveyService {
         status: 'draft',
         filtersJson: input.filters ?? {},
         targetResponses: input.targetResponses,
-        collectPhoneNumber: input.collectPhoneNumber ?? false,
         // Price is frozen at PUBLISH, not here. Writing it now would mean a
         // draft left for a week is escrowed at a rate nobody agreed to.
         pricePerResponse: '0',
@@ -130,7 +123,7 @@ export class SurveyService {
     return {
       ...survey,
       questions,
-      quote: await this.quoteFor(questions, input.targetResponses, survey.collectPhoneNumber),
+      quote: await this.quoteFor(questions, input.targetResponses),
     };
   }
 
@@ -151,7 +144,7 @@ export class SurveyService {
     return {
       ...survey,
       questions,
-      quote: await this.quoteFor(questions, survey.targetResponses, survey.collectPhoneNumber),
+      quote: await this.quoteFor(questions, survey.targetResponses),
     };
   }
 
@@ -177,7 +170,6 @@ export class SurveyService {
     if (input.category !== undefined) survey.category = input.category;
     if (input.filters !== undefined) survey.filtersJson = input.filters;
     if (input.targetResponses !== undefined) survey.targetResponses = input.targetResponses;
-    if (input.collectPhoneNumber !== undefined) survey.collectPhoneNumber = input.collectPhoneNumber;
     if (input.durationDays !== undefined) survey.expiresAt = this.expiryFrom(input.durationDays);
 
     const saved = await this.surveyRepository.save(survey);
@@ -243,12 +235,8 @@ export class SurveyService {
   }
 
   /** What this survey WOULD cost if published right now. */
-  private async quoteFor(
-    questions: { type: QuestionType }[],
-    targetResponses: number,
-    collectPhoneNumber = false,
-  ) {
-    return this.pricing.quote(questions.map((q) => q.type), targetResponses, collectPhoneNumber);
+  private async quoteFor(questions: { type: QuestionType }[], targetResponses: number) {
+    return this.pricing.quote(questions.map((q) => q.type), targetResponses);
   }
 
   private expiryFrom(durationDays: number | null | undefined): Date | null {

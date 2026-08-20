@@ -23,7 +23,6 @@ describe('SurveyPricingService', () => {
     SURVEY_FEE_MULTIPLE_CHOICE: 1,
     SURVEY_FEE_MULTI_SELECT: 1.5,
     SURVEY_FEE_DROPDOWN: 0.75,
-    SURVEY_FEE_PHONE_NUMBER: 5,
     PLATFORM_CUT_RATE: 0.24,
   };
 
@@ -200,53 +199,3 @@ describe('SurveyPricingService', () => {
   });
 });
 
-/**
- * Collecting respondents' phone numbers.
- *
- * A business opts in per survey, and pays a per-response fee on top of the
- * question rates for it. Priced separately from the data-broking one-off
- * (PHONE_NUMBER_CREDIT_COST) because the two markets are not billed the same
- * — this fee buys a number in the narrow context of one survey.
- */
-describe('SurveyPricingService — collecting phone numbers', () => {
-  let service: SurveyPricingService;
-  let getNumber: jest.Mock;
-
-  const RATES: Record<string, number> = {
-    SURVEY_FEE_FREE_TEXT: 2.5,
-    SURVEY_FEE_YES_NO: 0.5,
-    SURVEY_FEE_PHONE_NUMBER: 5,
-    PLATFORM_CUT_RATE: 0.24,
-  };
-
-  beforeEach(() => {
-    getNumber = jest.fn(async (key: string) => {
-      if (!(key in RATES)) throw new Error(`Missing or invalid setting: ${key}`);
-      return RATES[key];
-    });
-    service = new SurveyPricingService({ getNumber } as any);
-  });
-
-  it('leaves the price alone when the survey does not collect numbers', async () => {
-    expect(await service.pricePerResponse(['yes_no'], false)).toBeCloseTo(0.5, 4);
-  });
-
-  it('adds the fee once per response when it does', async () => {
-    expect(await service.pricePerResponse(['yes_no'], true)).toBeCloseTo(5.5, 4);
-  });
-
-  /** One fee per response, not one per question. */
-  it('adds the fee once no matter how many questions are asked', async () => {
-    expect(await service.pricePerResponse(['yes_no', 'yes_no', 'free_text'], true))
-      .toBeCloseTo(0.5 + 0.5 + 2.5 + 5, 4);
-  });
-
-  it('defaults to not collecting, so an existing survey is priced as before', async () => {
-    expect(await service.pricePerResponse(['yes_no'])).toBeCloseTo(0.5, 4);
-  });
-
-  it('carries the fee into the quote a business sees before publishing', async () => {
-    const q = await service.quote(['yes_no'], 10, true);
-    expect(q.pricePerResponse).toBeCloseTo(5.5, 4);
-  });
-});

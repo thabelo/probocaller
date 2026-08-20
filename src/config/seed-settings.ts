@@ -36,7 +36,6 @@ export const DEFAULT_SETTINGS: Array<{ key: string; value: string; description: 
   { key: 'RATE_PER_SECOND', value: '0.002', description: 'Charge per second for business calls (ZAR)' },
   { key: 'SMS_RATE_PER_MESSAGE', value: '0.05', description: 'Flat charge per SMS message (ZAR)' },
   { key: 'PHONE_NUMBER_CREDIT_COST', value: '10', description: 'Price of a lead\u2019s phone number in the base currency (ZAR), on top of the profile fields. Charged only when that user has phone sharing on. Priced like the leads base fee, not like a profile field\u2019s fractional credit cost \u2014 a number is worth far more than a demographic bucket.' },
-  { key: 'SURVEY_FEE_PHONE_NUMBER', value: '5.00', description: 'Per-response fee (ZAR) a survey pays on top of its question fees when it collects respondents\u2019 phone numbers. Independent of PHONE_NUMBER_CREDIT_COST \u2014 surveys and data broking are not billed the same, so the two prices move separately.' },
   { key: 'PLATFORM_CUT_RATE', value: '0.24', description: 'Platform revenue share (0.24 = 24%)' },
   { key: 'REFERRAL_COMMISSION_RATE', value: '0.03', description: 'Lifetime referral commission paid to the referrer, platform-funded (0.03 = 3%). Set to 0 to switch the programme off.' },
   { key: 'LEADS_BASE_FEE', value: '250', description: 'Data-certificate base fee (ZAR) charged per user (per lead)' },

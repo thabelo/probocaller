@@ -114,28 +114,3 @@ describe('seed-settings — the phone-number price', () => {
   });
 });
 
-/**
- * Surveys and data broking are not billed the same, so the phone number
- * carries two independent prices: a one-off on a data-broking lead, and a
- * per-response fee on a survey that collects numbers. They must be tunable
- * apart — one admin value driving both would tie the two markets together.
- */
-describe('seed-settings — the survey phone fee is its own price', () => {
-  const surveyFee = () => DEFAULT_SETTINGS.find((s) => s.key === 'SURVEY_FEE_PHONE_NUMBER');
-  const brokingPrice = () => DEFAULT_SETTINGS.find((s) => s.key === 'PHONE_NUMBER_CREDIT_COST');
-
-  it('is seeded', () => {
-    expect(surveyFee()).toBeDefined();
-  });
-
-  it('is a different setting from the data-broking price', () => {
-    expect(surveyFee()!.key).not.toBe(brokingPrice()!.key);
-    expect(surveyFee()!.value).not.toBe(brokingPrice()!.value);
-  });
-
-  it('costs more than the priciest question but less than a whole lead', () => {
-    const fee = parseFloat(surveyFee()!.value);
-    expect(fee).toBeGreaterThan(2.5);
-    expect(fee).toBeLessThan(parseFloat(brokingPrice()!.value));
-  });
-});
