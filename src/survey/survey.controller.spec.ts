@@ -107,14 +107,14 @@ describe('SurveyController', () => {
    */
   it('quotes a set of questions without creating anything', async () => {
     await controller.quote({ questions: [{ type: 'yes_no', prompt: 'q' }], targetResponses: 10 } as any);
-    expect(pricing.quote).toHaveBeenCalledWith(['yes_no'], 10);
+    expect(pricing.quote).toHaveBeenCalledWith(['yes_no'], 10, false);
     expect(surveys.createDraft).not.toHaveBeenCalled();
   });
 
   /** A budget asks the server how many responses it buys. */
   it('quotes from a budget when one is given', async () => {
     await controller.quote({ questions: [{ type: 'yes_no', prompt: 'q' }], budget: 100 } as any);
-    expect(pricing.quoteForBudget).toHaveBeenCalledWith(['yes_no'], 100);
+    expect(pricing.quoteForBudget).toHaveBeenCalledWith(['yes_no'], 100, false);
     expect(pricing.quote).not.toHaveBeenCalled();
   });
 

@@ -79,6 +79,13 @@ export class Survey {
   @Column({ type: 'int', default: 0 })
   targetResponses: number;
 
+  // Whether this survey asks respondents for their phone number. Opt-in and
+  // priced per response (SURVEY_FEE_PHONE_NUMBER) on top of the question fees,
+  // so a business chooses the cost rather than inheriting it. Defaults false:
+  // no existing survey starts paying for numbers it never asked for.
+  @Column({ default: false })
+  collectPhoneNumber: boolean;
+
   /**
    * Price of ONE completed response — the sum of the question type rates at
    * the moment of publish. Frozen deliberately: an admin retuning a rate later

@@ -1,5 +1,5 @@
 import {
-  ArrayMinSize, IsArray, IsInt, IsNumber, IsObject, IsOptional, IsPositive, IsString,
+  ArrayMinSize, IsArray, IsBoolean, IsInt, IsNumber, IsObject, IsOptional, IsPositive, IsString,
   Matches, MaxLength, Min, ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -48,6 +48,11 @@ export class CreateSurveyDto {
   @IsInt() @IsPositive()
   targetResponses: number;
 
+  /** Ask respondents for their phone number, at a per-response fee (§ pricing). */
+  @ApiProperty({ required: false })
+  @IsOptional() @IsBoolean()
+  collectPhoneNumber?: boolean;
+
   /** Days to run for; null runs indefinitely until the target is met (§3.3). */
   @ApiProperty({ required: false, nullable: true })
   @IsOptional() @IsInt() @Min(1)
@@ -92,6 +97,10 @@ export class UpdateSurveyDto {
   @IsOptional() @IsInt() @IsPositive()
   targetResponses?: number;
 
+  @ApiProperty({ required: false })
+  @IsOptional() @IsBoolean()
+  collectPhoneNumber?: boolean;
+
   @ApiProperty({ required: false, nullable: true })
   @IsOptional() @IsInt() @Min(1)
   durationDays?: number | null;
@@ -117,6 +126,15 @@ export class QuoteSurveyDto {
   @ApiProperty({ required: false })
   @IsOptional() @IsInt() @IsPositive()
   targetResponses?: number;
+
+  /**
+   * Whether the survey will collect respondents' phone numbers. Adds the
+   * per-response phone fee, so the quote a business sees before publishing
+   * matches what it will actually be held for.
+   */
+  @ApiProperty({ required: false })
+  @IsOptional() @IsBoolean()
+  collectPhoneNumber?: boolean;
 
   /**
    * …or name a BUDGET and let the server say how many responses it buys. A

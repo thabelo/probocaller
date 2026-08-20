@@ -56,8 +56,8 @@ export class SurveyController {
     // A budget answers "how many can I buy?"; a count answers "what will this
     // cost?". Either way the arithmetic stays here.
     return body.budget != null
-      ? this.pricing.quoteForBudget(types, body.budget)
-      : this.pricing.quote(types, body.targetResponses as number);
+      ? this.pricing.quoteForBudget(types, body.budget, body.collectPhoneNumber ?? false)
+      : this.pricing.quote(types, body.targetResponses as number, body.collectPhoneNumber ?? false);
   }
 
   @Get()
