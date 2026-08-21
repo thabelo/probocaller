@@ -288,6 +288,34 @@ describe('SurveyPublishService', () => {
       await service.publish(1, 100);
       expect(savedSurvey().audienceAtPublish).toBe(20);
     });
+
+    /**
+     * Banding the estimate endpoint buys nothing if publishing then reports
+     * the exact figure — it is the same filter, and the business was going to
+     * publish anyway. The stored `audienceAtPublish` stays exact: it is an
+     * internal audit record and is never returned to anyone.
+     */
+    describe('the audience it reports back', () => {
+      it('bands the audience it reports after publishing', async () => {
+        matching.estimateAudience.mockResolvedValue(47);
+        const result = await service.publish(1, 100);
+        expect(result.audienceSize).toBe(40);
+        expect(result.audienceBand).toBe('40-49');
+      });
+
+      it('still records the exact audience on the survey row', async () => {
+        matching.estimateAudience.mockResolvedValue(47);
+        await service.publish(1, 100);
+        expect(savedSurvey().audienceAtPublish).toBe(47);
+      });
+
+      /** Rounding down overstates the shortfall, which is the safe direction. */
+      it('measures the shortfall against the banded figure', async () => {
+        matching.estimateAudience.mockResolvedValue(47);
+        const result = await service.publish(1, 100);
+        expect(result.shortfall).toBe(60);
+      });
+    });
   });
 
   describe('closing', () => {
@@ -530,7 +558,13 @@ describe('SurveyPublishService', () => {
 
     it('matches on the survey filters, not on everyone', async () => {
       await publishWith([11]);
-      expect(matching.audience).toHaveBeenCalledWith(expect.anything());
+      // Scoped to the business, so the repeat cap decides who is alerted too —
+      // alerting someone it may no longer survey would be an invitation they
+      // cannot act on.
+      expect(matching.audience).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ businessId: 7 }),
+      );
     });
 
     /**

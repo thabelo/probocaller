@@ -19,7 +19,14 @@ export class DropSurveyCollectPhoneNumber1787300000000 implements MigrationInter
         await queryRunner.query(`ALTER TABLE "surveys" DROP COLUMN IF EXISTS "collectPhoneNumber"`);
     }
 
+    /**
+     * Reversible for schema integrity only. Rolling this back does NOT restore
+     * phone collection: the DTO no longer accepts the field, the pricing no
+     * longer charges for it and the response path no longer writes it, so the
+     * column comes back empty and stays that way. It is here so a rollback
+     * chain does not break, not because the feature can be recovered by one.
+     */
     public async down(queryRunner: QueryRunner): Promise<void> {
-        await queryRunner.query(`ALTER TABLE "surveys" ADD "collectPhoneNumber" boolean NOT NULL DEFAULT false`);
+        await queryRunner.query(`ALTER TABLE "surveys" ADD COLUMN IF NOT EXISTS "collectPhoneNumber" boolean NOT NULL DEFAULT false`);
     }
 }

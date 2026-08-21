@@ -12,6 +12,10 @@ import { CreateSurveyDto, QuoteSurveyDto, UpdateSurveyDto, AudienceDto } from '.
 import { SurveyPublishService } from './survey-publish.service';
 import { SurveyMatchingService } from './survey-matching.service';
 import { SurveyResultsService } from './survey-results.service';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { SurveyAudienceProbe } from './survey-audience-probe.entity';
+import { bandAudience } from './survey-audience-band';
 
 
 /**
@@ -39,6 +43,8 @@ export class SurveyController {
     private readonly publishing: SurveyPublishService,
     private readonly matching: SurveyMatchingService,
     private readonly surveyResults: SurveyResultsService,
+    @InjectRepository(SurveyAudienceProbe)
+    private readonly probes: Repository<SurveyAudienceProbe>,
   ) {}
 
   @Get('templates')
@@ -87,11 +93,38 @@ export class SurveyController {
    * How many people a filter can actually reach. The builder shows this BEFORE
    * publishing, so a business can see when its targeting is narrower than the
    * number of responses it is about to pay for.
+   *
+   * Answered in BUCKETS, never exactly. This is the only number a business can
+   * ask for repeatedly, for free, without publishing anything and without
+   * anybody answering — so an exact count is the cheapest oracle on the
+   * platform: ask for "Gauteng, 25-34", get 40; add "has medical aid", get 39;
+   * you now know exactly one person in that band has no medical aid, and no
+   * suppression rule downstream ever got a say. Bucketing costs an approximate
+   * shortfall warning and buys the whole defence.
+   *
+   * Every probe is recorded. Banding hides a single person; the log is what
+   * makes a campaign of forty narrowing probes legible afterwards.
    */
   @Post('audience')
-  @ApiOperation({ summary: 'How many respondents match these filters' })
-  async audience(@Body() body: AudienceDto) {
-    return { audienceSize: await this.matching.estimateAudience(body.filters ?? {}) };
+  @ApiOperation({ summary: 'Roughly how many respondents match these filters' })
+  async audience(@Request() req, @Body() body: AudienceDto) {
+    const filters = body.filters ?? {};
+    const band = bandAudience(
+      await this.matching.estimateAudience(filters, { businessId: body.businessId }),
+    );
+
+    // Never fail the builder's estimate over the audit row — the business is
+    // mid-flow and the write is ours, not theirs.
+    await this.probes
+      .save(this.probes.create({
+        userId: req.user.userId,
+        businessId: body.businessId ?? null,
+        filtersJson: filters,
+        band: band.audienceBand,
+      }))
+      .catch(() => undefined);
+
+    return band;
   }
 
   /**

@@ -17,6 +17,7 @@ import { QuestionType, feeSettingKey } from './question-type';
 import { assertPromptCollectsNoIdentity } from './prompt-screen';
 import { SettingsReaderService } from '../config/settings-reader.service';
 import { readResultThresholds } from './survey-results.thresholds';
+import { bandAudience } from './survey-audience-band';
 
 /** Round to cents, so a hold and its refunds still reconcile. */
 const toCents = (amount: number) => Math.round(amount * 100) / 100;
@@ -129,7 +130,9 @@ export class SurveyPublishService implements OnModuleInit, OnModuleDestroy {
       questions.map((q) => q.type as QuestionType),
       survey.targetResponses,
     );
-    const audienceSize = await this.matching.estimateAudience(survey.filtersJson ?? {});
+    const audienceSize = await this.matching.estimateAudience(survey.filtersJson ?? {}, {
+      businessId: survey.businessId,
+    });
 
     // Both floors are checked BEFORE the transaction opens, so a refusal never
     // has to unwind a wallet debit.
@@ -202,11 +205,18 @@ export class SurveyPublishService implements OnModuleInit, OnModuleDestroy {
 
     await this.alertAudience(survey);
 
+    // Reported in a bucket, like the estimate endpoint. Banding that one buys
+    // nothing if publishing the same filter then hands back the exact figure.
+    // The exact count stays on the survey row, where it is an audit record
+    // nobody outside this service ever reads. Rounding down overstates the
+    // shortfall, which is the direction that warns rather than reassures.
+    const band = bandAudience(audienceSize);
+
     return {
       ...survey,
       quote,
-      audienceSize,
-      shortfall: Math.max(0, survey.targetResponses - audienceSize),
+      ...band,
+      shortfall: Math.max(0, survey.targetResponses - band.audienceSize),
     };
   }
 
@@ -331,7 +341,9 @@ export class SurveyPublishService implements OnModuleInit, OnModuleDestroy {
    */
   private async alertAudience(survey: Survey): Promise<void> {
     try {
-      const audience = await this.matching.audience(survey.filtersJson ?? {});
+      const audience = await this.matching.audience(survey.filtersJson ?? {}, {
+        businessId: survey.businessId,
+      });
       const pays = Number(survey.pricePerResponse ?? 0);
       const reward = pays > 0 ? ` — answer it and earn ${pays.toFixed(2)} credits.` : '.';
       // Push carries its own "New survey for you" title, but the notification

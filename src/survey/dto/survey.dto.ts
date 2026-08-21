@@ -133,4 +133,13 @@ export class AudienceDto {
   @ApiProperty({ required: false, type: Object })
   @IsOptional() @IsObject()
   filters?: SurveyFilters;
+
+  /**
+   * Which business is asking. Optional because the builder estimates before a
+   * business is necessarily resolved — it only tightens the probe log, and a
+   * missing one must never cost the caller their estimate.
+   */
+  @ApiProperty({ required: false })
+  @IsOptional() @IsInt() @Min(1)
+  businessId?: number;
 }

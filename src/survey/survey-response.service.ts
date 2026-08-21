@@ -113,7 +113,11 @@ export class SurveyResponseService {
       if (answered.has(survey.id)) continue;
       if (this.ownsSurvey(userId, survey)) continue;
 
-      const audience = await this.matching.audience(survey.filtersJson ?? {});
+      // Scoped to the business, so someone this one has already surveyed to
+      // its limit lately is simply not offered another of its surveys.
+      const audience = await this.matching.audience(survey.filtersJson ?? {}, {
+        businessId: survey.businessId,
+      });
       if (!audience.includes(userId)) continue;
 
       const questions = await this.questionRepository.find({
@@ -160,6 +164,11 @@ export class SurveyResponseService {
       throw new BadRequestException('You have already answered this survey.');
     }
 
+    // DELIBERATELY unscoped to the business, unlike `available` above. The
+    // repeat cap counts released cohorts, so it can rise while someone is
+    // part-way through answering — scoping here would fail their submit after
+    // they had done the work, for a reason they could not have seen coming.
+    // If they were offered it, they finish it and they are paid.
     const audience = await this.matching.audience(
       (await this.surveyRepository.findOne({ where: { id: surveyId } }))?.filtersJson ?? {},
     );

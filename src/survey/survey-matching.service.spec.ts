@@ -4,6 +4,8 @@ import { SurveyMatchingService, matchesFilters } from './survey-matching.service
 import { AppInstall } from '../marketplace/app-install.entity';
 import { UserProfile } from '../profile/user-profile.entity';
 import { ProfileField } from '../profile/profile-field.entity';
+import { DataAccessLog } from '../profile/data-access-log.entity';
+import { SettingsReaderService } from '../config/settings-reader.service';
 
 /**
  * Who gets asked (surveys-spec §3.2).
@@ -56,6 +58,7 @@ describe('SurveyMatchingService', () => {
   let installRepo: any;
   let profileRepo: any;
   let fieldRepo: any;
+  let accessLogRepo: any;
 
   const PROFILES = [
     { userId: 1, data: { age_range: '25_34', province: 'Gauteng', industry_sector: 'insurance' } },
@@ -76,12 +79,17 @@ describe('SurveyMatchingService', () => {
       ]),
     };
 
+    // Nobody has been surveyed by anyone yet, unless a test says otherwise.
+    accessLogRepo = { find: jest.fn().mockResolvedValue([]) };
+
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
         SurveyMatchingService,
         { provide: getRepositoryToken(AppInstall), useValue: installRepo },
         { provide: getRepositoryToken(UserProfile), useValue: profileRepo },
         { provide: getRepositoryToken(ProfileField), useValue: fieldRepo },
+        { provide: getRepositoryToken(DataAccessLog), useValue: accessLogRepo },
+        { provide: SettingsReaderService, useValue: { getNumber: jest.fn(async () => NaN) } },
       ],
     }).compile();
 
@@ -129,6 +137,64 @@ describe('SurveyMatchingService', () => {
       await expect(service.assertKnownFields({ provnce: 'Gauteng' })).rejects.toThrow(/provnce/);
     });
   });
+  /**
+   * Per-survey suppression does not compose. The same business asking the same
+   * dozen people something new every week builds a long profile of them out of
+   * results that each cleared every rule on their own.
+   */
+  describe('a business coming back to the same people', () => {
+    /** Three released cohorts already read for user 1, one for user 2. */
+    const alreadyRead = (counts: Record<number, number>) =>
+      accessLogRepo.find.mockResolvedValue(
+        Object.entries(counts).flatMap(([userId, n]) =>
+          Array.from({ length: n as number }, () => ({ userId: Number(userId) })),
+        ),
+      );
+
+    it('stops offering a survey to someone this business has already read three times', async () => {
+      alreadyRead({ 1: 3 });
+      await expect(service.audience({}, { businessId: 7 })).resolves.toEqual([2, 3]);
+    });
+
+    it('keeps someone sitting one below the cap', async () => {
+      alreadyRead({ 1: 2 });
+      await expect(service.audience({}, { businessId: 7 })).resolves.toEqual([1, 2, 3]);
+    });
+
+    /**
+     * Per business, not globally. Someone who installed Surveys to earn keeps
+     * earning from everyone else — what they are protected from is one party
+     * accumulating against them.
+     */
+    it('does not limit a different business', async () => {
+      alreadyRead({ 1: 9 });
+      await service.audience({}, { businessId: 7 });
+      expect(accessLogRepo.find).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expect.objectContaining({ businessId: 7 }) }),
+      );
+    });
+
+    it('counts only what this business read recently, not for all time', async () => {
+      alreadyRead({});
+      await service.audience({}, { businessId: 7 });
+      const [{ where }] = accessLogRepo.find.mock.calls[0];
+      expect(where.accessedAt).toBeDefined();
+      expect(where.purpose).toBe('survey_results');
+    });
+
+    /** No business in play — the respondent's own list — limits nothing. */
+    it('applies no limit when no business is asking', async () => {
+      alreadyRead({ 1: 9 });
+      await expect(service.audience({})).resolves.toEqual([1, 2, 3]);
+      expect(accessLogRepo.find).not.toHaveBeenCalled();
+    });
+
+    it('still reports the reach it will actually have', async () => {
+      alreadyRead({ 1: 3, 2: 3 });
+      await expect(service.estimateAudience({}, { businessId: 7 })).resolves.toBe(1);
+    });
+  });
+
 });
 
 /**

@@ -13,6 +13,7 @@ import { SurveyMatchingService } from './survey-matching.service';
 import { SurveyPublishService } from './survey-publish.service';
 import { SurveyResponseService } from './survey-response.service';
 import { SurveyResultsService } from './survey-results.service';
+import { SurveyAudienceProbe } from './survey-audience-probe.entity';
 import { RespondentSurveyController } from './respondent-survey.controller';
 import { SurveyResponse } from './survey-response.entity';
 import { SurveyAnswer } from './survey-answer.entity';
@@ -52,6 +53,9 @@ import { User } from '../user/user.entity';
       // Releasing a cohort of answers to a business writes a line in each
       // respondent's own access log — the same trail Databroker writes to.
       DataAccessLog,
+      // Every audience estimate is recorded, so a campaign of narrowing
+      // probes is legible after the fact.
+      SurveyAudienceProbe,
     ]),
     // AdminGuard authenticates via the 'jwt' strategy, same as every other
     // admin-guarded controller.

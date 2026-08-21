@@ -7,6 +7,8 @@ import { SurveyPricingService } from './survey-pricing.service';
 import { SurveyPublishService } from './survey-publish.service';
 import { SurveyMatchingService } from './survey-matching.service';
 import { SurveyResultsService } from './survey-results.service';
+import { getRepositoryToken } from '@nestjs/typeorm';
+import { SurveyAudienceProbe } from './survey-audience-probe.entity';
 import { AppAccessGuard, REQUIRES_APP } from '../marketplace/app-access.guard';
 
 /**
@@ -21,6 +23,7 @@ describe('SurveyController', () => {
   let publishing: any;
   let matching: any;
   let results: any;
+  let probes: any;
 
   const req = { user: { userId: 1 } };
 
@@ -44,6 +47,7 @@ describe('SurveyController', () => {
     };
     matching = { estimateAudience: jest.fn().mockResolvedValue(42) };
     results = { forBusiness: jest.fn().mockResolvedValue({ surveyId: 100, release: { state: 'released' } }) };
+    probes = { create: jest.fn((r: any) => r), save: jest.fn(async (r: any) => r) };
 
     const mod: TestingModule = await Test.createTestingModule({
       controllers: [SurveyController],
@@ -54,6 +58,7 @@ describe('SurveyController', () => {
         { provide: SurveyPublishService, useValue: publishing },
         { provide: SurveyMatchingService, useValue: matching },
         { provide: SurveyResultsService, useValue: results },
+        { provide: getRepositoryToken(SurveyAudienceProbe), useValue: probes },
       ],
     })
       .overrideGuard(AppAccessGuard)
@@ -138,8 +143,11 @@ describe('SurveyController', () => {
 
   /** The builder needs the reach BEFORE committing money to a narrow filter. */
   it('estimates how many people a filter can reach', async () => {
-    await controller.audience({ filters: { province: 'Gauteng' } } as any);
-    expect(matching.estimateAudience).toHaveBeenCalledWith({ province: 'Gauteng' });
+    await controller.audience(req, { filters: { province: 'Gauteng' } } as any);
+    expect(matching.estimateAudience).toHaveBeenCalledWith(
+      { province: 'Gauteng' },
+      expect.anything(),
+    );
   });
 
   /**
@@ -156,6 +164,46 @@ describe('SurveyController', () => {
     it('asks the results service rather than reading answers itself', async () => {
       await controller.results(req, 100);
       expect(surveys.get).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The audience count is the one number a business can ask for repeatedly,
+   * for free, without publishing anything — so it is the cheapest way to
+   * probe who exists. Banding it is what stops a one-person difference being
+   * readable; logging the probe is what makes a campaign of them visible.
+   */
+  describe('estimating an audience', () => {
+    it('bands the audience estimate instead of returning an exact count', async () => {
+      matching.estimateAudience.mockResolvedValue(412);
+      await expect(controller.audience(req, { filters: { province: 'gp' } } as any))
+        .resolves.toMatchObject({ audienceSize: 400, audienceBand: '400-449' });
+    });
+
+    it('says only that an audience is too small, never how small', async () => {
+      matching.estimateAudience.mockResolvedValue(6);
+      const out = await controller.audience(req, { filters: {} } as any);
+      expect(out.audienceSize).toBe(0);
+      expect(JSON.stringify(out)).not.toContain('6');
+    });
+
+    it('records every audience probe with the filter it used', async () => {
+      matching.estimateAudience.mockResolvedValue(412);
+      await controller.audience(req, { filters: { province: 'gp' } } as any);
+      expect(probes.save).toHaveBeenCalledWith(
+        expect.objectContaining({
+          userId: 1,
+          filtersJson: { province: 'gp' },
+          band: '400-449',
+        }),
+      );
+    });
+
+    /** A probe that cannot be written must not break the builder's estimate. */
+    it('still answers when the probe cannot be recorded', async () => {
+      probes.save.mockRejectedValue(new Error('down'));
+      matching.estimateAudience.mockResolvedValue(412);
+      await expect(controller.audience(req, { filters: {} } as any)).resolves.toBeDefined();
     });
   });
 });

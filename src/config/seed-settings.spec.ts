@@ -139,3 +139,22 @@ describe('seed-settings — the survey results thresholds', () => {
     }
   });
 });
+
+/**
+ * A budget rather than an anonymity guarantee, so unlike the results
+ * thresholds these are tunable in BOTH directions — a panel that grows past a
+ * few hundred people has a real case for asking more often, and nothing is
+ * promised to a respondent about how many times they may be asked.
+ */
+describe('seed-settings — how often one business may come back', () => {
+  const row = (key: string) => DEFAULT_SETTINGS.find((s) => s.key === key);
+
+  it('seeds a repeat window and a per-respondent cap', () => {
+    expect(row('SURVEY_REPEAT_WINDOW_DAYS')!.value).toBe('30');
+    expect(row('SURVEY_MAX_PER_RESPONDENT')!.value).toBe('3');
+  });
+
+  it('says the cap is per business, not across the platform', () => {
+    expect(row('SURVEY_MAX_PER_RESPONDENT')!.description).toMatch(/business/i);
+  });
+});

@@ -42,6 +42,7 @@ import { SurveyResultsService } from './survey-results.service';
 import { RespondentSurveyController } from './respondent-survey.controller';
 import { User } from '../user/user.entity';
 import { DataAccessLog } from '../profile/data-access-log.entity';
+import { SurveyAudienceProbe } from './survey-audience-probe.entity';
 
 /**
  * The module must actually PROVIDE what the service asks for — unit tests hand
@@ -72,6 +73,8 @@ describe('SurveyModule wiring', () => {
       .useValue({ find: jest.fn().mockResolvedValue([]) })
       // Releasing a cohort of answers logs the disclosure to each respondent.
       .overrideProvider(getRepositoryToken(DataAccessLog))
+      .useValue({ create: jest.fn((d: any) => d), save: jest.fn(async (d: any) => d) })
+      .overrideProvider(getRepositoryToken(SurveyAudienceProbe))
       .useValue({ create: jest.fn((d: any) => d), save: jest.fn(async (d: any) => d) })
       // The money path writes its audit row on the caller's transaction, so
       // TransactionModule (and a DataSource to run one) come along with it.

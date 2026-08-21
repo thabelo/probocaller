@@ -48,6 +48,7 @@ import { SurveyQuestion } from '../../survey/survey-question.entity';
 import { SurveyResponse } from '../../survey/survey-response.entity';
 import { SurveyAnswer } from '../../survey/survey-answer.entity';
 import { SurveyTemplate } from '../../survey/survey-template.entity';
+import { SurveyAudienceProbe } from '../../survey/survey-audience-probe.entity';
 
 /**
  * Canonical list of every persisted TypeORM entity.
@@ -110,4 +111,5 @@ export const ENTITIES = [
   SurveyResponse,
   SurveyAnswer,
   SurveyTemplate,
+  SurveyAudienceProbe,
 ];

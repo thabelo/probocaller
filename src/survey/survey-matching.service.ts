@@ -1,10 +1,19 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Repository } from 'typeorm';
+import { IsNull, MoreThanOrEqual, Repository } from 'typeorm';
 import { AppInstall } from '../marketplace/app-install.entity';
 import { UserProfile } from '../profile/user-profile.entity';
 import { ProfileField } from '../profile/profile-field.entity';
+import { DataAccessLog } from '../profile/data-access-log.entity';
+import { SettingsReaderService } from '../config/settings-reader.service';
+import { excludeOverSurveyed, readRepeatLimits } from './survey-repeat-limit';
 import { SurveyFilters } from './survey.entity';
+
+/** Who is asking, when that changes who may be asked. */
+export interface AudienceOptions {
+  /** The business publishing. Omit for the respondent's own view. */
+  businessId?: number;
+}
 
 /** The app whose install IS the consent to be matched for surveys (§2.2). */
 export const RESPONDENT_APP_KEY = 'surveys';
@@ -68,10 +77,13 @@ export class SurveyMatchingService {
     private readonly profileRepository: Repository<UserProfile>,
     @InjectRepository(ProfileField)
     private readonly fieldRepository: Repository<ProfileField>,
+    @InjectRepository(DataAccessLog)
+    private readonly accessLogRepository: Repository<DataAccessLog>,
+    private readonly settingsReader: SettingsReaderService,
   ) {}
 
   /** User ids that consented to be matched and satisfy these filters. */
-  async audience(filters: SurveyFilters): Promise<number[]> {
+  async audience(filters: SurveyFilters, options: AudienceOptions = {}): Promise<number[]> {
     const installs = await this.installRepository.find({
       where: { appKey: RESPONDENT_APP_KEY, uninstalledAt: IsNull() },
       select: ['userId'],
@@ -84,10 +96,52 @@ export class SurveyMatchingService {
     // grows large this wants a real jsonb column and an index.
     const profiles = await this.profileRepository.find();
 
-    return profiles
+    const matched = profiles
       .filter((p) => consented.has(p.userId))
       .filter((p) => matchesFilters(filters, p.data ?? {}))
       .map((p) => p.userId);
+
+    return options.businessId == null
+      ? matched
+      : this.dropOverSurveyed(matched, options.businessId);
+  }
+
+  /**
+   * Remove anyone this business has already read the cap of times lately.
+   *
+   * Every rule in the results pipeline protects a SINGLE survey, and none of
+   * them compose: a business can clear all of them every week and still build
+   * a long profile of the same dozen people out of individually compliant
+   * results. Per-survey k is disclosure control, not a privacy budget.
+   *
+   * Enforced HERE rather than at publish, so the person is simply never
+   * offered the survey. Refusing the publish instead would punish a business
+   * for the composition of an audience it cannot see, and would leak that
+   * these particular people had been surveyed before. If it drops the reach
+   * below the publish floor, that refusal already says to widen the targeting.
+   *
+   * Counted off data_access_logs, which is the record of answers actually
+   * RELEASED to this business — being invited, or answering into a cohort that
+   * never opened, discloses nothing and should cost nobody their next survey.
+   */
+  private async dropOverSurveyed(audience: number[], businessId: number): Promise<number[]> {
+    if (!audience.length) return audience;
+
+    const { windowDays, maxPerRespondent } = await readRepeatLimits(this.settingsReader);
+    if (maxPerRespondent <= 0) return audience;
+
+    const since = new Date(Date.now() - windowDays * 24 * 60 * 60 * 1000);
+    const rows = await this.accessLogRepository.find({
+      where: { businessId, purpose: 'survey_results', accessedAt: MoreThanOrEqual(since) },
+      select: ['userId'],
+    });
+
+    const readCount = new Map<number, number>();
+    for (const row of rows) {
+      readCount.set(row.userId, (readCount.get(row.userId) ?? 0) + 1);
+    }
+
+    return excludeOverSurveyed(audience, readCount, maxPerRespondent);
   }
 
   /**
@@ -95,8 +149,8 @@ export class SurveyMatchingService {
    * can see when its filters are narrower than its response target — it may
    * still publish, and the unfilled remainder is refunded on expiry.
    */
-  async estimateAudience(filters: SurveyFilters): Promise<number> {
-    return (await this.audience(filters)).length;
+  async estimateAudience(filters: SurveyFilters, options: AudienceOptions = {}): Promise<number> {
+    return (await this.audience(filters, options)).length;
   }
 
   /**
