@@ -26,6 +26,7 @@ describe('SurveyPublishService', () => {
   let service: SurveyPublishService;
   let manager: any;
   let surveyRepo: any;
+  let business: any;
   let questionRepo: any;
   let pricing: any;
   let matching: any;
@@ -62,10 +63,16 @@ describe('SurveyPublishService', () => {
     manager.save.mock.calls.map(([, row]: any[]) => row).find((r: any) => 'totalHeld' in r);
 
   beforeEach(async () => {
-    const business = { id: 7, userId: 1, companyName: 'Acme', walletBalance: '1000' };
+    business = { id: 7, userId: 1, companyName: 'Acme', walletBalance: '1000' };
 
     manager = {
-      findOne: jest.fn(async (entity: any) => (entity === Business ? business : null)),
+      // publish() and settle() now re-read the Survey UNDER LOCK inside the
+      // transaction (survey-then-business order). Mirror the same row each test
+      // configured on the outer read, so the locked re-read sees that scenario
+      // (a draft for publish, a live survey for close).
+      findOne: jest.fn(async (entity: any) =>
+        entity === Business ? business : entity === Survey ? surveyRepo.findOne() : null,
+      ),
       find: jest.fn().mockResolvedValue(QUESTIONS),
       save: jest.fn(async (_e: any, row: any) => row),
     };
@@ -162,7 +169,7 @@ describe('SurveyPublishService', () => {
     });
 
     it('refuses a wallet that cannot cover the total', async () => {
-      manager.findOne.mockResolvedValue({ id: 7, userId: 1, companyName: 'Acme', walletBalance: '100' });
+      business.walletBalance = '100';
       await expect(service.publish(1, 100)).rejects.toBeInstanceOf(BadRequestException);
       expect(transactions.log).not.toHaveBeenCalled();
     });
@@ -174,26 +181,26 @@ describe('SurveyPublishService', () => {
      * check ran. These pin the order.
      */
     it('leaves the wallet untouched when it cannot cover the total', async () => {
-      manager.findOne.mockResolvedValue({ id: 7, userId: 1, companyName: 'Acme', walletBalance: '100' });
+      business.walletBalance = '100';
       await expect(service.publish(1, 100)).rejects.toBeInstanceOf(BadRequestException);
       expect(savedBusiness()).toBeUndefined();
     });
 
     it('leaves the survey a draft when it cannot cover the total', async () => {
-      manager.findOne.mockResolvedValue({ id: 7, userId: 1, companyName: 'Acme', walletBalance: '100' });
+      business.walletBalance = '100';
       await expect(service.publish(1, 100)).rejects.toBeInstanceOf(BadRequestException);
       expect(savedSurvey()).toBeUndefined();
     });
 
     /** The business has to be told the shortfall, not just refused. */
     it('names what it costs and what the wallet holds', async () => {
-      manager.findOne.mockResolvedValue({ id: 7, userId: 1, companyName: 'Acme', walletBalance: '100' });
+      business.walletBalance = '100';
       await expect(service.publish(1, 100)).rejects.toThrow(/372\.00[\s\S]*100\.00/);
     });
 
     /** Exactly enough is enough — the guard is `<`, not `<=`. */
     it('allows a wallet that covers the total exactly', async () => {
-      manager.findOne.mockResolvedValue({ id: 7, userId: 1, companyName: 'Acme', walletBalance: '372' });
+      business.walletBalance = '372';
       await expect(service.publish(1, 100)).resolves.toBeDefined();
       expect(Number(savedBusiness().walletBalance)).toBe(0);
     });
@@ -440,9 +447,10 @@ describe('SurveyPublishService', () => {
    */
   describe('expiring', () => {
     it('expires and refunds every survey past its time limit', async () => {
-      surveyRepo.find.mockResolvedValue([
-        { ...DRAFT(), id: 100, status: 'live', totalHeld: '372', totalPaid: '120', pricePerResponse: '3' },
-      ]);
+      const live = { ...DRAFT(), id: 100, status: 'live', totalHeld: '372', totalPaid: '120', pricePerResponse: '3' };
+      surveyRepo.find.mockResolvedValue([live]);
+      // settle() re-reads the survey UNDER LOCK via the manager; serve that row.
+      surveyRepo.findOne.mockResolvedValue(live);
 
       const expired = await service.expireDue();
 

@@ -158,6 +158,21 @@ export class SurveyPublishService implements OnModuleInit, OnModuleDestroy {
     );
 
     await this.dataSource.transaction(async (manager) => {
+      // Re-read the survey UNDER LOCK and re-confirm it is still a draft, before
+      // any money moves. Two concurrent publish() calls both pass the unlocked
+      // draft check above; the lock serialises them and the second sees the
+      // survey is already 'live' and does nothing, so the wallet is debited
+      // once. Survey is locked BEFORE Business — the same order settle() uses —
+      // so the two paths cannot deadlock.
+      const locked = await manager.findOne(Survey, {
+        where: { id: surveyId },
+        lock: { mode: 'pessimistic_write' },
+        loadEagerRelations: false,
+      });
+      if (!locked || locked.status !== 'draft') {
+        throw new BadRequestException(`This survey is already ${locked?.status ?? 'gone'}.`);
+      }
+
       const business = await manager.findOne(Business, {
         where: { id: survey.businessId },
         lock: { mode: 'pessimistic_write' },
@@ -279,10 +294,27 @@ export class SurveyPublishService implements OnModuleInit, OnModuleDestroy {
     status: 'closed' | 'expired',
     userId?: number,
   ) {
-    const held = Number(survey.totalHeld ?? 0);
-    const paid = Number(survey.totalPaid ?? 0);
-    const price = Number(survey.pricePerResponse ?? 0);
-    const target = survey.targetResponses || 0;
+    // Re-read the survey UNDER LOCK and re-check it is still live. Both close()
+    // and expireDue() decide to settle from an UNLOCKED read outside this
+    // transaction, so two concurrent settles for one live survey both get that
+    // far. The lock here serialises them and the second sees status !== 'live'
+    // and does nothing — so the escrow is refunded exactly once. Locking only
+    // the Business row (below) serialises the two refunds but does NOT stop the
+    // second from happening; the guard has to be on the survey's own status.
+    // Lock order is survey-then-business everywhere, so publish and settle
+    // cannot deadlock against each other.
+    const locked = await manager.findOne(Survey, {
+      where: { id: survey.id },
+      lock: { mode: 'pessimistic_write' },
+      loadEagerRelations: false,
+    });
+    if (!locked) throw new NotFoundException('Survey not found');
+    if (locked.status !== 'live') return; // a racing close/expire already settled it
+
+    const held = Number(locked.totalHeld ?? 0);
+    const paid = Number(locked.totalPaid ?? 0);
+    const price = Number(locked.pricePerResponse ?? 0);
+    const target = locked.targetResponses || 0;
 
     const delivered = price > 0 ? Math.round(paid / price) : 0;
     const undelivered = Math.max(0, target - delivered);
@@ -297,12 +329,12 @@ export class SurveyPublishService implements OnModuleInit, OnModuleDestroy {
         : 0;
 
     const reason = neverReported
-      ? `Refund from survey "${survey.title}" — ${delivered} ${delivered === 1 ? 'answer' : 'answers'}, too few to report on without identifying someone`
-      : `Refund from survey "${survey.title}" — ${undelivered} of ${target} responses unfilled`;
+      ? `Refund from survey "${locked.title}" — ${delivered} ${delivered === 1 ? 'answer' : 'answers'}, too few to report on without identifying someone`
+      : `Refund from survey "${locked.title}" — ${undelivered} of ${target} responses unfilled`;
 
     if (refund > 0) {
       const business = await manager.findOne(Business, {
-        where: { id: survey.businessId },
+        where: { id: locked.businessId },
         lock: { mode: 'pessimistic_write' },
         loadEagerRelations: false,
       });
@@ -318,13 +350,16 @@ export class SurveyPublishService implements OnModuleInit, OnModuleDestroy {
         reason,
         undefined,
         manager,
-        survey.businessId,
+        locked.businessId,
       );
     }
 
+    locked.status = status;
+    locked.closedAt = new Date();
+    await manager.save(Survey, locked);
+    // Reflect the settled state onto the caller's object, which close() returns.
     survey.status = status;
-    survey.closedAt = new Date();
-    await manager.save(Survey, survey);
+    survey.closedAt = locked.closedAt;
   }
 
   /**
