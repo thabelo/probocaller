@@ -79,6 +79,8 @@ export class DataBrokerService {
       incognitoEnabled: user.incognitoEnabled,
       // Opt-in to ads; only opted-in users earn the ad revenue share.
       adsEnabled: !!user.adsEnabled,
+      // Consent for the internal SMS analyser. Off by default.
+      smsAnalysisConsent: !!user.smsAnalysisConsent,
     };
   }
 
@@ -242,6 +244,7 @@ export class DataBrokerService {
     if (dto.incognitoEnabled !== undefined) user.incognitoEnabled = dto.incognitoEnabled;
     if (dto.adsEnabled !== undefined) user.adsEnabled = dto.adsEnabled;
     if (dto.phoneShareEnabled !== undefined) user.phoneShareEnabled = dto.phoneShareEnabled;
+    if (dto.smsAnalysisConsent !== undefined) user.smsAnalysisConsent = dto.smsAnalysisConsent;
     await this.userRepo.save(user);
     return this.getPreferences(userId);
   }

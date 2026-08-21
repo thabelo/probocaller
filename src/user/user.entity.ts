@@ -127,6 +127,16 @@ export class User {
   @Column({ default: false })
   dataShareEnabled: boolean;
 
+  // Consent for our INTERNAL analyser (an LLM, or the rule-based stand-in until
+  // one is wired) to read this user's SMS CONTENT and suggest profile updates
+  // and survey questions. Default FALSE, and it is load-bearing: the server
+  // otherwise only ever receives an on-device MD5 hash of an SMS, never the
+  // text (see SmsLog). This flag is the single switch that authorises the text
+  // to reach the server at all, for this user only. Off restores the hash-only
+  // guarantee; turning it off again is a real withdrawal.
+  @Column({ default: false })
+  smsAnalysisConsent: boolean;
+
   // Whether a business that buys this user's data also receives their phone
   // number. Defaults TRUE because the platform already handed the number over
   // with every lead — this flag is the control that was missing, not a new

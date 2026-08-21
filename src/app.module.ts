@@ -98,6 +98,7 @@ import { AppLoggerModule } from './common/logging/logger.module';
 import { GdprModule } from './gdpr/gdpr.module';
 import { MessagingModule } from './messaging/messaging.module';
 import { SurveyModule } from './survey/survey.module';
+import { SmsInsightModule } from './sms-insight/sms-insight.module';
 import { shouldRunMigrations } from './common/db/should-run-migrations';
 import * as path from 'path';
 
@@ -222,6 +223,7 @@ const runMigrationsOnBoot = shouldRunMigrations(process.env);
     GdprModule,
     MessagingModule,
     SurveyModule,
+    SmsInsightModule,
   ],
   controllers: [UserController, AuthController],
   providers: [

@@ -164,6 +164,15 @@ export class UpdatePrivacyPreferencesDto {
   @IsBoolean()
   adsEnabled?: boolean;
 
+  // Consent for our internal analyser to read this user's SMS CONTENT and
+  // suggest profile updates and survey questions. Off by default and elsewhere:
+  // the server otherwise only ever receives an on-device hash of an SMS, never
+  // the text — this is the switch that authorises the text to reach it.
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsBoolean()
+  smsAnalysisConsent?: boolean;
+
   // --- SMS permissions (independent sibling of the call-policy fields above;
   // see data-broker/sms-policy.ts). No legacy aliases — there's no prior SMS mode. ---
 
