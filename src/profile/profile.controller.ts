@@ -6,6 +6,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { AdminGuard } from '../admin/admin.guard';
 import { AppAccessGuard, RequiresApp } from '../marketplace/app-access.guard';
 import { ProfileService } from './profile.service';
+import { ProfileHistoryService, resolveRange } from './profile-history.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpsertProfileFieldDto } from './dto/upsert-profile-field.dto';
 import { QueryAudienceDto, SaveAudienceDto } from './dto/query-audience.dto';
@@ -16,7 +17,10 @@ import { AdminUpdateDataBrokerDto } from './dto/admin-data-broker.dto';
 @Controller('profile')
 @UseGuards(AuthGuard('jwt'))
 export class ProfileController {
-  constructor(private readonly profileService: ProfileService) {}
+  constructor(
+    private readonly profileService: ProfileService,
+    private readonly history: ProfileHistoryService,
+  ) {}
 
   // ─── Field definitions (public read) ─────────────────────────────────────
 
@@ -149,6 +153,19 @@ export class ProfileController {
     return this.profileService.adminGetAllFields();
   }
 
+  /**
+   * A person's own record of what they have changed.
+   *
+   * They can already see what their profile says; this is what it USED to say.
+   * Nobody else's history is reachable from here — the id comes from the
+   * token, never from the request.
+   */
+  @Get('me/history')
+  @ApiOperation({ summary: 'My own profile change history' })
+  myHistory(@Request() req) {
+    return this.history.forUser(req.user.userId);
+  }
+
   @Post('admin/fields')
   @UseGuards(AdminGuard)
   @ApiOperation({ summary: 'Admin: create or update a profile field' })
@@ -175,6 +192,39 @@ export class ProfileController {
   @ApiOperation({ summary: "Admin: view a user's data profile and data-broker settings" })
   adminGetUserDataProfile(@Param('userId') userId: string) {
     return this.profileService.adminGetUserDataProfile(Number(userId));
+  }
+
+  /**
+   * One person's whole profile history, for an admin answering a question
+   * about their record.
+   */
+  @Get('admin/user/:userId/history')
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: "Admin: everything that ever changed on a user's profile" })
+  adminUserHistory(@Param('userId') userId: string) {
+    return this.history.forUser(Number(userId));
+  }
+
+  /**
+   * Who has been keeping their profile up to date, over a window.
+   *
+   * Operational visibility only — how fresh the data is and who maintains it.
+   * It is deliberately NOT a targeting surface: "recently had a child" is a
+   * life event, and a business filtering on one would be a different product
+   * from the one people agreed to.
+   */
+  @Get('admin/change-report')
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: 'Admin: who changed their profile most, by day/week/month/custom' })
+  adminChangeReport(
+    @Query('period') period?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const range = resolveRange({ period, from, to });
+    const capped = Math.min(Math.max(Number(limit) || 20, 1), 100);
+    return this.history.topMovers({ ...range, limit: capped });
   }
 
   @Patch('admin/user/:userId')

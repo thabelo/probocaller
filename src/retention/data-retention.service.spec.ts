@@ -4,7 +4,8 @@ import { LessThan } from 'typeorm';
 import { DataRetentionService } from './data-retention.service';
 import { CallLog } from '../call/call.entity';
 import { AuditLog } from '../audit/audit-log.entity';
-import { DataSource } from 'typeorm';
+import { DataSource, LessThan as Older } from 'typeorm';
+import { ProfileChangeLog } from '../profile/profile-change-log.entity';
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -13,17 +14,20 @@ describe('DataRetentionService', () => {
   let callRepo: any;
   let auditRepo: any;
   let query: jest.Mock;
+  let changeLogRepo: any;
 
   beforeEach(async () => {
     callRepo = { delete: jest.fn(async () => ({ affected: 3 })) };
     auditRepo = { delete: jest.fn(async () => ({ affected: 5 })) };
     query = jest.fn(async () => [{ removed: 7 }]);
+    changeLogRepo = { delete: jest.fn(async () => ({ affected: 4 })) };
     const mod: TestingModule = await Test.createTestingModule({
       providers: [
         DataRetentionService,
         { provide: getRepositoryToken(CallLog), useValue: callRepo },
         { provide: getRepositoryToken(AuditLog), useValue: auditRepo },
         { provide: DataSource, useValue: { query } },
+        { provide: getRepositoryToken(ProfileChangeLog), useValue: changeLogRepo },
       ],
     }).compile();
     service = mod.get(DataRetentionService);
@@ -33,6 +37,7 @@ describe('DataRetentionService', () => {
     delete process.env.CALL_LOG_RETENTION_DAYS;
     delete process.env.AUDIT_LOG_RETENTION_DAYS;
     delete process.env.SURVEY_ANSWER_RETENTION_DAYS;
+    delete process.env.PROFILE_HISTORY_RETENTION_DAYS;
   });
 
   it('purges call logs older than 365d and audit logs older than 730d by default', async () => {
@@ -99,6 +104,33 @@ describe('DataRetentionService', () => {
       query.mockRejectedValue(new Error('locked'));
       const res = await service.purgeExpired(new Date('2026-06-22T00:00:00Z'));
       expect(res).toMatchObject({ callLogs: 3, auditLogs: 5, surveyAnswers: 0 });
+    });
+  });
+
+  /**
+   * A profile holds the current state; its history holds the trajectory, and
+   * the trajectory says more — "household grew in March, income band rose
+   * twice this year" are life events nobody handed over as such. It is kept
+   * long enough to answer a question about a record and no longer.
+   */
+  describe('profile change history', () => {
+    it('purges history older than two years by default', async () => {
+      const now = new Date('2026-06-22T00:00:00Z');
+      const res = await service.purgeExpired(now);
+
+      expect(changeLogRepo.delete).toHaveBeenCalledWith({
+        changedAt: Older(new Date(now.getTime() - 730 * DAY)),
+      });
+      expect(res.profileChanges).toBe(4);
+    });
+
+    it('honours an env-configured window', async () => {
+      process.env.PROFILE_HISTORY_RETENTION_DAYS = '90';
+      const now = new Date('2026-06-22T00:00:00Z');
+      await service.purgeExpired(now);
+      expect(changeLogRepo.delete).toHaveBeenCalledWith({
+        changedAt: Older(new Date(now.getTime() - 90 * DAY)),
+      });
     });
   });
 });

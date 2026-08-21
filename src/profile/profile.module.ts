@@ -4,6 +4,7 @@ import { ProfileField } from './profile-field.entity';
 import { UserProfile } from './user-profile.entity';
 import { DataAccessLog } from './data-access-log.entity';
 import { ProfileChangeLog } from './profile-change-log.entity';
+import { ProfileHistoryService } from './profile-history.service';
 import { DataCertificate } from './data-certificate.entity';
 import { BusinessAudience } from './business-audience.entity';
 import { User } from '../user/user.entity';
@@ -23,7 +24,7 @@ import { MarketplaceModule } from '../marketplace/marketplace.module';
     // Supplies AppAccessGuard + its dependencies for the @RequiresApp routes.
     MarketplaceModule,
   ],
-  providers: [ProfileService],
+  providers: [ProfileHistoryService, ProfileService],
   controllers: [ProfileController],
   exports: [ProfileService],
 })

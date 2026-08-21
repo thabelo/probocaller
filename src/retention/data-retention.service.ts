@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, LessThan, Repository } from 'typeorm';
 import { CallLog } from '../call/call.entity';
 import { AuditLog } from '../audit/audit-log.entity';
+import { ProfileChangeLog } from '../profile/profile-change-log.entity';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const ONCE_PER_DAY_MS = DAY_MS;
@@ -11,6 +12,7 @@ export interface PurgeResult {
   callLogs: number;
   auditLogs: number;
   surveyAnswers: number;
+  profileChanges: number;
 }
 
 /**
@@ -29,6 +31,8 @@ export class DataRetentionService implements OnModuleInit, OnModuleDestroy {
     private readonly callLogs: Repository<CallLog>,
     @InjectRepository(AuditLog)
     private readonly auditLogs: Repository<AuditLog>,
+    @InjectRepository(ProfileChangeLog)
+    private readonly profileChanges: Repository<ProfileChangeLog>,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -61,13 +65,22 @@ export class DataRetentionService implements OnModuleInit, OnModuleDestroy {
     const auditRes = await this.auditLogs.delete({ createdAt: LessThan(auditCutoff) });
     const surveyAnswers = await this.purgeSurveyAnswers(now);
 
+    // A profile holds the current state; its history holds the trajectory, and
+    // the trajectory says more. Kept long enough to answer a question about a
+    // record, and no longer.
+    const historyCutoff = new Date(
+      now.getTime() - this.days('PROFILE_HISTORY_RETENTION_DAYS', 730) * DAY_MS,
+    );
+    const changeRes = await this.profileChanges.delete({ changedAt: LessThan(historyCutoff) });
+
     const result = {
       callLogs: callRes.affected ?? 0,
       auditLogs: auditRes.affected ?? 0,
       surveyAnswers,
+      profileChanges: changeRes.affected ?? 0,
     };
     this.logger.log(
-      `Data-retention purge removed ${result.callLogs} call logs, ${result.auditLogs} audit logs, ${result.surveyAnswers} survey answers`,
+      `Data-retention purge removed ${result.callLogs} call logs, ${result.auditLogs} audit logs, ${result.surveyAnswers} survey answers, ${result.profileChanges} profile changes`,
     );
     return result;
   }
