@@ -92,6 +92,16 @@ describe('UserService', () => {
   });
 
   describe('login', () => {
+    it('refuses in production until one-time-code verification exists', async () => {
+      const original = process.env.NODE_ENV;
+      process.env.NODE_ENV = 'production';
+      try {
+        await expect(service.login({ phoneNumber: '+27821234567' })).rejects.toThrow();
+      } finally {
+        process.env.NODE_ENV = original;
+      }
+    });
+
     it('returns tokens and user for existing user', async () => {
       const user = mockUser();
       repo.findOne.mockResolvedValue(user);

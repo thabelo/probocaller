@@ -1,6 +1,8 @@
 import { Injectable, UnauthorizedException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
+import { assertPasswordlessLoginAllowed } from '../common/auth/passwordless-login';
+import { resolveAppConfig } from '../common/config/app-config';
 import * as crypto from 'crypto';
 import { User } from './user.entity';
 import { isRegisteredAccount } from './registered-account';
@@ -192,6 +194,10 @@ export class UserService {
   }
 
   async login(loginDto: LoginDto) {
+    // Refused in production until one-time-code verification exists. This path
+    // also AUTO-CREATES an account for an unknown number, so leaving it open in
+    // prod would let anyone mint accounts as well as take over existing ones.
+    assertPasswordlessLoginAllowed(resolveAppConfig().environment);
     const { phoneNumber, referralCode } = loginDto;
     // Resolve the account by every equivalent phone format so "0XXXXXXXXX",
     // "27XXXXXXXXX" and "+27XXXXXXXXX" all map to ONE account instead of minting

@@ -6,6 +6,8 @@ import { In, Repository } from 'typeorm';
 import type { Response } from 'express';
 import { User } from '../user/user.entity';
 import { phoneNumberVariants } from '../auth/phone-variants';
+import { assertPasswordlessLoginAllowed } from '../common/auth/passwordless-login';
+import { resolveAppConfig } from '../common/config/app-config';
 
 const ACCESS_COOKIE = 'accessToken';
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -41,6 +43,7 @@ export class AdminAuthController {
   @Post('login')
   @ApiOperation({ summary: 'Admin login — sets an HttpOnly session cookie' })
   async login(@Body() body: { phoneNumber: string }, @Res({ passthrough: true }) res: Response) {
+    assertPasswordlessLoginAllowed(resolveAppConfig().environment);
     const phoneNumber = body?.phoneNumber?.trim();
     // Match the admin regardless of how the number was stored (national "0…" vs
     // international "+27…"), the same way /user/login resolves accounts (F4).

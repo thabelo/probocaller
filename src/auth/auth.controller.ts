@@ -8,6 +8,8 @@ import type { Response } from 'express';
 import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
 import { phoneNumberVariants, toE164 } from './phone-variants';
+import { assertPasswordlessLoginAllowed } from '../common/auth/passwordless-login';
+import { resolveAppConfig } from '../common/config/app-config';
 
 const ACCESS_COOKIE = 'accessToken';
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -45,6 +47,9 @@ export class AuthController {
   @Post('login')
   @ApiOperation({ summary: 'Login (any user) — sets an HttpOnly session cookie' })
   async login(@Body() body: { phoneNumber: string }, @Res({ passthrough: true }) res: Response) {
+    // Refused in production until one-time-code verification exists — phone
+    // number alone is not a credential. Checked before any DB read.
+    assertPasswordlessLoginAllowed(resolveAppConfig().environment);
     const phoneNumber = body?.phoneNumber?.trim();
     // Match the account whether it was stored national (0XX…) or international
     // (+27XX…) — the mobile app and admin panel send different formats.

@@ -54,6 +54,17 @@ describe('AdminAuthController', () => {
     expect(res.cookie).not.toHaveBeenCalled();
   });
 
+  it('refuses login in production until one-time-code verification exists', async () => {
+    const original = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      await expect(controller.login({ phoneNumber: '+27801234567' } as any, res as any)).rejects.toThrow();
+      expect(res.cookie).not.toHaveBeenCalled();
+    } finally {
+      process.env.NODE_ENV = original;
+    }
+  });
+
   it('logs out by clearing the cookie', () => {
     const out = controller.logout(res as any);
     expect(res.clearCookie).toHaveBeenCalledWith('accessToken', expect.objectContaining({ httpOnly: true }));
