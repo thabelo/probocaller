@@ -25,6 +25,16 @@ export class UserProfile {
   @Column({ type: 'decimal', precision: 5, scale: 2, default: 0 })
   completionScore: number;
 
+  /**
+   * When we last asked this person whether anything had changed.
+   *
+   * The cooldown reads from here, and it is the difference between a nudge and
+   * nagging: a profile that has been stale for two years is still only asked
+   * about as often as the cooldown allows.
+   */
+  @Column({ type: 'timestamp', nullable: true })
+  stalePromptedAt: Date | null;
+
   // 'basic' | 'silver' | 'gold' | 'platinum'
   @Column({ default: 'basic' })
   tier: string;
