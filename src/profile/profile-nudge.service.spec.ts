@@ -143,4 +143,67 @@ describe('ProfileNudgeService', () => {
   it('does not run its timer in tests', () => {
     expect(process.env.NODE_ENV).toBe('test');
   });
+
+  /**
+   * The report shows who is most ACTIVE. The opposite list is the actionable
+   * one: who has gone quiet, how long for, and whether we have already asked.
+   * That is the population the sweep is working through, and without this an
+   * admin cannot see it at all.
+   */
+  describe('listing who has gone quiet', () => {
+    it('names the people whose profile has gone stale', async () => {
+      await build([STALE({ userId: 7 })]);
+      const { users } = await service.listStale(new Date('2026-06-01'));
+
+      expect(users[0]).toMatchObject({ userId: 7, daysSinceChange: expect.any(Number) });
+    });
+
+    it('says how long each has been quiet', async () => {
+      // 91, not 90: exactly the threshold is deliberately NOT yet stale, so a
+      // fixture on the boundary tests the boundary rather than the count.
+      await build([STALE({ userId: 7, lastChangedAt: new Date('2026-03-02') })]);
+      const { users } = await service.listStale(new Date('2026-06-01'));
+      expect(users[0].daysSinceChange).toBe(91);
+    });
+
+    /** An admin looking at the list needs to know it is already being handled. */
+    it('says whether we have already asked, and when', async () => {
+      const asked = new Date('2026-05-20');
+      await build([STALE({ userId: 7, lastAskedAt: asked })]);
+      const { users } = await service.listStale(new Date('2026-06-01'));
+      expect(users[0].lastAskedAt).toEqual(asked);
+    });
+
+    /**
+     * The LIST is not the sweep. Somebody inside the cooldown is still stale
+     * and an admin should see them — hiding them would make the list disagree
+     * with itself the day after a sweep ran.
+     */
+    it('includes somebody who is stale but inside the cooldown', async () => {
+      await build([STALE({ userId: 7, lastAskedAt: new Date('2026-05-30') })]);
+      const { users } = await service.listStale(new Date('2026-06-01'));
+      expect(users.map((u: any) => u.userId)).toEqual([7]);
+    });
+
+    it('reports the rule it applied, so the number is explicable', async () => {
+      await build([STALE()]);
+      const out = await service.listStale(new Date('2026-06-01'));
+      expect(out.staleAfterDays).toBe(90);
+    });
+
+    it('puts the longest-neglected first', async () => {
+      await build([
+        STALE({ userId: 1, lastChangedAt: new Date('2026-01-01') }),
+        STALE({ userId: 2, lastChangedAt: new Date('2024-01-01') }),
+      ]);
+      const { users } = await service.listStale(new Date('2026-06-01'));
+      expect(users.map((u: any) => u.userId)).toEqual([2, 1]);
+    });
+
+    it('never lists an empty profile as stale', async () => {
+      await build([STALE({ filledFields: 0 })]);
+      const { users } = await service.listStale(new Date('2026-06-01'));
+      expect(users).toEqual([]);
+    });
+  });
 });

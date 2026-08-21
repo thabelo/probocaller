@@ -103,6 +103,41 @@ export class ProfileNudgeService implements OnModuleInit, OnModuleDestroy {
     return due.length;
   }
 
+  /**
+   * Who has gone quiet, for an admin to look at.
+   *
+   * The report elsewhere ranks who is most ACTIVE; this is the opposite list
+   * and the more actionable one — it is the population the sweep is working
+   * through, and without it an admin can see the nudge going out but not who
+   * it is going to.
+   *
+   * NOT the sweep. Somebody inside the cooldown is still stale and still
+   * appears here; hiding them would make the list disagree with itself the day
+   * after a sweep ran. The cooldown decides who gets ASKED, not who IS stale.
+   */
+  async listStale(now: Date = new Date()) {
+    const staleAfterDays = await this.setting('PROFILE_STALE_AFTER_DAYS');
+    const activity = await this.activity();
+
+    // cooldown 0: the list is everybody stale, not everybody due a message.
+    const stale = staleUsers(activity, { staleAfterDays, cooldownDays: 0 }, now);
+    const askedByUser = new Map(activity.map((a) => [a.userId, a.lastAskedAt]));
+
+    const users = await this.userRepo.find({ where: { id: In(stale.map((s) => s.userId)) } });
+    const byId = new Map(users.map((u) => [u.id, u]));
+
+    return {
+      staleAfterDays,
+      users: stale.map((person) => ({
+        userId: person.userId,
+        daysSinceChange: person.daysSinceChange,
+        lastAskedAt: askedByUser.get(person.userId) ?? null,
+        phoneNumber: byId.get(person.userId)?.phoneNumber ?? null,
+        name: byId.get(person.userId)?.name ?? null,
+      })),
+    };
+  }
+
   private async ask(user: User | undefined, userId: number, now: Date): Promise<void> {
     const title = 'Anything changed?';
     const body =

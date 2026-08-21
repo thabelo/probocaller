@@ -7,6 +7,7 @@ import { AdminGuard } from '../admin/admin.guard';
 import { AppAccessGuard, RequiresApp } from '../marketplace/app-access.guard';
 import { ProfileService } from './profile.service';
 import { ProfileHistoryService, resolveRange } from './profile-history.service';
+import { ProfileNudgeService } from './profile-nudge.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UpsertProfileFieldDto } from './dto/upsert-profile-field.dto';
 import { QueryAudienceDto, SaveAudienceDto } from './dto/query-audience.dto';
@@ -20,6 +21,7 @@ export class ProfileController {
   constructor(
     private readonly profileService: ProfileService,
     private readonly history: ProfileHistoryService,
+    private readonly nudges: ProfileNudgeService,
   ) {}
 
   // ─── Field definitions (public read) ─────────────────────────────────────
@@ -225,6 +227,21 @@ export class ProfileController {
     const range = resolveRange({ period, from, to });
     const capped = Math.min(Math.max(Number(limit) || 20, 1), 100);
     return this.history.topMovers({ ...range, limit: capped });
+  }
+
+  /**
+   * Which profiles have gone quiet.
+   *
+   * The change report ranks who is most ACTIVE; this is the opposite and more
+   * actionable list — the population the staleness sweep is working through.
+   * It includes people already asked recently, because the cooldown decides
+   * who gets MESSAGED, not who IS stale.
+   */
+  @Get('admin/stale')
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: 'Admin: profiles that have not been updated in a long time' })
+  adminStaleProfiles() {
+    return this.nudges.listStale();
   }
 
   @Patch('admin/user/:userId')

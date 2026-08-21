@@ -9,7 +9,8 @@ describe('ProfileController — admin data profile routes', () => {
     forUser: jest.fn().mockResolvedValue({ userId: 7, changes: [] }),
     topMovers: jest.fn().mockResolvedValue({ users: [] }),
   } as any;
-  const controller = new ProfileController(service, history);
+  const nudges = { listStale: jest.fn().mockResolvedValue({ staleAfterDays: 90, users: [] }) } as any;
+  const controller = new ProfileController(service, history, nudges);
 
   it('GET admin/user/:userId delegates to the service with a numeric id', async () => {
     await controller.adminGetUserDataProfile('7');
@@ -44,5 +45,9 @@ describe('ProfileController — admin data profile routes', () => {
   it('GET admin/change-report caps how much it will return', async () => {
     await controller.adminChangeReport('week', undefined, undefined, '10000');
     expect(history.topMovers.mock.calls.at(-1)![0].limit).toBe(100);
+  });
+
+  it('GET admin/stale lists the profiles that have gone quiet', async () => {
+    await expect(controller.adminStaleProfiles()).resolves.toMatchObject({ staleAfterDays: 90 });
   });
 });
