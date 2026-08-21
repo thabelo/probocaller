@@ -14,6 +14,7 @@ import { SurveyPublishService } from './survey-publish.service';
 import { SurveyResponseService } from './survey-response.service';
 import { SurveyResultsService } from './survey-results.service';
 import { SurveyAudienceProbe } from './survey-audience-probe.entity';
+import { SurveyStatsService } from './survey-stats.service';
 import { RespondentSurveyController } from './respondent-survey.controller';
 import { SurveyResponse } from './survey-response.entity';
 import { SurveyAnswer } from './survey-answer.entity';
@@ -77,6 +78,7 @@ import { User } from '../user/user.entity';
     SurveyPricingService, SurveyTemplateService, SurveyService,
     SurveyMatchingService, SurveyPublishService, SurveyResponseService,
     SurveyResultsService,
+    SurveyStatsService,
     AdminGuard,
   ],
   controllers: [AdminSurveyController, SurveyController, RespondentSurveyController],

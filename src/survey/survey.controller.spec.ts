@@ -7,6 +7,7 @@ import { SurveyPricingService } from './survey-pricing.service';
 import { SurveyPublishService } from './survey-publish.service';
 import { SurveyMatchingService } from './survey-matching.service';
 import { SurveyResultsService } from './survey-results.service';
+import { SurveyStatsService } from './survey-stats.service';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { SurveyAudienceProbe } from './survey-audience-probe.entity';
 import { AppAccessGuard, REQUIRES_APP } from '../marketplace/app-access.guard';
@@ -60,6 +61,7 @@ describe('SurveyController', () => {
         { provide: SurveyMatchingService, useValue: matching },
         { provide: SurveyResultsService, useValue: results },
         { provide: getRepositoryToken(SurveyAudienceProbe), useValue: probes },
+        { provide: SurveyStatsService, useValue: { forBusiness: jest.fn().mockResolvedValue({ totals: {} }) } },
       ],
     })
       .overrideGuard(AppAccessGuard)

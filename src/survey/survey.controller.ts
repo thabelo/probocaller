@@ -16,6 +16,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { SurveyAudienceProbe } from './survey-audience-probe.entity';
 import { bandAudience } from './survey-audience-band';
+import { SurveyStatsService } from './survey-stats.service';
 
 
 /**
@@ -45,6 +46,7 @@ export class SurveyController {
     private readonly surveyResults: SurveyResultsService,
     @InjectRepository(SurveyAudienceProbe)
     private readonly probes: Repository<SurveyAudienceProbe>,
+    private readonly stats: SurveyStatsService,
   ) {}
 
   @Get('templates')
@@ -72,6 +74,17 @@ export class SurveyController {
   @ApiOperation({ summary: 'The surveys of a business I own' })
   list(@Request() req, @Query('businessId', ParseIntPipe) businessId: number) {
     return this.surveys.list(req.user.userId, businessId);
+  }
+
+  /**
+   * Survey performance for a business the caller owns — totals, fill rate,
+   * responses over time, the busiest surveys. Ownership is checked in the
+   * service, the same 'your business or 403' path everything else uses.
+   */
+  @Get('stats')
+  @ApiOperation({ summary: 'My survey performance — totals and charts' })
+  surveyStats(@Request() req, @Query('businessId', ParseIntPipe) businessId: number) {
+    return this.stats.forBusiness(req.user.userId, businessId);
   }
 
   @Get(':id')

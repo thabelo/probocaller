@@ -3,6 +3,7 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { AdminGuard } from '../admin/admin.guard';
 import { SurveyTemplateService } from './survey-template.service';
 import { CreateTemplateDto, UpdateTemplateDto } from './dto/survey-template.dto';
+import { SurveyStatsService } from './survey-stats.service';
 
 /**
  * Console curation of the survey template library (surveys-spec §3.1).
@@ -20,7 +21,16 @@ import { CreateTemplateDto, UpdateTemplateDto } from './dto/survey-template.dto'
 @Controller('admin/surveys')
 @UseGuards(AdminGuard)
 export class AdminSurveyController {
-  constructor(private readonly templates: SurveyTemplateService) {}
+  constructor(
+    private readonly templates: SurveyTemplateService,
+    private readonly stats: SurveyStatsService,
+  ) {}
+
+  @Get('stats')
+  @ApiOperation({ summary: 'Survey performance across every business' })
+  async platformStats() {
+    return this.stats.platform();
+  }
 
   @Get('templates')
   @ApiOperation({ summary: 'The whole template library, retired ones included' })

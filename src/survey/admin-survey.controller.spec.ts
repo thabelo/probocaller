@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { AdminSurveyController } from './admin-survey.controller';
 import { SurveyTemplateService } from './survey-template.service';
+import { SurveyStatsService } from './survey-stats.service';
 import { AdminGuard } from '../admin/admin.guard';
 
 /**
@@ -23,7 +24,10 @@ describe('AdminSurveyController', () => {
 
     const mod: TestingModule = await Test.createTestingModule({
       controllers: [AdminSurveyController],
-      providers: [{ provide: SurveyTemplateService, useValue: templates }],
+      providers: [
+        { provide: SurveyTemplateService, useValue: templates },
+        { provide: SurveyStatsService, useValue: { platform: jest.fn().mockResolvedValue({ totals: {} }) } },
+      ],
     })
       .overrideGuard(AdminGuard)
       .useValue({ canActivate: () => true })
