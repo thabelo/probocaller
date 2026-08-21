@@ -34,6 +34,7 @@ describe('SurveyController', () => {
       get: jest.fn().mockResolvedValue({ id: 100 }),
       update: jest.fn().mockResolvedValue({ id: 100 }),
       deleteDraft: jest.fn().mockResolvedValue(undefined),
+      assertOwnsBusiness: jest.fn().mockResolvedValue(undefined),
     };
     templates = { listActive: jest.fn().mockResolvedValue([]) };
     pricing = {
@@ -185,6 +186,27 @@ describe('SurveyController', () => {
       const out = await controller.audience(req, { filters: {} } as any);
       expect(out.audienceSize).toBe(0);
       expect(JSON.stringify(out)).not.toContain('6');
+    });
+
+    it('refuses to estimate for a business the caller does not own', async () => {
+      surveys.assertOwnsBusiness.mockRejectedValue(new Error('not yours'));
+      await expect(
+        controller.audience(req, { filters: {}, businessId: 999 } as any),
+      ).rejects.toThrow();
+      // The probe must not be written for a business it rejected.
+      expect(probes.save).not.toHaveBeenCalled();
+    });
+
+    it('checks ownership before touching a supplied businessId', async () => {
+      matching.estimateAudience.mockResolvedValue(40);
+      await controller.audience(req, { filters: {}, businessId: 7 } as any);
+      expect(surveys.assertOwnsBusiness).toHaveBeenCalledWith(1, 7);
+    });
+
+    it('still estimates with no businessId, and asserts nothing', async () => {
+      matching.estimateAudience.mockResolvedValue(40);
+      await controller.audience(req, { filters: {} } as any);
+      expect(surveys.assertOwnsBusiness).not.toHaveBeenCalled();
     });
 
     it('records every audience probe with the filter it used', async () => {

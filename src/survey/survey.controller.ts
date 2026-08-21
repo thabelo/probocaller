@@ -109,6 +109,12 @@ export class SurveyController {
   @ApiOperation({ summary: 'Roughly how many respondents match these filters' })
   async audience(@Request() req, @Body() body: AudienceDto) {
     const filters = body.filters ?? {};
+    // A businessId is scoped to the caller like every other survey route —
+    // without this, one business could estimate "as" another and write a probe
+    // row against a businessId it does not own.
+    if (body.businessId != null) {
+      await this.surveys.assertOwnsBusiness(req.user.userId, body.businessId);
+    }
     const band = bandAudience(
       await this.matching.estimateAudience(filters, { businessId: body.businessId }),
     );

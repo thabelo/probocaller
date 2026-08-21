@@ -61,6 +61,15 @@ export class SurveyService {
   ) {}
 
   /** The business, or throw — scoping every operation to what the caller owns. */
+  /**
+   * Public ownership assertion, for callers that only need the check and not
+   * the row — the audience estimate, which takes a businessId but returns no
+   * survey. Throws the same NotFound as every other owned* path.
+   */
+  async assertOwnsBusiness(userId: number, businessId: number): Promise<void> {
+    await this.ownedBusiness(userId, businessId);
+  }
+
   private async ownedBusiness(userId: number, businessId: number): Promise<Business> {
     const business = await this.businessRepository.findOne({ where: { id: businessId, userId } });
     if (!business) {
