@@ -5,6 +5,7 @@ import { ProfileService } from './profile.service';
 import { ProfileField } from './profile-field.entity';
 import { UserProfile } from './user-profile.entity';
 import { DataAccessLog } from './data-access-log.entity';
+import { ProfileChangeLog } from './profile-change-log.entity';
 import { BusinessAudience } from './business-audience.entity';
 import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
@@ -55,6 +56,7 @@ describe('ProfileService', () => {
   let service: ProfileService;
   let fieldRepo: ReturnType<typeof mockRepo>;
   let profileRepo: ReturnType<typeof mockRepo>;
+  let changeRepo: ReturnType<typeof mockRepo>;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
@@ -63,6 +65,7 @@ describe('ProfileService', () => {
         { provide: getRepositoryToken(ProfileField), useFactory: mockRepo },
         { provide: getRepositoryToken(UserProfile), useFactory: mockRepo },
         { provide: getRepositoryToken(DataAccessLog), useFactory: mockRepo },
+        { provide: getRepositoryToken(ProfileChangeLog), useFactory: mockRepo },
         { provide: getRepositoryToken(BusinessAudience), useFactory: mockRepo },
         { provide: getRepositoryToken(User), useFactory: mockRepo },
         { provide: getRepositoryToken(Business), useFactory: mockRepo },
@@ -78,6 +81,7 @@ describe('ProfileService', () => {
 
     service = module.get(ProfileService);
     fieldRepo = module.get(getRepositoryToken(ProfileField));
+    changeRepo = module.get(getRepositoryToken(ProfileChangeLog));
     profileRepo = module.get(getRepositoryToken(UserProfile));
   });
 
@@ -121,6 +125,59 @@ describe('ProfileService', () => {
       fieldRepo.find.mockResolvedValue([mockField({ key: 'income_range' })]);
       profileRepo.findOne.mockResolvedValue(mockProfile({ data: {} }));
       expect(await service.sharableCandidateKeys(1)).toEqual([]);
+    });
+  });
+
+  /**
+   * A profile holds the current state. This is the trajectory, and it is what
+   * an admin is asked about when somebody queries their own record.
+   */
+  describe('updateMyProfile — keeps a history of what changed', () => {
+    beforeEach(() => {
+      profileRepo.findOne.mockResolvedValue(mockProfile({ data: { household_size: 2 } }));
+      profileRepo.save.mockImplementation(async (p: any) => p);
+      fieldRepo.find.mockResolvedValue([]);
+      (changeRepo.create as jest.Mock).mockImplementation((r: any) => r);
+    });
+
+    it('records a field moving, with what it moved between', async () => {
+      await service.updateMyProfile(1, { data: { household_size: 3 } } as any);
+      expect(changeRepo.save).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({
+            userId: 1, fieldKey: 'household_size',
+            oldValue: '2', newValue: '3', changeKind: 'updated',
+          }),
+        ]),
+      );
+    });
+
+    it('records who made the change', async () => {
+      await service.updateMyProfile(1, { data: { household_size: 3 } } as any);
+      const [rows] = (changeRepo.save as jest.Mock).mock.calls[0];
+      expect(rows[0]).toMatchObject({ actorUserId: 1 });
+    });
+
+    it('writes nothing when a save changed nothing', async () => {
+      await service.updateMyProfile(1, { data: { household_size: 2 } } as any);
+      expect(changeRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('writes nothing when the save did not touch profile data at all', async () => {
+      await service.updateMyProfile(1, { floorPrices: { income_range: 1 } } as any);
+      expect(changeRepo.save).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The history is a record, not a gate. A logging failure must never cost
+     * somebody the profile edit they just made — losing their change to save
+     * a note about it is exactly backwards.
+     */
+    it('still saves the profile when the history cannot be written', async () => {
+      (changeRepo.save as jest.Mock).mockRejectedValue(new Error('down'));
+      await expect(service.updateMyProfile(1, { data: { household_size: 3 } } as any))
+        .resolves.toBeDefined();
+      expect(profileRepo.save).toHaveBeenCalled();
     });
   });
 
@@ -486,6 +543,7 @@ describe('ProfileService', () => {
           { provide: getRepositoryToken(ProfileField),    useFactory: mockRepo },
           { provide: getRepositoryToken(UserProfile),     useFactory: mockRepo },
           { provide: getRepositoryToken(DataAccessLog),   useFactory: mockRepo },
+          { provide: getRepositoryToken(ProfileChangeLog), useFactory: mockRepo },
           { provide: getRepositoryToken(BusinessAudience), useFactory: mockRepo },
           { provide: getRepositoryToken(User),            useFactory: mockRepo },
           { provide: getRepositoryToken(Business),        useFactory: mockRepo },

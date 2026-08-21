@@ -11,6 +11,7 @@ import { PhoneReport } from '../../report/phone-report.entity';
 import { PhoneReportVote } from '../../report/phone-report-vote.entity';
 import { CallPermissionRequest } from '../../data-broker/call-permission-request.entity';
 import { ProfileField } from '../../profile/profile-field.entity';
+import { ProfileChangeLog } from '../../profile/profile-change-log.entity';
 import { UserProfile } from '../../profile/user-profile.entity';
 import { DataAccessLog } from '../../profile/data-access-log.entity';
 import { DataCertificate } from '../../profile/data-certificate.entity';
@@ -74,6 +75,7 @@ export const ENTITIES = [
   PhoneReportVote,
   CallPermissionRequest,
   ProfileField,
+  ProfileChangeLog,
   UserProfile,
   DataAccessLog,
   DataCertificate,

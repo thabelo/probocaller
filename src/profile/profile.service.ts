@@ -4,6 +4,8 @@ import { DataSource, Repository, In } from 'typeorm';
 import { ProfileField } from './profile-field.entity';
 import { UserProfile } from './user-profile.entity';
 import { DataAccessLog } from './data-access-log.entity';
+import { ProfileChangeLog } from './profile-change-log.entity';
+import { diffProfileData } from './profile-diff';
 import { BusinessAudience } from './business-audience.entity';
 import { User } from '../user/user.entity';
 import { Business } from '../business/business.entity';
@@ -35,6 +37,8 @@ export class ProfileService {
     private fieldRepo: Repository<ProfileField>,
     @InjectRepository(UserProfile)
     private profileRepo: Repository<UserProfile>,
+    @InjectRepository(ProfileChangeLog)
+    private readonly changeLogRepo: Repository<ProfileChangeLog>,
     @InjectRepository(DataAccessLog)
     private accessLogRepo: Repository<DataAccessLog>,
     @InjectRepository(BusinessAudience)
@@ -175,6 +179,8 @@ export class ProfileService {
     if (dto.floorPrices !== undefined) profile.floorPrices = { ...profile.floorPrices, ...dto.floorPrices };
     await this.profileRepo.save(profile);
 
+    if (dto.data !== undefined) await this.recordChanges(userId, oldData, profile.data);
+
     // "Share all filled fields": while sharing is on, a field that just went
     // empty→filled opts into sharing automatically. Only NEWLY-filled fields are
     // added, so a field the user explicitly deselected (but already had a value)
@@ -196,6 +202,37 @@ export class ProfileService {
     }
     return this.getMyProfile(userId);
   }
+
+  /**
+   * Write down what moved, for the admin history.
+   *
+   * A profile holds the current state; this is the trajectory, and it answers
+   * the only question anybody asks after the fact — what did this look like
+   * before, and who changed it.
+   *
+   * Deliberately AFTER the profile save and deliberately swallowing failures:
+   * this is a record, not a gate. Losing somebody's profile edit in order to
+   * save a note about it is exactly backwards, and the note is the less
+   * important of the two.
+   */
+  private async recordChanges(
+    userId: number,
+    before: Record<string, any>,
+    after: Record<string, any>,
+    actorUserId: number | null = userId,
+  ): Promise<void> {
+    try {
+      const changes = diffProfileData(before, after);
+      if (!changes.length) return;
+
+      await this.changeLogRepo.save(
+        changes.map((change) => this.changeLogRepo.create({ userId, actorUserId, ...change })),
+      );
+    } catch {
+      /* the edit is already saved; a missing history line must not undo it */
+    }
+  }
+
 
   /**
    * The leads a business has ACQUIRED via the /leads API — de-duplicated per

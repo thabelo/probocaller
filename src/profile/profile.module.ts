@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ProfileField } from './profile-field.entity';
 import { UserProfile } from './user-profile.entity';
 import { DataAccessLog } from './data-access-log.entity';
+import { ProfileChangeLog } from './profile-change-log.entity';
 import { DataCertificate } from './data-certificate.entity';
 import { BusinessAudience } from './business-audience.entity';
 import { User } from '../user/user.entity';
@@ -16,7 +17,7 @@ import { MarketplaceModule } from '../marketplace/marketplace.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ProfileField, UserProfile, DataAccessLog, DataCertificate, BusinessAudience, User, Business, Transaction]),
+    TypeOrmModule.forFeature([ProfileField, UserProfile, DataAccessLog, ProfileChangeLog, DataCertificate, BusinessAudience, User, Business, Transaction]),
     ReferralModule,
     ConfigModule,
     // Supplies AppAccessGuard + its dependencies for the @RequiresApp routes.
