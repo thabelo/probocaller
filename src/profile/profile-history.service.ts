@@ -91,6 +91,23 @@ export interface TopMover {
   name: string | null;
 }
 
+export interface ChangeStats {
+  from: Date;
+  to: Date;
+  totalChanges: number;
+  activeUsers: number;
+  /** One point per day across the range, quiet days filled with zero. */
+  perDay: Array<{ date: string; changes: number }>;
+  /** The fields that move most, resolved to labels, most-changed first. */
+  byField: Array<{ fieldKey: string; label: string; changes: number }>;
+  /** added / updated / cleared. */
+  byKind: Array<{ kind: string; changes: number }>;
+}
+
+const DAY_MS_STATS = 24 * 60 * 60 * 1000;
+/** A daily series longer than this is unreadable and slow — cap it. */
+const MAX_DAILY_POINTS = 370;
+
 @Injectable()
 export class ProfileHistoryService {
   constructor(
@@ -188,4 +205,87 @@ export class ProfileHistoryService {
 
     return { from, to, users: users.map((u) => ({ ...u, changes: Number(u.changes) })) };
   }
+  /**
+   * Aggregates for the charts on the report page — grouped in SQL so the page
+   * plots what it is given and counts nothing itself.
+   */
+  async changeStats({ from, to }: { from: Date; to: Date }): Promise<ChangeStats> {
+    if (!(from instanceof Date) || !(to instanceof Date) || Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+      throw new BadRequestException('Give a real date range.');
+    }
+    if (from.getTime() > to.getTime()) {
+      throw new BadRequestException('That date range runs backwards — the start is after the end.');
+    }
+
+    const [perDayRows, byFieldRows, byKindRows, totalsRows] = await Promise.all([
+      this.dataSource.query(
+        `SELECT date_trunc('day', c."changedAt") AS day, COUNT(*)::int AS changes
+           FROM profile_change_logs c
+          WHERE c."changedAt" >= $1 AND c."changedAt" < $2
+          GROUP BY day ORDER BY day ASC`,
+        [from, to],
+      ),
+      this.dataSource.query(
+        `SELECT c."fieldKey" AS "fieldKey", COUNT(*)::int AS changes
+           FROM profile_change_logs c
+          WHERE c."changedAt" >= $1 AND c."changedAt" < $2
+          GROUP BY c."fieldKey" ORDER BY changes DESC, c."fieldKey" ASC LIMIT $3`,
+        [from, to, 8],
+      ),
+      this.dataSource.query(
+        `SELECT c."changeKind" AS kind, COUNT(*)::int AS changes
+           FROM profile_change_logs c
+          WHERE c."changedAt" >= $1 AND c."changedAt" < $2
+          GROUP BY c."changeKind"`,
+        [from, to],
+      ),
+      this.dataSource.query(
+        `SELECT COUNT(*)::int AS "totalChanges", COUNT(DISTINCT c."userId")::int AS "activeUsers"
+           FROM profile_change_logs c
+          WHERE c."changedAt" >= $1 AND c."changedAt" < $2`,
+        [from, to],
+      ),
+    ]);
+
+    const fields = await this.fieldRepo.find();
+    const labelOf = (key: string) => fields.find((f) => f.key === key)?.label ?? key;
+
+    return {
+      from,
+      to,
+      totalChanges: Number(totalsRows?.[0]?.totalChanges ?? 0),
+      activeUsers: Number(totalsRows?.[0]?.activeUsers ?? 0),
+      perDay: this.fillDays(from, to, perDayRows),
+      byField: (byFieldRows ?? []).map((r: any) => ({
+        fieldKey: r.fieldKey,
+        label: labelOf(r.fieldKey),
+        changes: Number(r.changes),
+      })),
+      byKind: (byKindRows ?? []).map((r: any) => ({ kind: r.kind, changes: Number(r.changes) })),
+    };
+  }
+
+  /**
+   * One point per day from `from` up to (not including) `to`, quiet days at
+   * zero — a time series with gaps reads as missing data, not as calm. Capped,
+   * so an absurd custom range cannot emit thousands of points.
+   */
+  private fillDays(
+    from: Date,
+    to: Date,
+    rows: Array<{ day: Date | string; changes: number }>,
+  ): Array<{ date: string; changes: number }> {
+    const key = (d: Date) => d.toISOString().slice(0, 10);
+    const counts = new Map<string, number>();
+    for (const row of rows) counts.set(key(new Date(row.day)), Number(row.changes));
+
+    const out: Array<{ date: string; changes: number }> = [];
+    const start = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
+    for (let t = start.getTime(); t < to.getTime() && out.length < MAX_DAILY_POINTS; t += DAY_MS_STATS) {
+      const date = key(new Date(t));
+      out.push({ date, changes: counts.get(date) ?? 0 });
+    }
+    return out;
+  }
+
 }

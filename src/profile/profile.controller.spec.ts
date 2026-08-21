@@ -8,6 +8,7 @@ describe('ProfileController — admin data profile routes', () => {
   const history = {
     forUser: jest.fn().mockResolvedValue({ userId: 7, changes: [] }),
     topMovers: jest.fn().mockResolvedValue({ users: [] }),
+    changeStats: jest.fn().mockResolvedValue({ perDay: [], byField: [], byKind: [], totalChanges: 0, activeUsers: 0 }),
   } as any;
   const nudges = { listStale: jest.fn().mockResolvedValue({ staleAfterDays: 90, users: [] }) } as any;
   const controller = new ProfileController(service, history, nudges);
@@ -49,5 +50,11 @@ describe('ProfileController — admin data profile routes', () => {
 
   it('GET admin/stale lists the profiles that have gone quiet', async () => {
     await expect(controller.adminStaleProfiles()).resolves.toMatchObject({ staleAfterDays: 90 });
+  });
+
+  it('GET admin/change-stats aggregates over the default week', async () => {
+    await controller.adminChangeStats();
+    const [{ from, to }] = history.changeStats.mock.calls.at(-1)!;
+    expect(to.getTime() - from.getTime()).toBe(7 * 24 * 60 * 60 * 1000);
   });
 });

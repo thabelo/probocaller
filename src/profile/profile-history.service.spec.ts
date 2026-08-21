@@ -152,6 +152,84 @@ describe('ProfileHistoryService', () => {
       ).rejects.toThrow(/range/i);
     });
   });
+
+  /**
+   * Aggregates for the charts. All grouped in SQL over the range — the page
+   * plots what it is given and counts nothing itself.
+   */
+  describe('changeStats', () => {
+    const stats = (over: Record<string, any> = {}) => {
+      query = jest.fn(async (sql: string) => {
+        if (/date_trunc/i.test(sql)) return over.perDay ?? [
+          { day: new Date('2026-03-02T00:00:00Z'), changes: 3 },
+          { day: new Date('2026-03-04T00:00:00Z'), changes: 5 },
+        ];
+        if (/"fieldKey"/i.test(sql)) return over.byField ?? [
+          { fieldKey: 'income_range', changes: 6 },
+          { fieldKey: 'household_size', changes: 4 },
+          { fieldKey: 'unknown_key', changes: 1 },
+        ];
+        if (/"changeKind"/i.test(sql)) return over.byKind ?? [
+          { kind: 'updated', changes: 7 },
+          { kind: 'added', changes: 2 },
+          { kind: 'cleared', changes: 1 },
+        ];
+        return over.totals ?? [{ totalChanges: 10, activeUsers: 4 }];
+      });
+      (service as any).dataSource = { query };
+      return service;
+    };
+
+    it('reports headline totals', async () => {
+      const out = await stats().changeStats({ from: new Date('2026-03-01'), to: new Date('2026-03-05') });
+      expect(out.totalChanges).toBe(10);
+      expect(out.activeUsers).toBe(4);
+    });
+
+    it('returns a point per day, filling quiet days with zero', async () => {
+      const out = await stats().changeStats({ from: new Date('2026-03-01'), to: new Date('2026-03-05') });
+      // 1..4 (to is exclusive of the 5th here): four days, two of them quiet.
+      expect(out.perDay).toEqual([
+        { date: '2026-03-01', changes: 0 },
+        { date: '2026-03-02', changes: 3 },
+        { date: '2026-03-03', changes: 0 },
+        { date: '2026-03-04', changes: 5 },
+      ]);
+    });
+
+    it('resolves field keys into their labels for the chart', async () => {
+      const out = await stats().changeStats({ from: new Date('2026-03-01'), to: new Date('2026-03-05') });
+      expect(out.byField[0]).toMatchObject({ fieldKey: 'income_range', label: 'Monthly Income Range', changes: 6 });
+    });
+
+    it('falls back to the raw key for a field an admin has retired', async () => {
+      const out = await stats().changeStats({ from: new Date('2026-03-01'), to: new Date('2026-03-05') });
+      expect(out.byField.find((f: any) => f.fieldKey === 'unknown_key')!.label).toBe('unknown_key');
+    });
+
+    it('breaks changes down by kind', async () => {
+      const out = await stats().changeStats({ from: new Date('2026-03-01'), to: new Date('2026-03-05') });
+      expect(out.byKind).toEqual(expect.arrayContaining([
+        { kind: 'updated', changes: 7 },
+        { kind: 'added', changes: 2 },
+        { kind: 'cleared', changes: 1 },
+      ]));
+    });
+
+    it('refuses a range that runs backwards', async () => {
+      await expect(
+        stats().changeStats({ from: new Date('2026-03-05'), to: new Date('2026-03-01') }),
+      ).rejects.toThrow(/range/i);
+    });
+
+    it('bounds an absurd range rather than emitting thousands of points', async () => {
+      const out = await stats().changeStats({
+        from: new Date('2020-01-01'), to: new Date('2026-01-01'),
+      });
+      // Capped — a six-year daily series would be unreadable and slow.
+      expect(out.perDay.length).toBeLessThanOrEqual(370);
+    });
+  });
 });
 
 /**

@@ -237,6 +237,21 @@ export class ProfileController {
    * It includes people already asked recently, because the cooldown decides
    * who gets MESSAGED, not who IS stale.
    */
+  /**
+   * Chart-ready aggregates for the report page — activity per day, the fields
+   * that move most, and the added/updated/cleared split, over the same range.
+   */
+  @Get('admin/change-stats')
+  @UseGuards(AdminGuard)
+  @ApiOperation({ summary: 'Admin: profile-change aggregates for the charts' })
+  adminChangeStats(
+    @Query('period') period?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.history.changeStats(resolveRange({ period, from, to }));
+  }
+
   @Get('admin/stale')
   @UseGuards(AdminGuard)
   @ApiOperation({ summary: 'Admin: profiles that have not been updated in a long time' })
