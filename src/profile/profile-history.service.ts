@@ -124,6 +124,9 @@ export class ProfileHistoryService {
     // own — otherwise a list of two interests resolves to nothing at all.
     const label = (value: string | null): string | null => {
       if (value === null) return null;
+      // A yes/no field carries no options, so it would fall through to the
+      // stored value and read "Has Medical Aid: true". Nobody writes that.
+      if (field?.type === 'boolean') return value === 'true' ? 'Yes' : 'No';
       if (!field?.options?.length) return value;
       return value
         .split(', ')

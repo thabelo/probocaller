@@ -25,7 +25,8 @@ describe('ProfileHistoryService', () => {
       { value: '5k_10k', label: 'R5,000 – R10,000' },
       { value: 'gt_40k', label: 'Over R40,000' },
     ] },
-    { key: 'household_size', label: 'Household Size', options: [] },
+    { key: 'household_size', label: 'Household Size', type: 'number', options: [] },
+    { key: 'has_medical_aid', label: 'Has Medical Aid', type: 'boolean', options: [] },
   ];
 
   const ROWS = [
@@ -87,6 +88,23 @@ describe('ProfileHistoryService', () => {
     });
 
     /** A field an admin deleted since must not break the history it appears in. */
+    /**
+     * A boolean field carries no options, so it fell through to the raw stored
+     * value and a history read "Has Medical Aid: true". Nobody writes that.
+     */
+    it('reads a yes/no field as yes and no', async () => {
+      changeRepo.find.mockResolvedValue([
+        { ...ROWS[0], fieldKey: 'has_medical_aid', oldValue: 'false', newValue: 'true' },
+      ]);
+      const { changes } = await service.forUser(7);
+      expect(changes[0]).toMatchObject({ oldLabel: 'No', newLabel: 'Yes' });
+    });
+
+    it('leaves a number alone, which already reads fine', async () => {
+      const { changes } = await service.forUser(7);
+      expect(changes[1]).toMatchObject({ oldLabel: '2', newLabel: '3' });
+    });
+
     it('survives a field that no longer exists', async () => {
       changeRepo.find.mockResolvedValue([{ ...ROWS[0], fieldKey: 'retired_field' }]);
       const { changes } = await service.forUser(7);
